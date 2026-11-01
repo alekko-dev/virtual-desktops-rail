@@ -1,0 +1,16 @@
+[package]
+name = "rail-compatibility-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+windows.workspace = true
+crossbeam-channel.workspace = true
+
+# The bounded sender is also used by winvd's notification thread.
+[dependencies.winvd]
+workspace = true
+features = ["crossbeam-channel"]

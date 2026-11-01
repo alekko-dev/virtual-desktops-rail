@@ -61,3 +61,12 @@ scenarios still need a richer fixture during integration-test development.
 
 Coding and native builds can begin. Full readiness under the proposed checklist
 remains pending the host, OS-baseline, and interactive test setup above.
+
+## Compatibility implementation follow-up
+
+The workspace now includes `rail-compatibility-probe` and a richer native fixture.
+The live build was reconfirmed as 22621.6060; pinned `winvd 0.0.49` needs at least
+26100.2605. The checker rejects this guest without shell COM calls. Workspace
+tests and fixture UI checks do not resolve this OS gate. See
+[Implementation-Status.md](Implementation-Status.md) for the results and remaining
+work; the earlier baseline observations above remain historical.
