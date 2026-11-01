@@ -34,12 +34,14 @@ and primary display dimensions, including in release builds. Close all fixture
 windows to exit. Both binaries accept `--help`.
 
 The compatibility checker requires at least Windows build **26100.2605** for
-`winvd 0.0.49`. The current 22621.6060 guest is rejected before shell COM calls.
+`winvd 0.0.49`. The VM runs **26300.9457** and clears the version gate, but its
+live probe returned incomplete pin-query observations. See
+[environment readiness](.devdocs/Environment-Readiness.md) for setup and evidence.
 Exit status **2** means unavailable, **1** means invocation/report I/O failed, and
 **0** means read-only observations were collected, not that compatibility passed.
 There is deliberately no build-gate bypass.
 
-On a newer build, `--observe-seconds 1..60` (default 2) records desktop GUIDs/names,
+On an eligible build, `--observe-seconds 1..60` (default 2) records desktop GUIDs/names,
 notification kinds, and one-second samples of window/app pin queries. Calls and
 listener teardown run in an owned subprocess with a duration-plus-ten-second
 watchdog. Event queues, observations, candidates, and output size are bounded.

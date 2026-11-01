@@ -1,22 +1,22 @@
 # Implementation status
 
-Verified 2026-11-01 on the existing Windows 11 x64 guest. This records completed
-work, not a claim that the MVP is implemented.
+Verified 2026-11-01 on Windows x64 build **10.0.26300.9457**. This records
+completed work, not a claim that the MVP is implemented. The current toolchain
+and environment checks are in [Environment-Readiness.md](Environment-Readiness.md).
 
 ## Compatibility gate
 
-The live OS is **10.0.22621.6060 (22H2)**. The pinned `winvd 0.0.49` dependency
-requires at least **26100.2605**, as stated in its published package and
-[upstream documentation](https://github.com/Ciantic/VirtualDesktopAccessor/tree/rust).
-The architecture's first gate cannot pass on this guest. Its instruction is:
+The pinned `winvd 0.0.49` dependency requires at least **26100.2605**, as stated
+in its [upstream documentation](https://github.com/Ciantic/VirtualDesktopAccessor/tree/rust).
+The current OS clears that version gate. The live probe reaches the shell APIs,
+but returns incomplete pin-query observations, so compatibility is not established.
+The architecture's gate remains:
 
 > Failures here or in pin-state discovery must be resolved before feature work proceeds.
 
-No OS upgrade, reboot, desktop switch, or pinning change was made. Use a serviced
-Windows 11 guest meeting the adapter minimum, record the exact revision and a
-recoverable host checkpoint, and complete the compatibility scenarios before
-implementing the rail shell/controller. Meeting the minimum does not certify
-later shell revisions.
+Investigate candidate eligibility and pin-query failures, then complete the
+four-desktop compatibility scenarios before implementing the rail shell/controller.
+Meeting the minimum does not certify this exact shell revision.
 
 ## Completed
 
@@ -43,24 +43,25 @@ later shell revisions.
 
 ## Verification
 
-- Ten automated tests pass: exact minimum boundary, unavailable report schema,
-  CLI validation, worker crash and timeout handling, complete report replacement,
-  worker file-write rejection, current-host build rejection in both processes,
-  help/exit behavior, and bounded fixture options.
-- Release probe returns exit **2**, `status: unavailable`, build **22621.6060**,
-  and no adapter observations. Report: `artifacts/compatibility.json` (ignored).
-- Computer-use observation showed both identical fixture windows. Closing one
-  retained the other. A launcher visibility issue found during this check was
-  fixed: hiding the console no longer leaves the first fixture window hidden.
-- Owned modal showed a disabled owner and an accessible OK button. The 1500 ms
-  delay button returned to a responsive fixture; observed click-to-snapshot time
-  was approximately 1665 ms, including automation overhead.
-- Release foreground probe matched the selected fixture PID/HWND and reported
-  120 DPI, 1708 x 960 display, and its expected window rectangle.
+- Formatting, Clippy with warnings denied, all ten automated tests, and locked
+  release builds pass. Tests cover the minimum build boundary, report schema and
+  replacement, CLI validation, worker crashes/timeouts, worker file-write
+  rejection, and bounded fixture options. The unsupported-host CLI test returns
+  early on this build, so it does not exercise live build rejection here.
+- Release probe returns exit **2**, `status: unavailable`, build **26300.9457**.
+  It enumerates one desktop and obtains several window/application pin states,
+  including both fixture windows. Two candidates return `Pin query: WindowNotFound`.
+  Report: `artifacts/compatibility-new-vm-rebuilt.json` (ignored).
+- Release fixture launches with two windows requested and a 1500 ms stall
+  configuration, exposing a nonzero main-window handle and expected title in
+  Explorer session 2. The owned process is cleaned up after verification.
+- Foreground probe reports 120 DPI and a 1708 x 960 display. Visual interaction,
+  modal behavior, delayed-response behavior, and foreground fixture matching
+  remain unverified on this environment.
 
-These checks exercise the fixture and unavailable path. The supported-build COM
-branch compiles but has **not run on a compatible shell**. No product performance
-or support certification follows from these results.
+The supported-build COM branch has run, but incomplete observations prevent a
+compatibility pass. Query failures alone do not establish an ABI failure.
+No product performance or support certification follows from these checks.
 
 ## Remaining work
 

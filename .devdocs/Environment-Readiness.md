@@ -1,72 +1,61 @@
 # Environment readiness
 
-Verified 2026-11-01. The proposed environment guide is reference material; this
-report records observations and does not mark unverified requirements as complete.
+Verified 2026-11-01. This report records the current development VM.
 
-## Working development baseline
+## Development baseline
 
 | Item | Observed |
 | --- | --- |
-| Machine | Microsoft Virtual Machine; Hyper-V heartbeat service running |
-| OS | Windows 11 Enterprise Evaluation 22H2, x64, 22621.6060 |
-| Resources | 11 logical processors; 8,345,550,848 bytes RAM |
-| Storage | Local NTFS C:, 133,661,978,624 bytes total; about 57 GB free at check |
-| Git | Installed, checkout writable; initial working tree clean |
-| Rust | rustc 1.99.1, Cargo 1.99.1; x86_64-pc-windows-msvc |
+| Machine | Microsoft Virtual Machine; 11 logical processors; 9,431,830,528 bytes RAM |
+| OS | Windows Professional, x64; DisplayVersion 26H2; 10.0.26300.9457 |
+| Git | 2.56.0.4 |
+| Rust | rustup 1.29.1; rustc and Cargo 1.99.1; x86_64-pc-windows-msvc |
 | Version pin | rust-toolchain.toml: 1.99.1, rustfmt, Clippy, x64 MSVC target |
-| Native tools | Visual Studio Community 2022 17.10.4; MSVC 14.40.33807 |
-| SDK | Windows SDK 10.0.22621.0 libraries |
-| Desktop | Explorer, fixture and execution process in session 2 |
-| Display probe | 1708 x 960 primary display; 120 DPI (125% scaling) |
-| Test app | Obsidian 1.14.5 installed; disposable vault seed in fixtures/obsidian-vault |
+| Native tools | Visual Studio Build Tools 2022 17.14.44; MSVC 14.44.35207 |
+| SDK | Windows SDK 10.0.26100.0 |
+| Desktop | Command process and Explorer in session 2 |
+| Display | 1708 x 960 primary display; 120 DPI (125% scaling) |
+| Test app | Obsidian 1.14.5; disposable vault at artifacts/obsidian-vault |
 
-## Verification completed
+The registry ProductName retains a Windows 10 label; the native build number
+is used for the compatibility gate. Tools were installed through winget with
+package hash verification. Open a new terminal to pick up installer PATH changes;
+`scripts/check-dev.ps1` also uses the explicit user Cargo path.
 
-- `scripts/check-dev.ps1` passed formatting, Clippy with warnings denied, Cargo
-  tests, and locked release compilation. The fixture has zero unit tests; this
-  establishes compilation and test-runner operation, not product correctness.
-- Native x64 window launched in the interactive session. Screenshot and accessible
-  text were observed through the connected computer-use helper.
-- Pointer input maximized the fixture. A later keyboard check was interrupted
-  by user input and the fixture was subsequently minimized; keyboard injection
-  has not been verified. The owned fixture process was cleaned up through the
-  command channel.
-- In-session `--probe` returned foreground HWND 67026 and PID 12368, matching the
-  selected fixture. Normal rectangle: [150,150,790,510]. After maximize:
-  [-9,-9,1717,909]. These HWND/PID values are historical and must not be reused.
-- Repository file editing and native command execution work. Rust cache access and
-  foreground-window queries required execution outside the restricted sandbox.
+## Verification
 
-The native fixture intentionally remains small. Owned-dialog and delayed-response
-scenarios still need a richer fixture during integration-test development.
+- `scripts/check-dev.ps1` passed formatting, Clippy with warnings denied,
+  10 tests, and locked release builds of both workspace binaries. The
+  unsupported-host integration test returns early on this build; passing tests
+  do not certify the shell adapter.
+- The release native fixture launched with two windows requested and a 1500 ms
+  stall configuration. It exposed a nonzero main-window handle and the expected
+  title in session 2, and was cleaned up afterward. This confirms native launch;
+  visual, pointer/keyboard, modal-dialog and stall behavior remain unverified.
+- The foreground probe returned display dimensions and DPI. Matching its
+  foreground HWND against a selected fixture remains an interactive check.
+- The release compatibility probe enumerated one desktop and obtained several
+  window/application pin states, including both fixture windows. Two candidates
+  returned `Pin query: WindowNotFound`; exit 2 / `status: unavailable` correctly
+  indicates incomplete observations. Evidence:
+  `artifacts/compatibility-new-vm-rebuilt.json` (ignored by Git).
 
-## Outstanding before the full shell integration baseline is ready
+The OS exceeds the pinned winvd 0.0.49 minimum of 26100.2605, but shell
+compatibility remains an open gate. Query failures alone do not establish an ABI
+failure; candidate eligibility needs investigation. See
+[Implementation-Status.md](Implementation-Status.md).
 
-- Upgrade or replace the guest with a serviced Windows 11 build, then select and
-  validate that exact build for the desktop adapter. Enterprise 22H2 ended updates
-  on 2025-10-14: [Microsoft lifecycle notice](https://learn.microsoft.com/en-us/lifecycle/announcements/windows-11-22h2-end-of-updates-enterprise-education).
-  No OS upgrade or reboot was performed in this setup pass.
-- Confirm guest entitlement/evaluation validity, dedicated standard-user test
-  account, and host-side Generation 2 / Secure Boot / TPM configuration.
-- Take and record a clean host-side checkpoint. The guest cannot establish that
-  a recoverable host checkpoint exists.
-- Record VMConnect Basic versus Enhanced/RDP session mode; current mode was not
-  established. The observed display is not the guide's 1920x1080/100% baseline.
-- Open the disposable vault in Obsidian and establish four virtual desktops with
-  pinned test windows. Desktop count and pinning were not verified or changed.
-- Develop a serialized desktop integration suite, including owned dialogs,
-  delayed responses, and reset/cleanup. No desktop adapter dependencies are pinned
-  yet; select them after the compatibility spike.
-- Identify a physical Windows 11 machine for pre-release display/hardware checks.
+## Outstanding environment checks
 
-Coding and native builds can begin. Full readiness under the proposed checklist
-remains pending the host, OS-baseline, and interactive test setup above.
+- Record a recoverable host checkpoint, guest entitlement, and Generation 2 /
+  Secure Boot / TPM configuration.
+- Establish a dedicated standard-user test account and record VMConnect mode.
+- Validate the recommended 1920 x 1080 / 100% display baseline and additional DPI
+  configurations.
+- Open the disposable Obsidian vault; establish four desktops and test both
+  window and application pinning.
+- Verify desktop observation, pointer/keyboard control, and fixture geometry.
+- Identify physical hardware for pre-release display and performance validation.
 
-## Compatibility implementation follow-up
-
-The workspace now includes `rail-compatibility-probe` and a richer native fixture.
-The live build was reconfirmed as 22621.6060; pinned `winvd 0.0.49` needs at least
-26100.2605. The checker rejects this guest without shell COM calls. Workspace
-tests and fixture UI checks do not resolve this OS gate. See
-[Implementation-Status.md](Implementation-Status.md) for the results and remaining
-work; the earlier baseline observations above remain historical.
+No reboot was performed. Pending file-rename entries include installer temporary
+files and Chrome paths. Compilation and native launch succeed in this session.
