@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Virtual Desktop Rail — Design Mockup</title>
+<style>
+:root {
+  color-scheme: light dark;
+  /* Rail width: choose a value between 20px and 40px. */
+  --rail-width: 25px;
+  --rail-surface: light-dark(#f7f7f9, #202125);
+  --rail-text: light-dark(#202125, #ececef);
+  --rail-muted: light-dark(#62646e, #b0b1ba);
+  --rail-border: light-dark(#d8dae0, #404148);
+  --rail-hover: light-dark(#e7e8ec, #34353a);
+  --rail-accent: light-dark(#5d40aa, #c0a8f4);
+  --rail-selected: light-dark(#e8e0f6, #40354f);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: transparent; }
+body { font-family: "Segoe UI", sans-serif; color: var(--rail-text); }
+.rail {
+  width: clamp(20px, var(--rail-width), 40px);
+  height: 100vh;
+  height: 100dvh;
+  min-height: 360px;
+  padding: 12px 3px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  background: var(--rail-surface);
+  border-right: 1px solid var(--rail-border);
+}
+.desktop-buttons, .application-buttons, .bottom-controls {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+.desktop-buttons { gap: 3px; }
+.application-buttons, .bottom-controls { gap: 6px; }
+.bottom-controls { margin-top: auto; }
+button {
+  position: relative;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--rail-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font: inherit;
+}
+button:hover { background: var(--rail-hover); }
+button:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: 1px; }
+.desktop-button { height: 30px; }
+.desktop-dot { width: 7px; height: 7px; border: 1.5px solid var(--rail-muted); border-radius: 50%; }
+.desktop-button[aria-current="true"] .desktop-dot { width: 10px; height: 10px; border: 0; border-radius: 2px; background: var(--rail-accent); }
+.separator { height: 1px; width: min(20px, calc(var(--rail-width) - 10px)); margin: 3px 0; background: var(--rail-border); }
+.application-button { height: 39px; }
+.application-button svg { width: min(23px, calc(var(--rail-width) - 8px)); height: min(23px, calc(var(--rail-width) - 8px)); }
+.application-button.notes { color: var(--rail-accent); }
+.application-button.visible { background: var(--rail-selected); }
+.window-status { position: absolute; left: 50%; bottom: 3px; transform: translateX(-50%); width: 4px; height: 3px; border-radius: 2px; background: var(--rail-muted); }
+.application-button.visible .window-status { width: 10px; background: var(--rail-accent); }
+.utility-button { height: 34px; }
+.utility-button svg { width: min(17px, calc(var(--rail-width) - 8px)); height: min(17px, calc(var(--rail-width) - 8px)); }
+svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
+</style>
+</head>
+<body>
+<!-- Static visual reference only. No scripts, window management, or external dependencies. -->
+<nav class="rail" aria-label="Virtual Desktop Rail design reference">
+  <div class="desktop-buttons" aria-label="Desktops">
+    <button class="desktop-button" type="button" aria-label="Development desktop (active)" aria-current="true" title="Development"><span class="desktop-dot"></span></button>
+    <button class="desktop-button" type="button" aria-label="Infrastructure desktop" title="Infrastructure"><span class="desktop-dot"></span></button>
+    <button class="desktop-button" type="button" aria-label="Personal desktop" title="Personal"><span class="desktop-dot"></span></button>
+  </div>
+  <div class="separator" role="separator"></div>
+  <div class="application-buttons" aria-label="Pinned windows">
+    <button class="application-button notes visible" type="button" aria-label="Obsidian, visible">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12l4 6-10 13L2 9Z M2 9h20 M6 3l6 19 6-19"/></svg>
+      <span class="window-status"></span>
+    </button>
+    <button class="application-button" type="button" aria-label="Terminal, minimized">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m7 8 4 4-4 4 M13 16h4"/></svg>
+      <span class="window-status"></span>
+    </button>
+    <button class="application-button" type="button" aria-label="Calculator, minimized">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 6h8 M8 10h.01 M12 10h.01 M16 10h.01 M8 14h.01 M12 14h.01 M16 14v4 M8 18h.01 M12 18h.01"/></svg>
+      <span class="window-status"></span>
+    </button>
+  </div>
+  <div class="bottom-controls">
+    <button class="utility-button" type="button" aria-label="Pause"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14 M16 5v14"/></svg></button>
+    <button class="utility-button" type="button" aria-label="Settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7h-9 M5 7H4 M20 17h-1 M13 17H4"/><circle cx="8" cy="7" r="3"/><circle cx="16" cy="17" r="3"/></svg></button>
+  </div>
+</nav>
+</body>
+</html>
