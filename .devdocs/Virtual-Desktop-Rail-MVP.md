@@ -24,7 +24,7 @@ The core workflow is: **switch desktop → shared windows minimize → click a r
 - Desktop dots appear at the top, followed by managed-window buttons. Settings controls appear at the bottom. Windows pinning controls determine which windows appear; there is no add-window control.
 - The active desktop dot uses a distinct shape and contrast, rather than color alone. Hovering reveals the desktop name; clicking a dot switches desktops.
 - Application buttons display icons only, without labels or window-title tooltips in the MVP. Their appearance distinguishes visible and minimized windows. Closed or unavailable windows have no button.
-- Start with a roughly 40–48-unit width, scaled for display settings, and light/dark appearance.
+- Start with a roughly 25-unit width, scaled for display settings, and light/dark appearance.
 - Default placement: the left edge of the main display.
 - Fullscreen applications can cover the rail. The rail should not take focus merely because the desktop changes.
 
