@@ -1,5 +1,6 @@
 param(
-    [string]$Version
+    [string]$Version,
+    [string]$BuildLabel
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +20,7 @@ try {
         $Version = $application.version
     }
     if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release version '$Version'. Expected MAJOR.MINOR.PATCH." }
+    if ($BuildLabel -and $BuildLabel -notmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') { throw 'Build label must contain only letters, digits, dots and hyphens.' }
 
     & $cargo build -p virtual-desktop-rail --release --locked
     if ($LASTEXITCODE) { throw 'Release build failed.' }
@@ -26,6 +28,7 @@ try {
     if ($LASTEXITCODE) { throw 'Dependency metadata failed.' }
     $metadata = $metadataText | ConvertFrom-Json
     $name = "VirtualDesktopRail-$Version-windows-x64"
+    if ($BuildLabel) { $name = "VirtualDesktopRail-$Version-$BuildLabel-windows-x64" }
     $package = Join-Path $repoRoot "artifacts/$name"
     if (Test-Path -LiteralPath $package) { throw 'Package destination already exists.' }
     New-Item -ItemType Directory -Path "$package/licenses" -Force | Out-Null

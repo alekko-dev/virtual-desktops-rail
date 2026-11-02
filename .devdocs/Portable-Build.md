@@ -12,7 +12,7 @@ meeting the minimum does not certify every later revision.
 If there are no desktop dots or pinned-window controls, read the integration
 status in Settings. Versions below the minimum are blocked; initialization or
 runtime failures disable dependent controls and can be retried. The old
-experimental checkbox is disabled. Its saved preference and CLI flag remain
+experimental checkbox has been removed. Its saved preference and CLI flag remain
 accepted for compatibility but no longer affect eligibility.
 
 The left rail reserves 25 DIP on the primary monitor. Desktop dots switch
@@ -42,8 +42,10 @@ Startup, recovery, resume and enabling the setting do not move or reveal windows
 the next desktop switch applies the policy.
 
 The bottom pause button suspends automatic window actions; manual controls continue
-working. The sliders button opens settings, including start with Windows, integration
-retry, and exit. `virtual-desktop-rail.exe --settings` also opens settings.
+working. The sliders button opens settings, including start with Windows and
+integration retry. The button immediately below Settings exits the application.
+Settings shows integration readiness in its footer; Done closes only settings.
+`virtual-desktop-rail.exe --settings` also opens settings.
 Startup is opt-in and uses a per-user Startup shortcut. Moving this directory
 after enabling startup requires turning startup off and back on at the new path.
 

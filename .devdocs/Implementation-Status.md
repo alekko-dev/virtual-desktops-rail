@@ -44,8 +44,8 @@ approved optional restoration mode and its portable build.
   is retained as historical validation evidence, not an eligibility allowlist.
   Integration attempts initialization on Windows 11 x64 24H2 build 26100.2605
   or newer using the shared adapter-minimum check. Legacy experimental preferences
-  remain readable/CLI-compatible but do not change eligibility; the checkbox is
-  disabled pending the settings UX update. Initialization and runtime failures
+  remain readable/CLI-compatible but do not change eligibility; the checkbox has been
+  removed from Settings. Initialization and runtime failures
   still disable dependent controls. Inaccessible and
   unsupported surfaces are excluded; mixed pin-query failures remain failures.
 - Per-user/session single instance, per-user opt-in Startup shortcut, atomic local

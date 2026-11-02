@@ -21,7 +21,7 @@ const SET_PAUSE: usize = 6000;
 const STARTUP: usize = 6001;
 const RETRY: usize = 6002;
 const EXIT: usize = 6003;
-const EXPERIMENTAL: usize = 6004;
+const DONE: usize = 6004;
 const AUTO_RESTORE: usize = 6005;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -30,6 +30,7 @@ enum ButtonKind {
     Window(String),
     Pause,
     Settings,
+    Exit,
 }
 struct Button {
     hwnd: Handle,
@@ -59,6 +60,7 @@ struct App {
     tooltip: Handle,
     font: Handle,
     font_dpi: u32,
+    settings_fonts: Vec<usize>,
     settings_signature: String,
     model: Model,
     events: Receiver<Event>,
@@ -531,24 +533,6 @@ impl App {
                     )
                 };
                 self.font_dpi = dpi;
-                if !self.settings.is_null() {
-                    for id in [
-                        6100,
-                        SET_PAUSE as i32,
-                        STARTUP as i32,
-                        RETRY as i32,
-                        EXIT as i32,
-                    ] {
-                        unsafe {
-                            SendMessageW(
-                                GetDlgItem(self.settings, id),
-                                0x30,
-                                self.font as usize,
-                                1,
-                            );
-                        }
-                    }
-                }
                 if !old_font.is_null() {
                     unsafe {
                         DeleteObject(old_font);
@@ -593,22 +577,6 @@ impl App {
                 );
                 unsafe {
                     EnableWindow(button, self.ready as i32);
-                }
-                self.tips.push(wide(&name));
-                let text = self.tips.last_mut().unwrap().as_mut_ptr();
-                let mut info = ToolInfo {
-                    size: size_of::<ToolInfo>() as u32,
-                    flags: 0x11,
-                    window: self.window,
-                    id: button as usize,
-                    rect: Rect::default(),
-                    instance: null_mut(),
-                    text,
-                    parameter: 0,
-                    reserved: null_mut(),
-                };
-                unsafe {
-                    SendMessageW(self.tooltip, 0x432, 0, &mut info as *mut _ as isize);
                 }
                 y += scale(33);
             }
@@ -655,16 +623,23 @@ impl App {
                 } else {
                     "Pause automatic window actions"
                 },
-                bounds.bottom - scale(82),
+                bounds.bottom - scale(122),
                 scale(34),
                 ButtonKind::Pause,
             );
             self.button(
                 SETTINGS,
                 &format!("Settings. {}", self.status),
-                bounds.bottom - scale(42),
+                bounds.bottom - scale(82),
                 scale(34),
                 ButtonKind::Settings,
+            );
+            self.button(
+                EXIT,
+                "Exit application",
+                bounds.bottom - scale(42),
+                scale(34),
+                ButtonKind::Exit,
             );
             let live = self
                 .model
@@ -717,6 +692,21 @@ impl App {
                 null_mut(),
             )
         };
+        self.tips.push(wide(name));
+        let mut info = ToolInfo {
+            size: size_of::<ToolInfo>() as u32,
+            flags: 0x01, // TTF_IDISHWND; relay mouse events explicitly for the passive rail.
+            window: self.window,
+            id: button as usize,
+            rect: Rect::default(),
+            instance: null_mut(),
+            text: self.tips.last_mut().unwrap().as_mut_ptr(),
+            parameter: 0,
+            reserved: null_mut(),
+        };
+        unsafe {
+            SendMessageW(self.tooltip, 0x432, 0, &mut info as *mut _ as isize);
+        }
         self.buttons.push(Button {
             hwnd: button,
             id,
@@ -732,6 +722,8 @@ impl App {
             }
             return;
         }
+        let dpi = unsafe { GetDpiForWindow(self.window).max(96) } as i32;
+        let scale = |dip: i32| (dip * dpi + 48) / 96;
         let pointer = unsafe { GetWindowLongPtrW(self.window, -21) };
         self.settings = unsafe {
             CreateWindowExW(
@@ -741,8 +733,8 @@ impl App {
                 0x10c80000,
                 200,
                 160,
-                640,
-                470,
+                scale(560),
+                scale(364),
                 self.window,
                 null_mut(),
                 GetModuleHandleW(null()),
@@ -752,66 +744,110 @@ impl App {
         unsafe {
             SetWindowLongPtrW(self.settings, -21, pointer);
         }
-        for (id, class, label, style, y, height) in [
-            (6100, "STATIC", "", 0x50000000, 18, 140),
+        // Settings use their own typographic hierarchy, independent of rail icon labels.
+        for font in self.settings_fonts.drain(..) {
+            unsafe {
+                DeleteObject(font as Handle);
+            }
+        }
+        for (size, weight) in [(14, 400), (14, 600), (12, 400)] {
+            let font = unsafe {
+                CreateFontW(
+                    -scale(size),
+                    0,
+                    0,
+                    0,
+                    weight,
+                    0,
+                    0,
+                    0,
+                    1,
+                    0,
+                    0,
+                    5,
+                    0,
+                    wide("Segoe UI").as_ptr(),
+                )
+            };
+            self.settings_fonts.push(font as usize);
+        }
+        for (id, class, label, style, x, y, width, height) in [
+            (
+                6102,
+                "STATIC",
+                "Window behavior",
+                0x50000000,
+                24,
+                20,
+                496,
+                22,
+            ),
             (
                 SET_PAUSE,
                 "BUTTON",
                 "Pause automatic window actions",
                 0x50010003,
-                164,
-                30,
+                24,
+                48,
+                496,
+                28,
             ),
-            (STARTUP, "BUTTON", "Start with Windows", 0x50010003, 200, 30),
             (
                 AUTO_RESTORE,
                 "BUTTON",
                 "Restore saved layouts on desktop switch",
                 0x50010003,
-                236,
-                30,
+                24,
+                82,
+                496,
+                28,
             ),
+            (6103, "STATIC", "Startup", 0x50000000, 24, 126, 496, 22),
             (
-                6101,
-                "STATIC",
-                "Windows without a saved layout get minimized.",
-                0x50000000,
-                270,
+                STARTUP,
+                "BUTTON",
+                "Start with Windows",
+                0x50010003,
+                24,
+                154,
+                496,
                 28,
             ),
             (
-                EXPERIMENTAL,
-                "BUTTON",
-                "Experimental integration (legacy preference; no longer required)",
-                0x50010003,
-                304,
-                36,
+                6104,
+                "STATIC",
+                "Desktop integration",
+                0x50000000,
+                24,
+                198,
+                496,
+                22,
             ),
             (
                 RETRY,
                 "BUTTON",
                 "Retry desktop integration",
                 0x50010000,
-                364,
-                34,
+                24,
+                226,
+                212,
+                32,
             ),
-            (EXIT, "BUTTON", "Exit", 0x50010000, 364, 34),
+            (6106, "STATIC", "", 0x50000010, 0, 274, 560, 1),
+            (DONE, "BUTTON", "Done", 0x50010001, 432, 286, 88, 34),
+            (6107, "STATIC", "●", 0x50000000, 24, 293, 10, 22),
+            (6100, "STATIC", "", 0x50000000, 36, 294, 372, 32),
         ] {
-            let (x, width) = if id == EXIT {
-                (440, 120)
-            } else {
-                (20, if id == RETRY { 260 } else { 580 })
-            };
             let child = unsafe {
                 CreateWindowExW(
                     0,
                     wide(class).as_ptr(),
                     wide(label).as_ptr(),
                     style,
-                    x,
-                    y,
-                    width,
-                    height,
+                    scale(x),
+                    scale(y),
+                    scale(width),
+                    scale(height),
                     self.settings,
                     id as Handle,
                     GetModuleHandleW(null()),
@@ -819,7 +855,12 @@ impl App {
                 )
             };
             unsafe {
-                SendMessageW(child, 0x30, self.font as usize, 1);
+                let font = self.settings_fonts[match id {
+                    6102..=6104 => 1,
+                    6100 | 6107 => 2,
+                    _ => 0,
+                }];
+                SendMessageW(child, 0x30, font, 1);
             }
         }
         self.update_settings();
@@ -845,6 +886,9 @@ impl App {
         }
         self.settings_signature = signature;
         unsafe {
+            let light = GetDlgItem(self.settings, 6107);
+            SetWindowLongPtrW(light, -21, self.ready as isize);
+            InvalidateRect(light, null(), 1);
             let text = GetDlgItem(self.settings, 6100);
             SetWindowTextW(
                 text,
@@ -863,12 +907,6 @@ impl App {
                 0,
             );
             SendMessageW(
-                GetDlgItem(self.settings, EXPERIMENTAL as i32),
-                0xf1,
-                self.model.saved.experimental_integration as usize,
-                0,
-            );
-            SendMessageW(
                 GetDlgItem(self.settings, AUTO_RESTORE as i32),
                 0xf1,
                 self.model.saved.auto_restore as usize,
@@ -878,7 +916,6 @@ impl App {
                 GetDlgItem(self.settings, AUTO_RESTORE as i32),
                 self.loaded as i32,
             );
-            EnableWindow(GetDlgItem(self.settings, EXPERIMENTAL as i32), 0);
             EnableWindow(
                 GetDlgItem(self.settings, STARTUP as i32),
                 (!self.startup_busy && self.loaded) as i32,
@@ -1145,7 +1182,7 @@ fn draw(app: &App, item: &DrawItem) {
                         );
                     }
                 }
-                ButtonKind::Pause | ButtonKind::Settings => {
+                ButtonKind::Pause | ButtonKind::Settings | ButtonKind::Exit => {
                     smooth_shape(dc, width, height, background, text, |x, y| {
                         if matches!(button.kind, ButtonKind::Settings) {
                             let track = |yy: f64| (y - yy).abs().max(x.abs() - 7.0) - 0.8;
@@ -1163,6 +1200,14 @@ fn draw(app: &App, item: &DrawItem) {
                                 track(4.0)
                             };
                             upper.min(lower).min(ring(-3.0, -4.0)).min(ring(3.0, 4.0))
+                        } else if matches!(button.kind, ButtonKind::Exit) {
+                            let ring = ((x * x + y * y).sqrt() - 6.0).abs() - 0.8;
+                            let ring = if y < -2.0 && x.abs() < 3.0 {
+                                100.0
+                            } else {
+                                ring
+                            };
+                            ring.min((x.abs() - 0.8).max((y + 4.0).abs() - 4.0))
                         } else if app.model.saved.paused {
                             (-x - 4.0).max(y.abs() * 1.4 + x - 4.0)
                         } else {
@@ -1289,6 +1334,68 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         }
         return 0;
     }
+    // Color/erase messages can reenter while ShowWindow holds the model borrow.
+    if !main {
+        match message {
+            0x0135 | 0x0138 => unsafe {
+                if windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
+                    windows::Win32::Foundation::HWND(lparam as *mut _),
+                ) == 6107
+                {
+                    windows::Win32::Graphics::Gdi::SetTextColor(
+                        windows::Win32::Graphics::Gdi::HDC(wparam as *mut _),
+                        windows::Win32::Foundation::COLORREF(
+                            if GetWindowLongPtrW(lparam as Handle, -21) != 0 {
+                                0x00438320
+                            } else {
+                                0x000078ad
+                            },
+                        ),
+                    );
+                }
+                windows::Win32::Graphics::Gdi::SetBkMode(
+                    windows::Win32::Graphics::Gdi::HDC(wparam as *mut _),
+                    windows::Win32::Graphics::Gdi::TRANSPARENT,
+                );
+                return windows::Win32::Graphics::Gdi::GetSysColorBrush(
+                    if windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
+                        windows::Win32::Foundation::HWND(lparam as *mut _),
+                    ) == 6100
+                        || windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
+                            windows::Win32::Foundation::HWND(lparam as *mut _),
+                        ) == 6107
+                    {
+                        windows::Win32::Graphics::Gdi::COLOR_BTNFACE
+                    } else {
+                        windows::Win32::Graphics::Gdi::COLOR_WINDOW
+                    },
+                )
+                .0 as isize;
+            },
+            0x0014 => unsafe {
+                let mut rect = Rect::default();
+                GetClientRect(window, &mut rect);
+                fill(
+                    wparam as Handle,
+                    &rect,
+                    windows::Win32::Graphics::Gdi::GetSysColor(
+                        windows::Win32::Graphics::Gdi::COLOR_WINDOW,
+                    ),
+                );
+                let dpi = GetDpiForWindow(window).max(96) as i32;
+                rect.top = (274 * dpi + 48) / 96;
+                fill(
+                    wparam as Handle,
+                    &rect,
+                    windows::Win32::Graphics::Gdi::GetSysColor(
+                        windows::Win32::Graphics::Gdi::COLOR_BTNFACE,
+                    ),
+                );
+                return 1;
+            },
+            _ => {}
+        }
+    }
     let Ok(mut app) = cell.try_borrow_mut() else {
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     };
@@ -1398,6 +1505,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                             app.command(command);
                         }
                         ButtonKind::Settings => app.command(Command::Settings),
+                        ButtonKind::Exit => app.command(Command::Exit),
                     }
                 }
             } else {
@@ -1424,19 +1532,17 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         }
                     }
                     RETRY => app.command(Command::Retry),
-                    EXPERIMENTAL => {
-                        let enabled = unsafe {
-                            SendMessageW(GetDlgItem(window, EXPERIMENTAL as i32), 0xf0, 0, 0)
-                        } != 0;
-                        app.command(Command::ExperimentalIntegration { enabled });
-                    }
                     AUTO_RESTORE => {
                         let enabled = unsafe {
                             SendMessageW(GetDlgItem(window, AUTO_RESTORE as i32), 0xf0, 0, 0)
                         } != 0;
                         app.command(Command::AutoRestore { enabled });
                     }
-                    EXIT => app.command(Command::Exit),
+                    DONE => unsafe {
+                        app.settings = null_mut();
+                        app.settings_signature.clear();
+                        DestroyWindow(window);
+                    },
                     _ => {}
                 }
             }
@@ -1505,6 +1611,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         tooltip: null_mut(),
         font: null_mut(),
         font_dpi: 0,
+        settings_fonts: Vec::new(),
         settings_signature: String::new(),
         model: Model::new(Saved::default()),
         events,
@@ -1596,6 +1703,10 @@ pub fn run(settings: bool) -> Result<(), String> {
             if result <= 0 {
                 break;
             }
+            let tooltip = app.borrow().tooltip;
+            if !tooltip.is_null() && (0x200..=0x20e).contains(&message.message) {
+                SendMessageW(tooltip, 0x407, 0, &message as *const _ as isize);
+            }
             let settings = app.borrow().settings;
             if IsDialogMessageW(
                 if settings.is_null() { window } else { settings },
@@ -1619,6 +1730,9 @@ pub fn run(settings: bool) -> Result<(), String> {
             if *icon != 0 {
                 DestroyIcon(*icon as Handle);
             }
+        }
+        for font in app.borrow_mut().settings_fonts.drain(..) {
+            DeleteObject(font as Handle);
         }
         if !app.borrow_mut().font.is_null() {
             DeleteObject(app.borrow_mut().font);

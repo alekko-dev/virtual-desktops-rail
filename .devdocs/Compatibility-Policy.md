@@ -11,9 +11,11 @@ Older validation notes describe the policy at the time they were recorded.
 
 Existing `experimental_integration` saved state, status output and CLI commands
 are retained for compatibility. The value no longer affects eligibility. The
-settings checkbox is disabled and labeled as legacy; the ready status no longer
-claims experimental mode. Broader settings/rail changes are deferred to the UX
-update.
+settings checkbox has been removed; the ready status no longer
+claims experimental mode. Settings groups window behavior, startup and integration controls, omits the
+layout helper text, and closes through Done. Exit is a separate rail button
+below Settings. Desktop and other rail tooltips receive explicitly relayed
+mouse events.
 
 Worker startup and reconnect both check eligibility before initialization.
 Shell COM remains isolated in the owned subprocess with its watchdog and bounded

@@ -49,8 +49,7 @@ Application restarts receive fresh identities rather than guessed layout matches
 
 If the rail has no desktop dots, check Settings for a below-minimum Windows
 version or an integration initialization/runtime failure. Use **Retry desktop
-integration** after a recoverable failure. The old experimental checkbox is
-disabled. Existing saved preferences and
+integration** after a recoverable failure. The old experimental checkbox has been removed. Existing saved preferences and
 `./scripts/Invoke-Rail.ps1 --experimental-integration on` (or `off`) remain
 accepted for compatibility, but neither value changes build eligibility.
 
