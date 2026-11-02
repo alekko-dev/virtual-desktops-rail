@@ -3,7 +3,8 @@ use crate::report::OsVersion;
 use std::mem::size_of;
 use windows::Win32::Foundation::{BOOL, CloseHandle, FILETIME, HWND, LPARAM};
 use windows::Win32::System::Threading::{
-    GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    GetProcessTimes, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetWindow, GetWindowLongPtrW,
@@ -80,12 +81,13 @@ pub fn os_version() -> Result<OsVersion, String> {
     })
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct CandidateIdentity {
     pub hwnd: HWND,
     pub pid: u32,
     pub created: u64,
     pub minimized: bool,
+    pub class_name: String,
 }
 
 pub fn process_created(pid: u32) -> Option<u64> {
@@ -102,7 +104,31 @@ pub fn process_created(pid: u32) -> Option<u64> {
     }
 }
 
-pub fn still_same_window(candidate: CandidateIdentity) -> bool {
+pub fn process_context(pid: u32) -> Result<(String, u32), String> {
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+        .map_err(|e| e.to_string())?;
+    let mut buffer = vec![0u16; 32768];
+    let mut length = buffer.len() as u32;
+    let result = unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            windows::core::PWSTR(buffer.as_mut_ptr()),
+            &mut length,
+        )
+    };
+    let _ = unsafe { CloseHandle(process) };
+    result.map_err(|e| e.to_string())?;
+    let mut session = 0;
+    unsafe { windows::Win32::System::RemoteDesktop::ProcessIdToSessionId(pid, &mut session) }
+        .map_err(|e| e.to_string())?;
+    Ok((
+        String::from_utf16_lossy(&buffer[..length as usize]),
+        session,
+    ))
+}
+
+pub fn still_same_window(candidate: &CandidateIdentity) -> bool {
     let mut pid = 0;
     unsafe {
         if !IsWindow(candidate.hwnd).as_bool() {
@@ -147,6 +173,7 @@ pub fn candidates() -> Result<Vec<CandidateIdentity>, String> {
                     pid,
                     created,
                     minimized: IsIconic(hwnd).as_bool(),
+                    class_name: class,
                 });
             }
         }
@@ -159,4 +186,22 @@ pub fn candidates() -> Result<Vec<CandidateIdentity>, String> {
         return Err("Candidate limit reached; enumeration was incomplete".into());
     }
     Ok(result)
+}
+
+/// Broader than product candidates: cleanup must also see hidden/tool windows.
+pub fn all_window_handles() -> Result<Vec<HWND>, String> {
+    unsafe extern "system" fn callback(hwnd: HWND, parameter: LPARAM) -> BOOL {
+        let windows = unsafe { &mut *(parameter.0 as *mut Vec<HWND>) };
+        if windows.len() < 4096 {
+            windows.push(hwnd);
+        }
+        BOOL(1)
+    }
+    let mut windows = Vec::new();
+    unsafe { EnumWindows(Some(callback), LPARAM(&mut windows as *mut _ as isize)) }
+        .map_err(|e| e.to_string())?;
+    if windows.len() == 4096 {
+        return Err("Cleanup window inventory limit reached".into());
+    }
+    Ok(windows)
 }

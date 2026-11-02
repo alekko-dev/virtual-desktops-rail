@@ -1,3 +1,6 @@
+> Current 2026-11-02 VM: Windows 26300.9711, 2560 x 1440 at 120 DPI.
+> The following 2026-11-01 baseline is historical. See [follow-up validation](Validation-2026-11-02.md).
+
 # Environment readiness
 
 Verified 2026-11-01. This report records the current development VM.
@@ -24,38 +27,40 @@ package hash verification. Open a new terminal to pick up installer PATH changes
 
 ## Verification
 
-- `scripts/check-dev.ps1` passed formatting, Clippy with warnings denied,
-  10 tests, and locked release builds of both workspace binaries. The
-  unsupported-host integration test returns early on this build; passing tests
-  do not certify the shell adapter.
-- The release native fixture launched with two windows requested and a 1500 ms
-  stall configuration. It exposed a nonzero main-window handle and the expected
-  title in session 2, and was cleaned up afterward. This confirms native launch;
-  visual, pointer/keyboard, modal-dialog and stall behavior remain unverified.
-- The foreground probe returned display dimensions and DPI. Matching its
-  foreground HWND against a selected fixture remains an interactive check.
-- The release compatibility probe enumerated one desktop and obtained several
-  window/application pin states, including both fixture windows. Two candidates
-  returned `Pin query: WindowNotFound`; exit 2 / `status: unavailable` correctly
-  indicates incomplete observations. Evidence:
-  `artifacts/compatibility-new-vm-rebuilt.json` (ignored by Git).
+The compatibility spike passed on the exact baseline above before feature work.
+See [Compatibility-Evidence](Compatibility-Evidence.md) for four-desktop identity
+and notifications, both Task View pin cycles, candidate-only polling measurements,
+passive AppBar reservation/presence, modal focus, delayed actions, and duplicate
+window identity lifetime.
 
-The OS exceeds the pinned winvd 0.0.49 minimum of 26100.2605, but shell
-compatibility remains an open gate. Query failures alone do not establish an ABI
-failure; candidate eligibility needs investigation. See
-[Implementation-Status.md](Implementation-Status.md).
+The native MVP is now implemented. Formatting, warnings-denied Clippy, 38 tests,
+and locked release builds are the repeatable check suite. Product checks include
+real fixture dragging and per-desktop geometry restoration, maximized and modal
+restore, duplicate utility restart, conservative application restart, pause/resume,
+integration retry and a five-second stalled target. See
+[Live-Validation](Live-Validation.md) and [Implementation-Status](Implementation-Status.md).
 
-## Outstanding environment checks
+Pointer/keyboard control and foreground geometry were verified on the unlocked
+desktop. A locked VM returned GetCursorPos access denied and an empty foreground
+probe; testing stopped until the operator unlocked it. That interval is not a
+passing UI run. The passive AppBar is excluded from the automation inventory;
+real icon and keyboard interaction was subsequently exercised through computer
+use with temporary automation visibility. The mode preserves no-activation input
+behavior and is disabled afterward; see Live-Validation for the precise scope.
 
-- Record a recoverable host checkpoint, guest entitlement, and Generation 2 /
-  Secure Boot / TPM configuration.
-- Establish a dedicated standard-user test account and record VMConnect mode.
-- Validate the recommended 1920 x 1080 / 100% display baseline and additional DPI
-  configurations.
-- Open the disposable Obsidian vault; establish four desktops and test both
-  window and application pinning.
-- Verify desktop observation, pointer/keyboard control, and fixture geometry.
-- Identify physical hardware for pre-release display and performance validation.
+## Outstanding release environment checks
 
-No reboot was performed. Pending file-rename entries include installer temporary
-files and Chrome paths. Compilation and native launch succeed in this session.
+- Record a recoverable host checkpoint, guest entitlement, Generation 2 / Secure
+  Boot / TPM configuration, and VMConnect mode. These host facts are not inferred
+  from successful guest compilation.
+- Dedicated standard-user account and privilege matrix; observed test processes
+  were medium-integrity, which does not certify elevated application support.
+- Recommended 1920 x 1080 / 100% baseline plus mixed DPI, primary-display changes,
+  monitor unplug/reconnect, lock/sleep/session transitions and physical hardware.
+- Disposable Obsidian-vault end-to-end workflow and real Explorer restart under
+  the recorded checkpoint. Explicit adapter reconnect already passed.
+- Broader supported Windows revisions and physical-machine resource/latency
+  measurements before a general release.
+
+No reboot or real Explorer restart was performed. Existing user desktops are
+preserved; only known empty test desktops are eligible for fixture cleanup.

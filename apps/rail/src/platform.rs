@@ -1,0 +1,399 @@
+use rail_compatibility_probe::platform as diagnostic;
+use rail_core::{Desktop, Identity, Layout, Snapshot, Window};
+use std::collections::BTreeMap;
+use windows::Win32::Foundation::{BOOL, HANDLE, HWND, LPARAM, RECT};
+use windows::Win32::Graphics::Gdi::{
+    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+    MONITORINFOEXW, MonitorFromWindow,
+};
+use windows::Win32::System::SystemInformation::GetTickCount64;
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GA_ROOTOWNER, GWL_STYLE, GetAncestor, GetLastActivePopup, GetPropW, GetWindowLongPtrW,
+    GetWindowPlacement, GetWindowThreadProcessId, IsHungAppWindow, IsIconic, IsWindow,
+    IsWindowVisible, SW_SHOWMAXIMIZED, SetPropW, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
+    WS_DISABLED,
+};
+use windows::core::w;
+
+pub const TOKEN: windows::core::PCWSTR = w!("VirtualDesktopRail.Identity.v1");
+const MODAL_HINT: windows::core::PCWSTR = w!("VirtualDesktopRail.ModalHint.v1");
+pub fn tick() -> u64 {
+    unsafe { GetTickCount64() }
+}
+pub fn hwnd(value: usize) -> HWND {
+    HWND(value as *mut _)
+}
+pub fn supported(experimental: bool) -> Result<(), String> {
+    let os = diagnostic::os_version()?;
+    support_version(os, experimental)
+}
+
+fn support_version(
+    os: rail_compatibility_probe::report::OsVersion,
+    experimental: bool,
+) -> Result<(), String> {
+    if (os.major, os.minor, os.build, os.revision) == (10, 0, 26300, 9457)
+        || (experimental && (os.major, os.minor, os.build) == (10, 0, 26300) && os.revision > 9457)
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "Windows {}.{}.{}.{} has not passed this rail's compatibility matrix. Validated baseline: 10.0.26300.9457. For newer 26300 revisions, enable experimental integration below to try desktop controls. Other builds remain unavailable.",
+            os.major, os.minor, os.build, os.revision
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rail_compatibility_probe::report::OsVersion;
+
+    #[test]
+    fn an_os_update_cannot_silently_enable_integration() {
+        let baseline = OsVersion {
+            major: 10,
+            minor: 0,
+            build: 26300,
+            revision: 9457,
+        };
+        assert!(support_version(baseline, false).is_ok());
+        assert!(support_version(baseline, true).is_ok());
+        for os in [
+            OsVersion {
+                revision: 9711,
+                ..baseline
+            },
+            OsVersion {
+                revision: 9456,
+                ..baseline
+            },
+            OsVersion {
+                build: 26301,
+                ..baseline
+            },
+            OsVersion {
+                major: 11,
+                ..baseline
+            },
+        ] {
+            assert!(support_version(os, false).is_err());
+        }
+        for revision in [9711, 9818] {
+            assert!(
+                support_version(
+                    OsVersion {
+                        revision,
+                        ..baseline
+                    },
+                    true
+                )
+                .is_ok()
+            );
+        }
+        for os in [
+            OsVersion {
+                revision: 9456,
+                ..baseline
+            },
+            OsVersion {
+                build: 26301,
+                ..baseline
+            },
+            OsVersion {
+                major: 11,
+                ..baseline
+            },
+        ] {
+            assert!(support_version(os, true).is_err());
+        }
+    }
+}
+
+#[link(name = "bcrypt")]
+unsafe extern "system" {
+    fn BCryptGenRandom(
+        algorithm: *mut std::ffi::c_void,
+        data: *mut u8,
+        size: u32,
+        flags: u32,
+    ) -> i32;
+}
+
+fn identity_token(window: HWND) -> Result<String, String> {
+    let mut token = unsafe { GetPropW(window, TOKEN) }.0 as usize;
+    if token == 0 {
+        loop {
+            if unsafe {
+                BCryptGenRandom(std::ptr::null_mut(), &mut token as *mut _ as *mut u8, 8, 2)
+            } < 0
+            {
+                return Err("Identity randomness unavailable".into());
+            }
+            if token != 0 && token != usize::MAX {
+                break;
+            }
+        }
+        unsafe { SetPropW(window, TOKEN, HANDLE(token as *mut _)) }.map_err(|e| e.to_string())?;
+    }
+    Ok(format!("{token:016x}"))
+}
+
+pub fn validate(window: &Window) -> bool {
+    let handle = hwnd(window.hwnd);
+    let mut pid = 0;
+    unsafe {
+        GetWindowThreadProcessId(handle, Some(&mut pid));
+    }
+    unsafe { IsWindow(handle) }.as_bool()
+        && pid == window.pid
+        && diagnostic::process_created(pid) == Some(window.identity.process_created)
+        && format!("{:016x}", unsafe { GetPropW(handle, TOKEN) }.0 as usize)
+            == window.identity.token
+}
+
+fn rect(rect: RECT) -> [i32; 4] {
+    [rect.left, rect.top, rect.right, rect.bottom]
+}
+pub fn monitor(handle: HMONITOR) -> Result<(String, [i32; 4], [i32; 4], u32), String> {
+    let mut info = MONITORINFOEXW {
+        monitorInfo: MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    unsafe { GetMonitorInfoW(handle, &mut info as *mut _ as *mut MONITORINFO) }
+        .ok()
+        .map_err(|e| e.to_string())?;
+    let length = info
+        .szDevice
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(info.szDevice.len());
+    let mut x = 96;
+    let mut y = 96;
+    let _ = unsafe { GetDpiForMonitor(handle, MDT_EFFECTIVE_DPI, &mut x, &mut y) };
+    Ok((
+        String::from_utf16_lossy(&info.szDevice[..length]),
+        rect(info.monitorInfo.rcMonitor),
+        rect(info.monitorInfo.rcWork),
+        x,
+    ))
+}
+
+pub fn layout(handle: HWND) -> Result<Layout, String> {
+    let mut placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowPlacement(handle, &mut placement) }.map_err(|e| e.to_string())?;
+    let (name, monitor_rect, work_area, _) =
+        monitor(unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST) })?;
+    Ok(Layout {
+        normal: rect(placement.rcNormalPosition),
+        maximized: placement.showCmd == SW_SHOWMAXIMIZED.0 as u32
+            || (unsafe { IsIconic(handle) }.as_bool()
+                && placement.flags.0 & WPF_RESTORETOMAXIMIZED.0 != 0),
+        dpi: unsafe { GetDpiForWindow(handle) }.max(96),
+        monitor: name,
+        monitor_rect,
+        work_area,
+    })
+}
+
+pub fn adjusted(saved: &Layout, handle: HWND) -> Result<Layout, String> {
+    unsafe extern "system" fn callback(
+        monitor: HMONITOR,
+        _: HDC,
+        _: *mut RECT,
+        data: LPARAM,
+    ) -> BOOL {
+        let monitors = unsafe { &mut *(data.0 as *mut Vec<isize>) };
+        monitors.push(monitor.0 as isize);
+        BOOL(1)
+    }
+    let mut handles = Vec::<isize>::new();
+    unsafe {
+        EnumDisplayMonitors(
+            None,
+            None,
+            Some(callback),
+            LPARAM(&mut handles as *mut _ as isize),
+        )
+    }
+    .ok()
+    .map_err(|e| e.to_string())?;
+    let mut destination = monitor(unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST) })?;
+    for handle in handles {
+        let candidate = monitor(HMONITOR(handle as *mut _))?;
+        if candidate.0 == saved.monitor {
+            destination = candidate;
+            break;
+        }
+    }
+    Ok(saved.adjusted(&destination.0, destination.1, destination.2, destination.3))
+}
+
+pub fn popup(window: &Window) -> Option<HWND> {
+    let handle = hwnd(window.hwnd);
+    let active = unsafe { GetLastActivePopup(handle) };
+    let candidate = if active != handle {
+        active
+    } else {
+        HWND(unsafe { GetPropW(handle, MODAL_HINT) }.0)
+    };
+    if candidate.is_invalid() || candidate == handle {
+        return None;
+    }
+    let mut pid = 0;
+    unsafe {
+        GetWindowThreadProcessId(candidate, Some(&mut pid));
+    }
+    if pid != window.pid
+        || !unsafe { IsWindow(candidate) }.as_bool()
+        || unsafe { GetAncestor(candidate, GA_ROOTOWNER) } != handle
+    {
+        return None;
+    }
+    let mut token = unsafe { GetPropW(candidate, TOKEN) }.0 as usize;
+    if token == 0 && candidate == active && unsafe { IsWindowVisible(candidate) }.as_bool() {
+        token = usize::from_str_radix(&identity_token(candidate).ok()?, 16).ok()?;
+        let _ = unsafe { SetPropW(handle, MODAL_HINT, HANDLE(candidate.0)) };
+    }
+    if token == 0 {
+        return None;
+    }
+    Some(candidate)
+}
+
+pub fn capture(
+    candidate: &diagnostic::CandidateIdentity,
+    context: &(String, u32),
+) -> Result<Option<Window>, String> {
+    let token = match identity_token(candidate.hwnd) {
+        Ok(token) => token,
+        Err(_) => return Ok(None),
+    };
+    let mut window = Window {
+        identity: Identity {
+            token,
+            process_created: candidate.created,
+            executable: context.0.clone(),
+            session_id: context.1,
+        },
+        hwnd: candidate.hwnd.0 as usize,
+        pid: candidate.pid,
+        minimized: unsafe { IsIconic(candidate.hwnd) }.as_bool(),
+        responsive: !unsafe { IsHungAppWindow(candidate.hwnd) }.as_bool(),
+        layout: layout(candidate.hwnd)?,
+        popup: None,
+    };
+    let active = unsafe { GetLastActivePopup(candidate.hwnd) };
+    if active != candidate.hwnd && unsafe { IsWindowVisible(active) }.as_bool() {
+        let mut pid = 0;
+        unsafe {
+            GetWindowThreadProcessId(active, Some(&mut pid));
+        }
+        if pid != candidate.pid || identity_token(active).is_err() {
+            return Ok(None);
+        }
+        let _ = unsafe { SetPropW(candidate.hwnd, MODAL_HINT, HANDLE(active.0)) };
+    }
+    window.popup = popup(&window).map(|value| value.0 as usize);
+    if unsafe { GetWindowLongPtrW(candidate.hwnd, GWL_STYLE) } as u32 & WS_DISABLED.0 != 0
+        && window.popup.is_none()
+    {
+        return Ok(None);
+    }
+    Ok(validate(&window).then_some(window))
+}
+
+pub fn snapshot(
+    parent: u32,
+    candidates: &[diagnostic::CandidateIdentity],
+    serial: u64,
+) -> Result<Snapshot, String> {
+    let desktops = winvd::get_desktops().map_err(|e| format!("Desktop enumeration: {e:?}"))?;
+    if desktops.is_empty() || desktops.len() > 64 {
+        return Err("Desktop enumeration exceeded its supported bounds".into());
+    }
+    let current = winvd::get_current_desktop()
+        .and_then(|d| d.get_id())
+        .map_err(|e| format!("{e:?}"))?;
+    let records = desktops
+        .into_iter()
+        .map(|d| {
+            Ok(Desktop {
+                id: format!("{:?}", d.get_id().map_err(|e| format!("{e:?}"))?),
+                name: d
+                    .get_name()
+                    .map_err(|e| format!("{e:?}"))?
+                    .chars()
+                    .take(512)
+                    .collect(),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if !records
+        .iter()
+        .any(|desktop| desktop.id == format!("{current:?}"))
+    {
+        return Err("Desktop changed during enumeration; retrying".into());
+    }
+    let mut contexts = BTreeMap::new();
+    let mut windows = Vec::new();
+    for candidate in candidates {
+        if candidate.pid == parent || !diagnostic::still_same_window(candidate) {
+            continue;
+        }
+        let window_pin = winvd::is_pinned_window(candidate.hwnd);
+        let app_pin = winvd::is_pinned_app(candidate.hwnd);
+        // A candidate can disappear while the shell answers either query. Do not
+        // attribute its results to a destroyed or replaced window.
+        if !diagnostic::still_same_window(candidate) {
+            continue;
+        }
+        use rail_compatibility_probe::{pin::disposition, report::CandidateDisposition};
+        match disposition(&window_pin, &app_pin) {
+            CandidateDisposition::Unsupported => continue,
+            CandidateDisposition::Observed => {
+                if !matches!(window_pin, Ok(true)) && !matches!(app_pin, Ok(true)) {
+                    continue;
+                }
+            }
+            CandidateDisposition::QueryFailed => {
+                return Err(format!(
+                    "Pin eligibility unavailable: hwnd={:#x} pid={} created={} class={:?} window={window_pin:?} app={app_pin:?}",
+                    candidate.hwnd.0 as usize,
+                    candidate.pid,
+                    candidate.created,
+                    candidate.class_name.chars().take(256).collect::<String>(),
+                ));
+            }
+        }
+        if let std::collections::btree_map::Entry::Vacant(entry) = contexts.entry(candidate.pid) {
+            let Ok(context) = diagnostic::process_context(candidate.pid) else {
+                continue;
+            };
+            entry.insert(context);
+        }
+        if let Some(window) = capture(candidate, &contexts[&candidate.pid])? {
+            windows.push(window);
+        }
+    }
+    let after = winvd::get_current_desktop()
+        .and_then(|d| d.get_id())
+        .map_err(|e| format!("{e:?}"))?;
+    if current != after {
+        return Err("Desktop changed during enumeration; establishing a fresh baseline".into());
+    }
+    Ok(Snapshot {
+        desktops: records,
+        current: format!("{current:?}"),
+        windows,
+        tick: tick(),
+        transition_serial: serial,
+    })
+}

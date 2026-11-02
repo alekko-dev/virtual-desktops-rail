@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 pub const MINIMUM_BUILD: u32 = 26100;
 pub const MINIMUM_REVISION: u32 = 2605;
 
@@ -35,14 +35,29 @@ pub struct Candidate {
     pub process_id: u32,
     pub process_created: u64,
     pub minimized: bool,
+    pub class_name: String,
+    pub observed_ms: u64,
+    pub disposition: CandidateDisposition,
     pub window_pinned: Option<bool>,
     pub application_pinned: Option<bool>,
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CandidateDisposition {
+    Observed,
+    /// Both queries say there is no shell ApplicationView for this HWND.
+    Unsupported,
+    QueryFailed,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Sample {
     pub elapsed_ms: u64,
+    pub duration_ms: u64,
+    pub current_desktop: String,
+    pub desktop_stable: bool,
     pub candidates: Vec<Candidate>,
 }
 
@@ -50,6 +65,9 @@ pub struct Sample {
 pub struct Observation {
     pub elapsed_ms: u64,
     pub kind: String,
+    pub desktop: Option<String>,
+    pub previous_desktop: Option<String>,
+    pub hwnd: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -60,6 +78,25 @@ pub struct AdapterReport {
     pub events: Vec<Observation>,
     pub event_limit_reached: bool,
     pub reconciliation_interval_ms: u64,
+}
+
+impl AdapterReport {
+    pub fn complete(&self) -> bool {
+        !self.event_limit_reached
+            && !self.samples.is_empty()
+            && self.samples.iter().all(|sample| {
+                // An empty or wholly unsupported inventory cannot validate pin APIs.
+                sample.desktop_stable
+                    && sample
+                        .candidates
+                        .iter()
+                        .any(|candidate| candidate.disposition == CandidateDisposition::Observed)
+                    && sample
+                        .candidates
+                        .iter()
+                        .all(|candidate| candidate.disposition != CandidateDisposition::QueryFailed)
+            })
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -141,5 +178,52 @@ mod tests {
         assert_eq!(decoded.status, Status::Unavailable);
         assert!(decoded.observation.is_none());
         assert!(!decoded.remaining_release_gates.is_empty());
+    }
+
+    #[test]
+    fn missing_views_are_reported_without_masking_query_failures_or_empty_evidence() {
+        let candidate = |disposition| Candidate {
+            hwnd: 1,
+            process_id: 2,
+            process_created: 3,
+            minimized: false,
+            class_name: "Fixture".into(),
+            observed_ms: 4,
+            disposition,
+            window_pinned: None,
+            application_pinned: None,
+            error: None,
+        };
+        let mut report = AdapterReport {
+            current_desktop: "desktop".into(),
+            desktops: vec![],
+            samples: vec![],
+            events: vec![],
+            event_limit_reached: false,
+            reconciliation_interval_ms: 1000,
+        };
+        assert!(!report.complete());
+        report.samples.push(Sample {
+            elapsed_ms: 0,
+            duration_ms: 5,
+            current_desktop: "desktop".into(),
+            desktop_stable: true,
+            candidates: vec![candidate(CandidateDisposition::Unsupported)],
+        });
+        assert!(!report.complete());
+        report.samples[0]
+            .candidates
+            .push(candidate(CandidateDisposition::Observed));
+        assert!(report.complete());
+        report.samples[0]
+            .candidates
+            .push(candidate(CandidateDisposition::QueryFailed));
+        assert!(!report.complete());
+        report.samples[0].candidates.pop();
+        report.samples[0].desktop_stable = false;
+        assert!(!report.complete());
+        report.samples[0].desktop_stable = true;
+        report.event_limit_reached = true;
+        assert!(!report.complete());
     }
 }

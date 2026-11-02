@@ -11,12 +11,14 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 static WINDOW_COUNT: AtomicUsize = AtomicUsize::new(0);
 static DELAY_MS: AtomicU64 = AtomicU64::new(2000);
+mod appbar;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
     probe: bool,
     windows: usize,
     delay_ms: u64,
+    appbar: bool,
 }
 
 fn options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
@@ -25,10 +27,12 @@ fn options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
         probe: false,
         windows: 1,
         delay_ms: 2000,
+        appbar: false,
     };
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--probe" => result.probe = true,
+            "--appbar" => result.appbar = true,
             "--windows" => {
                 result.windows = args
                     .next()
@@ -52,6 +56,9 @@ fn options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
             _ => return Err(format!("Unknown argument: {argument}")),
         }
     }
+    if result.appbar && (result.probe || result.windows != 1) {
+        return Err("--appbar requires one window and cannot be combined with --probe".into());
+    }
     Ok(result)
 }
 
@@ -63,7 +70,7 @@ struct Point {
     y: i32,
 }
 #[repr(C)]
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct Rect {
     left: i32,
     top: i32,
@@ -142,6 +149,9 @@ unsafe extern "system" fn procedure(
     wparam: usize,
     lparam: isize,
 ) -> isize {
+    if let Some(result) = appbar::message(window, message, wparam, lparam) {
+        return result;
+    }
     if message == 1 {
         // Count only top-level windows registered with our custom class.
         WINDOW_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -182,8 +192,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "rail-native-smoke [--probe] [--windows 1..4] [--delay-ms 0..10000]\n\
+            "rail-native-smoke [--probe] [--windows 1..4] [--delay-ms 0..10000] [--appbar]\n\
             --probe prints foreground-window JSON without creating a window.\n\
+            --appbar creates a passive left-edge reservation fixture (one window only).\n\
             The dialog button opens an owned modal; the delay button stalls the fixture UI thread."
         );
         return Ok(());
@@ -217,7 +228,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
         let instance = GetModuleHandleW(null());
-        let class_name = wide("RailNativeSmoke");
+        let class_name = wide(if options.appbar {
+            "RailAppBarSmoke"
+        } else {
+            "RailNativeSmoke"
+        });
         let class = WindowClass {
             size: size_of::<WindowClass>() as u32,
             style: 0,
@@ -238,10 +253,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let title = wide("Virtual Desktop Rail - Native Smoke Fixture");
         for index in 0..options.windows {
             let window = CreateWindowExW(
-                0,
+                if options.appbar { 0x08000080 } else { 0 },
                 class_name.as_ptr(),
                 title.as_ptr(),
-                0x00cf0000,
+                if options.appbar {
+                    0x80000000
+                } else {
+                    0x00cf0000
+                },
                 150 + index as i32 * 40,
                 150 + index as i32 * 40,
                 640,
@@ -253,6 +272,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             if window.is_null() {
                 return Err(std::io::Error::last_os_error().into());
+            }
+            if options.appbar {
+                appbar::register(window)?;
+                ShowWindow(window, 4);
+                ShowWindow(window, 4);
+                continue;
             }
             let label = wide(
                 "Native x64 Rust / MSVC / Windows SDK check.\r\nMove, resize, minimize or maximize this window.\r\nDuplicate windows share one process when using --windows.\r\nClose all fixture windows to exit.",
@@ -329,7 +354,8 @@ mod tests {
             Options {
                 probe: false,
                 windows: 2,
-                delay_ms: 500
+                delay_ms: 500,
+                appbar: false
             }
         );
         assert!(parse(&["--windows", "0"]).is_err());
@@ -338,5 +364,7 @@ mod tests {
         assert!(parse(&["--delay-ms", "-1"]).is_err());
         assert!(parse(&["--delay-ms"]).is_err());
         assert!(parse(&["--unknown"]).is_err());
+        assert!(parse(&["--appbar", "--windows", "2"]).is_err());
+        assert!(parse(&["--appbar", "--probe"]).is_err());
     }
 }

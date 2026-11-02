@@ -2,6 +2,52 @@ use serde_json::Value;
 use std::process::Command;
 
 const PROBE: &str = env!("CARGO_BIN_EXE_rail-compatibility-probe");
+const EXERCISE: &str = env!("CARGO_BIN_EXE_rail-compatibility-exercise");
+const DESKTOP_EXERCISE: &str = env!("CARGO_BIN_EXE_rail-desktop-exercise");
+
+#[test]
+fn desktop_experiment_requires_an_explicit_mode_and_rejects_unknown_worker_requests() {
+    for args in [
+        vec![],
+        vec!["--run"],
+        vec!["--run-appbar-fixture", "--force"],
+    ] {
+        let output = Command::new(DESKTOP_EXERCISE).args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+    }
+    let help = Command::new(DESKTOP_EXERCISE)
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    let invalid = Command::new(DESKTOP_EXERCISE)
+        .args(["--worker", "{\"operation\":\"destroy_all\"}"])
+        .output()
+        .unwrap();
+    let result: Value = serde_json::from_slice(&invalid.stdout).unwrap();
+    assert!(result["Err"].as_str().unwrap().contains("unknown variant"));
+}
+
+#[test]
+fn mutating_experiment_requires_explicit_invocation() {
+    for args in [
+        vec![],
+        vec!["--run"],
+        vec!["--run-owned-fixture", "--force"],
+    ] {
+        let output = Command::new(EXERCISE).args(args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stdout.is_empty());
+    }
+    let help = Command::new(EXERCISE).arg("--help").output().unwrap();
+    assert!(help.status.success());
+    assert!(
+        String::from_utf8(help.stdout)
+            .unwrap()
+            .contains("No desktop switching")
+    );
+}
 
 #[test]
 fn invalid_arguments_and_help_have_distinct_exit_statuses() {

@@ -1,18 +1,18 @@
 //! Compatibility gate, not the product rail. Never changes desktop/window state.
+use rail_compatibility_probe::storage::replace as write_report;
 #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
 compile_error!("The compatibility probe requires Windows x64.");
 
 mod adapter;
-mod platform;
-mod report;
+use rail_compatibility_probe::{platform, report};
 
 use report::{AdapterReport, Report, Status};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::io::Write;
+use std::path::PathBuf;
+use std::process::Command;
+use std::time::Duration;
 
-const MAX_WORKER_BYTES: u64 = 8 * 1024 * 1024;
+use rail_compatibility_probe::subprocess::run_bounded;
 
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
@@ -51,59 +51,6 @@ fn options(args: impl IntoIterator<Item = String>) -> Result<Options, String> {
     Ok(result)
 }
 
-struct OwnedChild(Child);
-
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        // Only our subprocess is terminated, including on error/panic paths.
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
-fn run_bounded(mut command: Command, timeout: Duration) -> Result<Vec<u8>, String> {
-    let mut child = OwnedChild(
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("Cannot start isolated probe: {error}"))?,
-    );
-    let output = child.0.stdout.take().ok_or("Missing worker output pipe")?;
-    // Drain concurrently so a full pipe cannot make a responsive worker time out.
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        output.take(MAX_WORKER_BYTES + 1).read_to_end(&mut bytes)?;
-        Ok::<_, std::io::Error>(bytes)
-    });
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.0.try_wait() {
-            Ok(Some(status)) => {
-                let bytes = reader
-                    .join()
-                    .map_err(|_| "Probe output reader failed")?
-                    .map_err(|error| error.to_string())?;
-                if bytes.len() as u64 > MAX_WORKER_BYTES {
-                    return Err("Probe output exceeded the diagnostic size limit".into());
-                }
-                if !status.success() {
-                    return Err(format!("Isolated probe failed or crashed ({status})"));
-                }
-                return Ok(bytes);
-            }
-            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            Ok(None) => {
-                drop(child);
-                let _ = reader.join();
-                return Err("Shell integration timed out; isolated probe terminated".into());
-            }
-            Err(error) => return Err(format!("Cannot observe probe process: {error}")),
-        }
-    }
-}
-
 fn isolated_observation(seconds: u64) -> Result<AdapterReport, String> {
     use std::os::windows::process::CommandExt;
     let mut command = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
@@ -114,51 +61,6 @@ fn isolated_observation(seconds: u64) -> Result<AdapterReport, String> {
     let result: Result<AdapterReport, String> = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Invalid worker response: {error}"))?;
     result
-}
-
-fn write_report(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-    use std::os::windows::ffi::OsStrExt;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn MoveFileExW(source: *const u16, target: *const u16, flags: u32) -> i32;
-    }
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let nonce = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let temporary = parent.join(format!(".rail-probe-{}-{nonce}.tmp", std::process::id()));
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)?;
-    let replace = (|| -> Result<(), Box<dyn std::error::Error>> {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        let wide = |path: &Path| -> Result<Vec<u16>, std::io::Error> {
-            let mut value: Vec<_> = path.as_os_str().encode_wide().collect();
-            if value.contains(&0) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "NUL in output path",
-                ));
-            }
-            value.push(0);
-            Ok(value)
-        };
-        let source = wide(&temporary)?;
-        let target = wide(path)?;
-        // Same-directory replacement preserves the previous report on write failure.
-        if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), 1 | 8) } == 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        Ok(())
-    })();
-    if replace.is_err() {
-        let _ = std::fs::remove_file(temporary);
-    }
-    replace
 }
 
 fn run() -> Result<i32, Box<dyn std::error::Error>> {
@@ -188,16 +90,11 @@ fn run() -> Result<i32, Box<dyn std::error::Error>> {
     if os.meets_adapter_minimum() {
         match isolated_observation(options.seconds) {
             Ok(observation) => {
-                let errors = observation
-                    .samples
-                    .iter()
-                    .flat_map(|sample| &sample.candidates)
-                    .any(|candidate| candidate.error.is_some());
-                if errors || observation.event_limit_reached {
-                    report.explanation = "Observations were incomplete (pin-query failures or event limit reached). Compatibility is not established.".into();
+                if !observation.complete() {
+                    report.explanation = "Observations were incomplete (pin-query failures, no queryable candidates, a desktop change during sampling, or event limit reached). Compatibility is not established.".into();
                 } else {
                     report.status = Status::Observed;
-                    report.explanation = "Read-only queries and notification registration completed. This is not product certification; interactive release gates remain pending.".into();
+                    report.explanation = "Read-only queries completed and a notification listener thread was started. This does not verify notification delivery or certify the product; interactive release gates remain pending.".into();
                 }
                 report.observation = Some(observation);
             }
@@ -230,6 +127,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn arguments_are_bounded_and_do_not_allow_a_worker_to_write_files() {

@@ -1,78 +1,95 @@
 # Implementation status
 
-Verified 2026-11-01 on Windows x64 build **10.0.26300.9457**. This records
-completed work, not a claim that the MVP is implemented. The current toolchain
-and environment checks are in [Environment-Readiness.md](Environment-Readiness.md).
+Updated 2026-11-02. The native Windows MVP is implemented. The documented
+compatibility gate was preserved and passed on **Windows 11 x64 10.0.26300.9457**
+before rail feature work began. See [Compatibility-Evidence](Compatibility-Evidence.md).
+This is a development MVP; broader release certification remains open. See
+[2026-11-02 follow-up](Validation-2026-11-02.md) for the newer-revision opt-in,
+measured resource results and deferred checks.
 
-## Compatibility gate
+## Implemented
 
-The pinned `winvd 0.0.49` dependency requires at least **26100.2605**, as stated
-in its [upstream documentation](https://github.com/Ciantic/VirtualDesktopAccessor/tree/rust).
-The current OS clears that version gate. The live probe reaches the shell APIs,
-but returns incomplete pin-query observations, so compatibility is not established.
-The architecture's gate remains:
-
-> Failures here or in pin-state discovery must be resolved before feature work proceeds.
-
-Investigate candidate eligibility and pin-query failures, then complete the
-four-desktop compatibility scenarios before implementing the rail shell/controller.
-Meeting the minimum does not certify this exact shell revision.
-
-## Completed
-
-- Cargo workspace and root lockfile with exact direct dependency versions;
-  the native fixture remains dependency-free.
-- `rail-compatibility-probe`: manifest-independent Windows version query plus
-  update revision; unsupported-build rejection in both parent and worker;
-  schema-versioned JSON and same-directory atomic report replacement.
-- On eligible builds, read-only desktop enumeration, names/GUIDs, current desktop,
-  bounded notification recording, and both window/app pin queries. Candidates
-  include minimized windows and exclude owned/helper windows, known shell classes,
-  and the probe. Observations revalidate PID and process creation time after
-  queries. Candidate enumeration is preliminary, not a product eligibility policy
-  or a solution to same-process HWND reuse.
-- Shell integration confined to an owned subprocess; bounded output and a
-  duration-plus-ten-second watchdog cover COM calls and listener teardown.
-  A timeout terminates/reaps only the probe subprocess. The notification channel
-  uses bounded `try_send`; event overflow may drop events, so this diagnostic does
-  not certify lossless notification coverage or precise pin-change latency.
-- Native fixture duplicate windows, an owned modal dialog, and a configurable
-  bounded UI stall. Release `--probe` now reliably writes redirected stdout.
-- Workspace check script runs formatting, Clippy with warnings denied, all tests,
-  and locked release builds.
+- A 25-DIP primary-monitor left AppBar with shape-distinguished desktop dots,
+  name tooltips, icon-only shared-window buttons, pause and settings. Native
+  keyboard controls and accessible button captions; no title tooltips or labels.
+- Discovery of eligible window-pinned OR application-pinned ordinary windows,
+  including minimized windows. Cached candidates reconcile once per second;
+  shell/window events trigger rescans and a 30-second safety rescan bounds drift.
+- Minimize on confirmed desktop transitions, restore only on explicit request.
+  Pause persists and cancels queued automatic work; resume, startup, pin discovery,
+  and integration recovery establish baselines without unsolicited minimization.
+- Independent normal/maximized layouts per window and desktop. Move/resize end
+  events commit geometry; utility-generated or external restoration does not
+  overwrite saved desktop layouts. Monitor/DPI adjustment clamps restored bounds.
+- Stable opaque window properties combined with process lifetime, executable,
+  and session. Duplicate windows retain independent identities through utility
+  restarts. New application lifetimes receive new identities; no heuristic match.
+- Asynchronous window actions, per-window sequencing, generation cancellation,
+  two-second verification deadlines and one outstanding operation per window.
+  Timed-out operations remain quarantined until verified or the identity dies;
+  late completion cannot focus the window or commit geometry. Owned modal dialogs
+  stay grouped with their owner and are explicitly revealed on restoration.
+- Shell COM isolated in an owned worker with bounded protocol/queues, watchdog,
+  kill-on-parent-close JobObject, and reconnect backoff. TaskbarCreated handling
+  re-registers the AppBar and reconnects with a fresh controller baseline.
+- Visible unavailable status and retry controls. The exact validated OS revision
+  enables integration by default. A persisted experimental opt-in allows newer
+  revisions of build 26300, while other builds remain blocked. Inaccessible and
+  unsupported surfaces are excluded; mixed pin-query failures remain failures.
+- Per-user/session single instance, per-user opt-in Startup shortcut, atomic local
+  JSON state, previous-state recovery, corrupt-file preservation, debounced writes,
+  bounded local diagnostics and coordinated cross-session merges. No HWND is
+  persisted as an identity. No network dependency for the core workflow.
+- Per-Monitor V2/asInvoker manifest, identity/DPI icon cache, light/dark rendering,
+  high-contrast system palette, unchanged normal icons with under-icon state
+  indicators, AppBar fullscreen yielding and foreground-event recovery of z-order. Static CRT
+  release configuration and a portable ZIP packaging script with license notices.
 
 ## Verification
 
-- Formatting, Clippy with warnings denied, all ten automated tests, and locked
-  release builds pass. Tests cover the minimum build boundary, report schema and
-  replacement, CLI validation, worker crashes/timeouts, worker file-write
-  rejection, and bounded fixture options. The unsupported-host CLI test returns
-  early on this build, so it does not exercise live build rejection here.
-- Release probe returns exit **2**, `status: unavailable`, build **26300.9457**.
-  It enumerates one desktop and obtains several window/application pin states,
-  including both fixture windows. Two candidates return `Pin query: WindowNotFound`.
-  Report: `artifacts/compatibility-new-vm-rebuilt.json` (ignored).
-- Release fixture launches with two windows requested and a 1500 ms stall
-  configuration, exposing a nonzero main-window handle and expected title in
-  Explorer session 2. The owned process is cleaned up after verification.
-- Foreground probe reports 120 DPI and a 1708 x 960 display. Visual interaction,
-  modal behavior, delayed-response behavior, and foreground fixture matching
-  remain unverified on this environment.
+`scripts/check-dev.ps1` runs formatting, warnings-denied Clippy, **41 tests**, and
+locked release builds. Tests cover the pure controller's race/recovery behavior,
+monitor clamping, schema validation, atomic storage, corrupt-file recovery,
+cross-session merging, isolated Startup shortcut creation/removal, diagnostic
+bounds, subprocess failures/watchdogs, and CLI contracts.
 
-The supported-build COM branch has run, but incomplete observations prevent a
-compatibility pass. Query failures alone do not establish an ABI failure.
-No product performance or support certification follows from these checks.
+[Live-Validation](Live-Validation.md) records the interactive product checks and
+local evidence. They include real move/resize and A/B/A layout restoration,
+maximized restore, owner/modal focus, duplicate utility restart, conservative
+application restart, pause/resume, unpin/app-pin discovery, second launch,
+fresh-baseline integration retry, and a five-second stalled application with a
+responsive rail. A final portable-build sample with an empty managed inventory
+reported **3,993,600 combined private working-set bytes** and **0 ms CPU over
+30.007 seconds**, at finite counter resolution. A clean populated-workload sample
+is now recorded in [the follow-up](Validation-2026-11-02.md): 4,730,880 combined
+private working-set bytes and 62.5 ms CPU over 30.103 seconds with two stable
+managed windows. See that document for measurement caveats. This is not
+physical-hardware certification.
 
-## Remaining work
+## Remaining release validation
 
-1. On a serviced compatible guest, verify GUID/event identity, desktop switching,
-   both pin modes and idle discovery latency, and stable duplicate-window tokens
-   across utility restart. The checker can collect query/notification evidence;
-   it deliberately does not exercise mutating shell operations.
-2. Validate AppBar reservation and presence across desktops, owned dialogs/focus,
-   privilege boundaries, and late operations on delayed or hung windows.
-3. Implement the native rail, accessible controls, controller/action ordering,
-   per-desktop layouts, persistence/reassociation, pause/startup settings, recovery,
-   DPI/fullscreen behavior, and single-instance enforcement as documented.
-4. Run the documented serialized integration matrix, release resource/latency
-   measurements, and physical-machine validation.
+- Real Explorer restart under a recorded recoverable host checkpoint, sleep/resume,
+  lock/unlock and session reconnect coverage; explicit retry is already tested.
+- Obsidian's disposable-vault end-to-end workflow and additional application types.
+- Physical hardware, mixed DPI, monitor disconnect/reconnect, primary-display
+  changes, screen-reader review, and light/dark/high-contrast visual coverage.
+- Additional supported OS revisions and privilege combinations. The version gate
+  intentionally stays closed after an unvalidated Windows update.
+- Dedicated event-receipt-to-action-dispatch latency instrumentation against the
+  provisional 50 ms target: instrumentation is now implemented, but a first VM
+  sample was 72.635 ms. Broader realistic-workload measurements remain open.
+- Desktop-name hover and wider native-style input coverage. Real icon clicks and
+  keyboard pause/resume passed through computer use in temporary automation
+  visibility mode; see Live-Validation for its scope and the fixed focus regression.
+
+The MVP assumes approximately two or three managed windows and has no overflow
+UI. State is bounded to 512 identities and 64 desktop layouts per identity;
+reaching the identity limit omits new identities. History management and broader
+application/elevated-window support are outside this development build.
+
+## Run and package
+
+See [README](../README.md) for launch/control commands. `scripts/package.ps1`
+builds a local unsigned portable ZIP under `artifacts/`, including the executable,
+usage notes, dependency licenses and SHA-256. No automatic startup is enabled by
+building or launching the app. No public release or publication is performed.

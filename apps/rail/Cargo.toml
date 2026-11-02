@@ -1,0 +1,17 @@
+[package]
+name = "virtual-desktop-rail"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rail-core = { path = "../../crates/rail-core" }
+rail-compatibility-probe = { path = "../../tools/compatibility-probe" }
+serde.workspace = true
+serde_json.workspace = true
+windows.workspace = true
+crossbeam-channel.workspace = true
+
+[dependencies.winvd]
+workspace = true
+features = ["crossbeam-channel"]
