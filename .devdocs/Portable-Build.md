@@ -17,7 +17,7 @@ cause. Use the checkbox in this updated build. Revision 9818 has not been tested
 on the user's physical PC; VM checks on 9711 do not establish its compatibility.
 
 The left rail reserves 25 DIP on the primary monitor. Desktop dots switch
-desktops; hovering shows names. App icons represent eligible windows pinned
+desktops; hovering shows names. Dots receive automatic distinct colors, with a larger filled circle for the active desktop and colored outlines for the others. App icons represent eligible windows pinned
 through Windows Task View, including application-level pinning. Pin discovery
 uses cached candidates once per second. Expect approximately two or three
 shared windows; this MVP has no overflow controls.
@@ -43,7 +43,7 @@ Startup, recovery, resume and enabling the setting do not move or reveal windows
 the next desktop switch applies the policy.
 
 The bottom pause button suspends automatic window actions; manual controls continue
-working. The gear opens settings, including start with Windows, integration
+working. The sliders button opens settings, including start with Windows, integration
 retry, and exit. `virtual-desktop-rail.exe --settings` also opens settings.
 Startup is opt-in and uses a per-user Startup shortcut. Moving this directory
 after enabling startup requires turning startup off and back on at the new path.

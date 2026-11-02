@@ -54,6 +54,8 @@ not certify that revision; runtime query failures still disable dependent contro
 The same preference can be changed on a running instance with
 `./scripts/Invoke-Rail.ps1 --experimental-integration on` (or `off`).
 
+Desktop dots receive automatic contrasting colors (blue, orange, purple, then other hue families). The current desktop is a larger filled circle; inactive desktops use colored outlines. The rail uses smooth dots, spaced window buttons, and a drawn sliders control for Settings.
+
 App icons keep their regular appearance when minimized. The indicator underneath
 is solid for visible windows and outlined for minimized windows.
 

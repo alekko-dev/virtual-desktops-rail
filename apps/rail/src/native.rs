@@ -57,7 +57,6 @@ unsafe extern "system" {
     pub fn BeginPaint(window: Handle, paint: *mut Paint) -> Handle;
     pub fn EndPaint(window: Handle, paint: *const Paint) -> i32;
     pub fn FillRect(dc: Handle, rect: *const Rect, brush: Handle) -> i32;
-    pub fn DrawTextW(dc: Handle, text: *const u16, count: i32, rect: *mut Rect, flags: u32) -> i32;
     pub fn DrawIconEx(
         dc: Handle,
         x: i32,
@@ -79,13 +78,8 @@ unsafe extern "system" {
 #[link(name = "gdi32")]
 unsafe extern "system" {
     pub fn CreateSolidBrush(color: u32) -> Handle;
-    pub fn CreatePen(style: i32, width: i32, color: u32) -> Handle;
     pub fn DeleteObject(object: Handle) -> i32;
     pub fn SelectObject(dc: Handle, object: Handle) -> Handle;
-    pub fn Ellipse(dc: Handle, left: i32, top: i32, right: i32, bottom: i32) -> i32;
-    pub fn Rectangle(dc: Handle, left: i32, top: i32, right: i32, bottom: i32) -> i32;
-    pub fn SetBkMode(dc: Handle, mode: i32) -> i32;
-    pub fn SetTextColor(dc: Handle, color: u32) -> u32;
     pub fn CreateCompatibleDC(dc: Handle) -> Handle;
     pub fn CreateCompatibleBitmap(dc: Handle, width: i32, height: i32) -> Handle;
     pub fn DeleteDC(dc: Handle) -> i32;

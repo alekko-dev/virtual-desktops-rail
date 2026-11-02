@@ -14,7 +14,7 @@
   --rail-muted: light-dark(#62646e, #b0b1ba);
   --rail-border: light-dark(#d8dae0, #404148);
   --rail-hover: light-dark(#e7e8ec, #34353a);
-  --rail-accent: light-dark(#5d40aa, #c0a8f4);
+  --rail-accent: light-dark(#0068b0, #64b5f6);
   --rail-selected: light-dark(#e8e0f6, #40354f);
 }
 * { box-sizing: border-box; }
@@ -58,15 +58,18 @@ button {
 button:hover { background: var(--rail-hover); }
 button:focus-visible { outline: 2px solid var(--rail-accent); outline-offset: 1px; }
 .desktop-button { height: 30px; }
-.desktop-dot { width: 7px; height: 7px; border: 1.5px solid var(--rail-muted); border-radius: 50%; }
-.desktop-button[aria-current="true"] .desktop-dot { width: 10px; height: 10px; border: 0; border-radius: 2px; background: var(--rail-accent); }
+.desktop-dot { width: 7px; height: 7px; border: 1.5px solid var(--desktop-color); border-radius: 50%; }
+.desktop-button[aria-current="true"] .desktop-dot { width: 10px; height: 10px; border: 0; border-radius: 50%; background: var(--desktop-color); }
+.desktop-button:nth-child(1) { --desktop-color: light-dark(#256bc5, #66b3f5); }
+.desktop-button:nth-child(2) { --desktop-color: light-dark(#d07e08, #f5ad56); }
+.desktop-button:nth-child(3) { --desktop-color: light-dark(#942dbd, #dc8cf0); }
 .separator { height: 1px; width: min(20px, calc(var(--rail-width) - 10px)); margin: 3px 0; background: var(--rail-border); }
 .application-button { height: 39px; }
 .application-button svg { width: min(23px, calc(var(--rail-width) - 8px)); height: min(23px, calc(var(--rail-width) - 8px)); }
 .application-button.notes { color: var(--rail-accent); }
-.application-button.visible { background: var(--rail-selected); }
-.window-status { position: absolute; left: 50%; bottom: 3px; transform: translateX(-50%); width: 4px; height: 3px; border-radius: 2px; background: var(--rail-muted); }
-.application-button.visible .window-status { width: 10px; background: var(--rail-accent); }
+.application-button.visible { background: transparent; }
+.window-status { position: absolute; left: 50%; bottom: 3px; transform: translateX(-50%); width: 10px; height: 3px; border: 1px solid var(--rail-muted); background: transparent; }
+.application-button.visible .window-status { width: 10px; border: 0; background: var(--rail-accent); }
 .utility-button { height: 34px; }
 .utility-button svg { width: min(17px, calc(var(--rail-width) - 8px)); height: min(17px, calc(var(--rail-width) - 8px)); }
 svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }

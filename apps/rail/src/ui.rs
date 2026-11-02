@@ -476,7 +476,7 @@ impl App {
 
     fn render(&mut self, force: bool) {
         let dpi = unsafe { GetDpiForWindow(self.window) }.max(96);
-        let cell = ((25 * dpi + 48) / 96) as i32;
+        let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
         let signature = format!(
             "{:?}|{:?}|{}|{}|{:?}|{}|{}",
             self.model.desktops,
@@ -573,7 +573,7 @@ impl App {
                     null_mut(),
                 )
             };
-            let mut y = 4;
+            let mut y = scale(12);
             let desktops = self.model.desktops.clone();
             for (index, desktop) in desktops.iter().enumerate() {
                 let name = if desktop.name.is_empty() {
@@ -590,7 +590,7 @@ impl App {
                     100 + index,
                     &caption,
                     y,
-                    cell,
+                    scale(30),
                     ButtonKind::Desktop(desktop.id.clone()),
                 );
                 unsafe {
@@ -612,9 +612,9 @@ impl App {
                 unsafe {
                     SendMessageW(self.tooltip, 0x432, 0, &mut info as *mut _ as isize);
                 }
-                y += cell;
+                y += scale(33);
             }
-            y += 8;
+            y += scale(15);
             let windows = self
                 .model
                 .windows
@@ -631,7 +631,7 @@ impl App {
                     1000 + index,
                     &format!("Shared {name} window {}", index + 1),
                     y,
-                    cell,
+                    scale(39),
                     ButtonKind::Window(key.clone()),
                 );
                 unsafe {
@@ -644,7 +644,7 @@ impl App {
                 {
                     self.icon_pending.insert(icon_key);
                 }
-                y += cell;
+                y += scale(45);
             }
             let mut bounds = Rect::default();
             unsafe {
@@ -657,15 +657,15 @@ impl App {
                 } else {
                     "Pause automatic window actions"
                 },
-                bounds.bottom - 2 * cell,
-                cell,
+                bounds.bottom - scale(82),
+                scale(34),
                 ButtonKind::Pause,
             );
             self.button(
                 SETTINGS,
                 &format!("Settings. {}", self.status),
-                bounds.bottom - cell,
-                cell,
+                bounds.bottom - scale(42),
+                scale(34),
                 ButtonKind::Settings,
             );
             let live = self
@@ -711,7 +711,7 @@ impl App {
                 0x5001000b,
                 0,
                 y,
-                cell,
+                ((25 * GetDpiForWindow(self.window).max(96) + 48) / 96) as i32 - 1,
                 cell,
                 self.window,
                 id as Handle,
@@ -990,9 +990,73 @@ fn palette() -> (u32, u32, u32, u32) {
         return (background, text, text, text);
     }
     if dark() {
-        (0x00202020, 0x00eeeeee, 0x00f6b564, 0x00006add)
+        (0x00252120, 0x00efecec, 0x00f6b564, 0x00006add)
     } else {
-        (0x00f7f7f7, 0x00202020, 0x00b06800, 0x00006add)
+        (0x00f9f7f7, 0x00252120, 0x00b06800, 0x00006add)
+    }
+}
+
+// Alternate hue families so adjacent desktops are easy to distinguish.
+fn desktop_color(index: usize, dark: bool) -> u32 {
+    const LIGHT: [u32; 8] = [
+        0xC56B25, 0x087ED0, 0xBD2D94, 0x738500, 0x6250CD, 0x00949E, 0x896746, 0xA957BC,
+    ];
+    const DARK: [u32; 8] = [
+        0xF5B366, 0x56ADF5, 0xF08CDC, 0xB4CE50, 0xA09AFF, 0x63DCE5, 0xCEB190, 0xDB94ED,
+    ];
+    if index < LIGHT.len() {
+        return if dark { DARK[index] } else { LIGHT[index] };
+    }
+    let hue = ((index - LIGHT.len()) as f64 * 137.508 + 17.0) % 360.0;
+    let chroma = if dark { 0.50 } else { 0.65 };
+    let base = if dark { 0.40 } else { 0.12 };
+    let x = chroma * (1.0 - ((hue / 60.0) % 2.0 - 1.0).abs());
+    let (r, g, b) = match (hue / 60.0) as usize {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let channel = |v: f64| ((v + base) * 255.0).round() as u32;
+    channel(r) | channel(g) << 8 | channel(b) << 16
+}
+
+// Analytic pixel coverage avoids jagged circles and scales with the rail DPI.
+fn smooth_shape(
+    dc: Handle,
+    width: i32,
+    height: i32,
+    background: u32,
+    color: u32,
+    distance: impl Fn(f64, f64) -> f64,
+) {
+    use windows::Win32::{
+        Foundation::COLORREF,
+        Graphics::Gdi::{HDC, SetPixelV},
+    };
+    let scale = width as f64 / 25.0;
+    for y in 0..height {
+        for x in 0..width {
+            let d = distance(
+                (x as f64 + 0.5 - width as f64 / 2.0) / scale,
+                (y as f64 + 0.5 - height as f64 / 2.0) / scale,
+            );
+            let coverage = (0.5 - d * scale).clamp(0.0, 1.0);
+            if coverage == 0.0 {
+                continue;
+            }
+            let mut blended = 0;
+            for shift in [0, 8, 16] {
+                let a = ((background >> shift) & 255) as f64;
+                let b = ((color >> shift) & 255) as f64;
+                blended |= ((a + (b - a) * coverage).round() as u32) << shift;
+            }
+            unsafe {
+                let _ = SetPixelV(HDC(dc), x, y, COLORREF(blended));
+            }
+        }
     }
 }
 
@@ -1007,7 +1071,7 @@ fn draw(app: &App, item: &DrawItem) {
         let dc = CreateCompatibleDC(item.dc);
         let bitmap = CreateCompatibleBitmap(item.dc, width, height);
         let previous = SelectObject(dc, bitmap);
-        let mut bounds = Rect {
+        let bounds = Rect {
             left: 0,
             top: 0,
             right: width,
@@ -1019,32 +1083,25 @@ fn draw(app: &App, item: &DrawItem) {
             match &button.kind {
                 ButtonKind::Desktop(id) => {
                     let active = app.model.current.as_ref() == Some(id);
-                    let radius = if active { 5 } else { 4 };
-                    let pen = CreatePen(0, 1, if active { accent } else { text });
-                    let brush = CreateSolidBrush(if active { accent } else { background });
-                    let oldpen = SelectObject(dc, pen);
-                    let oldbrush = SelectObject(dc, brush);
-                    if active {
-                        Rectangle(
-                            dc,
-                            center - radius,
-                            height / 2 - radius,
-                            center + radius,
-                            height / 2 + radius,
-                        );
+                    let index = app
+                        .model
+                        .desktops
+                        .iter()
+                        .position(|d| &d.id == id)
+                        .unwrap_or(0);
+                    let color = if accent == text {
+                        text
                     } else {
-                        Ellipse(
-                            dc,
-                            center - radius,
-                            height / 2 - radius,
-                            center + radius,
-                            height / 2 + radius,
-                        );
-                    }
-                    SelectObject(dc, oldpen);
-                    SelectObject(dc, oldbrush);
-                    DeleteObject(pen);
-                    DeleteObject(brush);
+                        desktop_color(index, dark())
+                    };
+                    smooth_shape(dc, width, height, background, color, |x, y| {
+                        let distance = (x * x + y * y).sqrt();
+                        if active {
+                            distance - 5.0
+                        } else {
+                            (distance - 2.75).abs() - 0.75
+                        }
+                    });
                 }
                 ButtonKind::Window(key) => {
                     let icon = app
@@ -1094,18 +1151,29 @@ fn draw(app: &App, item: &DrawItem) {
                     }
                 }
                 ButtonKind::Pause | ButtonKind::Settings => {
-                    let symbol = if matches!(button.kind, ButtonKind::Settings) {
-                        "⚙"
-                    } else if app.model.saved.paused {
-                        "▶"
-                    } else {
-                        "Ⅱ"
-                    };
-                    let old = SelectObject(dc, app.font);
-                    SetBkMode(dc, 1);
-                    SetTextColor(dc, text);
-                    DrawTextW(dc, wide(symbol).as_ptr(), -1, &mut bounds, 0x25);
-                    SelectObject(dc, old);
+                    smooth_shape(dc, width, height, background, text, |x, y| {
+                        if matches!(button.kind, ButtonKind::Settings) {
+                            let track = |yy: f64| (y - yy).abs().max(x.abs() - 7.0) - 0.8;
+                            let ring = |xx: f64, yy: f64| {
+                                (((x - xx).powi(2) + (y - yy).powi(2)).sqrt() - 2.5).abs() - 0.8
+                            };
+                            let upper = if (x + 3.0).abs() < 3.0 {
+                                100.0
+                            } else {
+                                track(-4.0)
+                            };
+                            let lower = if (x - 3.0).abs() < 3.0 {
+                                100.0
+                            } else {
+                                track(4.0)
+                            };
+                            upper.min(lower).min(ring(-3.0, -4.0)).min(ring(3.0, 4.0))
+                        } else if app.model.saved.paused {
+                            (-x - 4.0).max(y.abs() * 1.4 + x - 4.0)
+                        } else {
+                            ((x.abs() - 3.0).abs() - 0.9).max(y.abs() - 6.0)
+                        }
+                    });
                     if matches!(button.kind, ButtonKind::Settings) {
                         fill(
                             dc,
@@ -1265,6 +1333,32 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             unsafe {
                 let dc = BeginPaint(window, &mut paint);
                 fill(dc, &paint.rect, palette().0);
+                let dpi = GetDpiForWindow(window).max(96) as i32;
+                let scale = |dip: i32| (dip * dpi + 48) / 96;
+                let mut client = Rect::default();
+                GetClientRect(window, &mut client);
+                let border = if dark() { 0x00484140 } else { 0x00e0dad8 };
+                fill(
+                    dc,
+                    &Rect {
+                        left: client.right - 1,
+                        top: 0,
+                        right: client.right,
+                        bottom: client.bottom,
+                    },
+                    border,
+                );
+                let y = scale(12 + 33 * app.model.desktops.len() as i32 + 3);
+                fill(
+                    dc,
+                    &Rect {
+                        left: scale(5),
+                        top: y,
+                        right: client.right - scale(5),
+                        bottom: y + scale(1).max(1),
+                    },
+                    border,
+                );
                 EndPaint(window, &paint);
             }
             0
@@ -1570,4 +1664,29 @@ pub fn remote(command: &Command) -> Result<bool, String> {
         return Err("The running rail did not accept the request within one second.".into());
     }
     Ok(true)
+}
+
+#[cfg(test)]
+mod visual_tests {
+    use super::desktop_color;
+    #[test]
+    fn desktop_palette_is_distinct_and_does_not_wrap_after_eight() {
+        for dark in [false, true] {
+            let colors: std::collections::BTreeSet<_> =
+                (0..64).map(|i| desktop_color(i, dark)).collect();
+            assert_eq!(colors.len(), 64);
+            for a in 0..3 {
+                for b in a + 1..3 {
+                    let difference: u32 = [0, 8, 16]
+                        .iter()
+                        .map(|shift| {
+                            ((desktop_color(a, dark) >> shift) & 255)
+                                .abs_diff((desktop_color(b, dark) >> shift) & 255)
+                        })
+                        .sum();
+                    assert!(difference > 150);
+                }
+            }
+        }
+    }
 }
