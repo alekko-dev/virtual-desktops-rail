@@ -15,6 +15,19 @@ use std::sync::{
 };
 
 const CLASS: &str = "VirtualDesktopRail";
+// LR_SHARED keeps resource icons cached by Windows; callers must not destroy them.
+fn app_icon(size: i32) -> Handle {
+    unsafe {
+        LoadImageW(
+            GetModuleHandleW(null()),
+            101usize as *const u16,
+            1,
+            size,
+            size,
+            0x8000,
+        )
+    }
+}
 const PAUSE: usize = 5000;
 const SETTINGS: usize = 5001;
 const SET_PAUSE: usize = 6000;
@@ -555,7 +568,7 @@ impl App {
                     null_mut(),
                 )
             };
-            let mut y = scale(12);
+            let mut y = scale(42);
             let desktops = self.model.desktops.clone();
             for (index, desktop) in desktops.iter().enumerate() {
                 let name = if desktop.name.is_empty() {
@@ -1444,6 +1457,18 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                 let scale = |dip: i32| (dip * dpi + 48) / 96;
                 let mut client = Rect::default();
                 GetClientRect(window, &mut client);
+                let size = scale(18);
+                DrawIconEx(
+                    dc,
+                    (client.right - 1 - size) / 2,
+                    scale(12),
+                    app_icon(size),
+                    size,
+                    size,
+                    0,
+                    null_mut(),
+                    3,
+                );
                 let border = if dark() { 0x00484140 } else { 0x00e0dad8 };
                 fill(
                     dc,
@@ -1455,7 +1480,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     },
                     border,
                 );
-                let y = scale(12 + 33 * app.model.desktops.len() as i32 + 3);
+                let y = scale(42 + 33 * app.model.desktops.len() as i32 + 3);
                 fill(
                     dc,
                     &Rect {
@@ -1657,12 +1682,12 @@ pub fn run(settings: bool) -> Result<(), String> {
             class_extra: 0,
             window_extra: 0,
             instance,
-            icon: LoadIconW(null_mut(), 32512usize as *const u16),
+            icon: app_icon(32),
             cursor: LoadCursorW(null_mut(), 32512usize as *const u16),
             background: null_mut(),
             menu_name: null(),
             class_name: class_name.as_ptr(),
-            small_icon: null_mut(),
+            small_icon: app_icon(16),
         };
         if RegisterClassExW(&class) == 0 {
             return Err(std::io::Error::last_os_error().to_string());

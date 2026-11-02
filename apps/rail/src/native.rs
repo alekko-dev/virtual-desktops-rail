@@ -70,6 +70,14 @@ unsafe extern "system" {
     ) -> i32;
     pub fn DrawFocusRect(dc: Handle, rect: *const Rect) -> i32;
     pub fn LoadIconW(instance: Handle, name: *const u16) -> Handle;
+    pub fn LoadImageW(
+        instance: Handle,
+        name: *const u16,
+        kind: u32,
+        width: i32,
+        height: i32,
+        flags: u32,
+    ) -> Handle;
     pub fn DestroyIcon(icon: Handle) -> i32;
     pub fn SendMessageW(window: Handle, message: u32, wparam: usize, lparam: isize) -> isize;
     pub fn SetWindowTextW(window: Handle, text: *const u16) -> i32;

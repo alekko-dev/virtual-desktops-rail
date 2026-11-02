@@ -55,6 +55,9 @@ accepted for compatibility, but neither value changes build eligibility.
 
 Desktop dots receive automatic contrasting colors (blue, orange, purple, then other hue families). The current desktop is a larger filled circle; inactive desktops use colored outlines. The rail uses smooth dots, spaced window buttons, and a drawn sliders control for Settings.
 
+The app icon appears above the desktop dots and is embedded in the executable
+at multiple sizes for Windows Explorer and app windows.
+
 App icons keep their regular appearance when minimized. The indicator underneath
 is solid for visible windows and outlined for minimized windows.
 
