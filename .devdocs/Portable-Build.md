@@ -61,3 +61,8 @@ remaining support matrix require release validation. See the repository's
 Implementation-Status and Live-Validation documents for measured evidence.
 
 Third-party notices and license texts accompany this package.
+
+The Play/Pause control also reports integration status: its normal icon appears
+when connected; an amber warning triangle replaces it while integration is
+unavailable. Its tooltip includes the integration status. Clicking still changes
+the saved pause/resume preference. Settings has no separate status dot.

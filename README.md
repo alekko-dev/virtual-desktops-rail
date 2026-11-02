@@ -207,3 +207,8 @@ Create a disposable Obsidian vault by copying `fixtures/obsidian-vault` to
 
 See [.devdocs/Environment-Readiness.md](.devdocs/Environment-Readiness.md) for the
 verified machine baseline and outstanding integration-test prerequisites.
+
+The Play/Pause control also reports integration status: its normal icon appears
+when connected; an amber warning triangle replaces it while integration is
+unavailable. Its tooltip includes the integration status. Clicking still changes
+the saved pause/resume preference. Settings has no separate status dot.

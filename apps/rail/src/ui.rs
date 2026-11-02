@@ -618,11 +618,15 @@ impl App {
             }
             self.button(
                 PAUSE,
-                if self.model.saved.paused {
-                    "Resume automatic window actions"
-                } else {
-                    "Pause automatic window actions"
-                },
+                &format!(
+                    "{}. {}",
+                    if self.model.saved.paused {
+                        "Resume automatic window actions"
+                    } else {
+                        "Pause automatic window actions"
+                    },
+                    self.status
+                ),
                 bounds.bottom - scale(122),
                 scale(34),
                 ButtonKind::Pause,
@@ -1183,8 +1187,21 @@ fn draw(app: &App, item: &DrawItem) {
                     }
                 }
                 ButtonKind::Pause | ButtonKind::Settings | ButtonKind::Exit => {
-                    smooth_shape(dc, width, height, background, text, |x, y| {
-                        if matches!(button.kind, ButtonKind::Settings) {
+                    let color = if matches!(button.kind, ButtonKind::Pause) && !app.ready {
+                        unavailable
+                    } else {
+                        text
+                    };
+                    smooth_shape(dc, width, height, background, color, |x, y| {
+                        if matches!(button.kind, ButtonKind::Pause) && !app.ready {
+                            // A full warning symbol stays legible in the narrow rail and
+                            // distinguishes unavailable integration without relying on color.
+                            let triangle = (x.abs() * 0.866 - y * 0.5 - 3.5).max(y - 6.0);
+                            let outline = triangle.abs() - 0.7;
+                            let stem = (x.abs() - 0.75).max((y + 0.5).abs() - 2.4);
+                            let dot = (x * x + (y - 4.0).powi(2)).sqrt() - 0.85;
+                            outline.min(stem).min(dot)
+                        } else if matches!(button.kind, ButtonKind::Settings) {
                             let track = |yy: f64| (y - yy).abs().max(x.abs() - 7.0) - 0.8;
                             let ring = |xx: f64, yy: f64| {
                                 (((x - xx).powi(2) + (y - yy).powi(2)).sqrt() - 2.5).abs() - 0.8
@@ -1214,18 +1231,6 @@ fn draw(app: &App, item: &DrawItem) {
                             ((x.abs() - 3.0).abs() - 0.9).max(y.abs() - 6.0)
                         }
                     });
-                    if matches!(button.kind, ButtonKind::Settings) {
-                        fill(
-                            dc,
-                            &Rect {
-                                left: 2,
-                                top: 2,
-                                right: 5,
-                                bottom: 5,
-                            },
-                            if app.ready { accent } else { unavailable },
-                        );
-                    }
                 }
             }
         }
