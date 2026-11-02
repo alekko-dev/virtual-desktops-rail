@@ -1,221 +1,126 @@
 # Virtual Desktop Rail
 
-Native Windows 11 x64 desktop rail MVP. It reserves 25 DIP on the primary
-display, switches desktops, discovers Windows-pinned application windows, and
-minimizes them on desktop changes. Click an icon to restore that window's saved
-layout for the current desktop. Pause, startup preference, and independent window
-layouts persist locally.
+A lightweight Windows utility for keeping shared application windows useful across
+virtual desktops without leaving them visible everywhere. A narrow rail shows your
+desktops and shared windows, and remembers a separate window layout for each desktop.
 
-Enable **Restore saved layouts on desktop switch** in Settings for automatic
-restoration. On each switch, a window with a saved layout for the destination
-restores there without taking focus; a window with no layout gets minimized.
-The option is off by default. Restoring manually through the rail or Windows
-(including the taskbar) saves the resulting layout for that desktop. External
-restoration waits for stable, reachable geometry before saving. Minimizing keeps
-the saved layout, so the window auto-restores on a later switch back. Startup,
-integration recovery, resume and enabling the option do not move windows.
-Pause suspends both automatic minimization and restoration. To change the option
-on a running instance from PowerShell, use
-`./scripts/Invoke-Rail.ps1 --auto-restore on` (or `off`).
+**Switch desktop → shared windows minimize → click an icon to restore that desktop's layout.**
 
-The initial compatibility spike passed before feature implementation. Shell
-integration now attempts initialization on Windows 11 x64 **24H2 build
-26100.2605 or newer**, matching the minimum declared by `winvd 0.0.49`.
-An exact tested revision or experimental opt-in is no longer required.
-Eligibility is not compatibility certification: initialization and runtime query
-failures still disable dependent controls. This is an unsigned development MVP,
-with broader release validation still pending. See [implementation status](.devdocs/Implementation-Status.md),
-[live evidence](.devdocs/Live-Validation.md), and [portable usage](.devdocs/Portable-Build.md).
+This is an unsigned development preview. Broader release validation is still in progress.
 
-## Run
+## Features
 
-After building, launch the GUI from PowerShell:
+- A 25-DIP rail on the primary display's left edge reserves space beside maximized apps.
+- Desktop dots show the current desktop, reveal names on hover, and switch desktops on click.
+- Windows pinned through Task View appear automatically, including application-level pins.
+- Each window remembers its position, size, and normal/maximized state per desktop.
+- Optional automatic restoration restores saved destination layouts without taking focus.
+- Pause/resume, optional startup with Windows, and local settings and layout storage.
+- Native Windows UI, no installer, no administrator privileges, and no network requirement for use.
 
-```powershell
-Start-Process ./target/release/virtual-desktop-rail.exe
-Start-Process ./target/release/virtual-desktop-rail.exe -ArgumentList '--settings'
-./scripts/Invoke-Rail.ps1 --status
-./scripts/Invoke-Rail.ps1 --pause
-./scripts/Invoke-Rail.ps1 --resume
-./scripts/Invoke-Rail.ps1 --retry
-./scripts/Invoke-Rail.ps1 --exit
-```
+## Requirements
 
-Pin windows with Windows Task View. Individual and application-level pins are
-both supported; cached discovery runs once per second. Startup is opt-in through
-settings. State and bounded diagnostics live in `%LOCALAPPDATA%\VirtualDesktopRail`.
-The MVP expects approximately two or three shared windows and has no overflow UI.
-Application restarts receive fresh identities rather than guessed layout matches.
+- Windows 11 x64, 24H2 build **26100.2605 or newer**.
+- A signed-in Windows Explorer desktop session.
+- Ordinary application windows that Windows can show on all desktops.
 
-If the rail has no desktop dots, check Settings for a below-minimum Windows
-version or an integration initialization/runtime failure. Use **Retry desktop
-integration** after a recoverable failure. The old experimental checkbox has been removed. Existing saved preferences and
-`./scripts/Invoke-Rail.ps1 --experimental-integration on` (or `off`) remain
-accepted for compatibility, but neither value changes build eligibility.
+Meeting the minimum Windows build allows integration to initialize; it does not
+guarantee compatibility with every later Windows revision or application. Elevated
+applications and unusual shell/dialog surfaces are outside the validated scope.
+The C runtime is statically linked, so no separate Visual C++ runtime installation is needed.
 
-Desktop dots receive automatic contrasting colors (blue, orange, purple, then other hue families). The current desktop is a larger filled circle; inactive desktops use colored outlines. The rail uses smooth dots, spaced window buttons, and a drawn sliders control for Settings.
+## Installation and updates
 
-The app icon appears above the desktop dots and is embedded in the executable
-at multiple sizes for Windows Explorer and app windows.
+1. Obtain a portable Windows x64 ZIP from the project's release assets, when available,
+   or a build provided by the maintainer. Source archives are not runnable app packages.
+2. Extract the whole package into a permanent folder you can write to.
+3. Run `virtual-desktop-rail.exe`. Startup with Windows is off by default.
 
-The rail requests DWM Peek exclusion to keep it out of Task View desktop previews.
-It remains visible in screenshots and screen sharing. Preview-exclusion failures
-are recorded in diagnostics.
+To update, exit the running app using the button below Settings, extract the new
+package, and launch its executable. Settings and layouts remain in your local app-data
+folder. If you move the executable after enabling startup, turn startup off and back
+on in Settings at the new location.
 
-App icons keep their regular appearance when minimized. The indicator underneath
-is solid for visible windows and outlined for minimized windows.
+To remove the app, turn startup off, exit, and delete its extracted folder. Optionally
+remove `%LOCALAPPDATA%\VirtualDesktopRail` to delete saved settings, layouts, and diagnostics.
 
-For desktop automation only, `./scripts/Invoke-Rail.ps1 --automation-ui on`
-temporarily exposes the rail as a targetable application window while retaining
-its no-activation input behavior. Restore `--automation-ui off` after testing.
-This mode is not persisted; normal launches use the validated passive tool style.
+## Getting started
 
-`scripts/package.ps1` produces a portable ZIP under `artifacts/` with static CRT,
-usage notes, third-party license texts and executable SHA-256. No installer or
-administrator privileges are required to run the rail.
+1. Open Windows Task View using the taskbar's Task View button.
+2. Right-click an application window and choose **Show this window on all desktops**, or
+   **Show windows from this app on all desktops**. Pinning to the taskbar is different.
+3. Its icon appears on the rail, normally within about a second.
+4. On one desktop, click the icon and arrange the window using its usual Windows controls.
+5. Switch to another desktop. The shared window minimizes. Click its icon and arrange
+   it for this desktop.
+6. Return to the first desktop and click the icon to restore its remembered layout.
 
-## Development
+Unpinning or closing a window removes its rail button. Each button represents one
+window, so multiple windows from the same application can have identical icons.
 
-Install Git, Rust through rustup, and Visual Studio C++ tools with a Windows SDK.
-The repository pins Rust and its formatting/lint components in `rust-toolchain.toml`.
-Open a new PowerShell session after installation so PATH changes take effect.
+## Using the rail
 
-From this repository:
+| Control or state | Behavior |
+| --- | --- |
+| Desktop dot | Click to switch; hover for its name. The current desktop is a larger filled circle; others are colored outlines. |
+| Minimized window icon | Restore its current-desktop layout and request focus. |
+| Visible background window icon | Bring the window forward. |
+| Foreground window icon | Minimize the window. |
+| Under-icon indicator | Solid means visible; outlined means minimized. App icons keep their normal appearance. |
+| Play/Pause | Suspend or resume automatic window actions. Manual controls continue working. |
+| Sliders button | Open Settings. Done closes Settings. |
+| Button below Settings | Exit the app and release the reserved screen space. |
 
-```powershell
-./scripts/check-dev.ps1
-./target/release/rail-compatibility-probe.exe --output artifacts/compatibility.json
-./target/release/rail-native-smoke.exe --windows 2 --delay-ms 1500
-./target/release/rail-native-smoke.exe --probe
-./target/release/rail-compatibility-exercise.exe --run-owned-fixture
-./target/release/rail-compatibility-exercise.exe --run-pin-discovery
-./target/release/rail-compatibility-exercise.exe --run-window-control
-./target/release/rail-desktop-exercise.exe --run-desktop-fixture
-./target/release/rail-desktop-exercise.exe --run-appbar-fixture
-```
+Fullscreen applications can cover the rail. The rail requests exclusion from DWM Peek
+previews but remains visible in screenshots and screen sharing.
 
-The script runs formatting, Clippy (warnings denied), Cargo tests, and a locked
-release build of all workspace binaries using the root `Cargo.lock`. The tests
-cover controller races and recovery, identity reuse, monitor clamping, atomic
-storage and corruption recovery, cross-session merging, isolated startup links,
-subprocess timeouts/crashes, and CLI contracts. Interactive and release-matrix
-checks are recorded separately.
+### Layouts and automatic restoration
 
-The fixture supports ordinary move/resize and minimize/maximize. `--windows 1..4`
-creates identical windows sharing one process; closing one keeps the others alive.
-Its dialog button opens an owned modal, and its delay button intentionally stalls
-the fixture UI thread for `--delay-ms 0..10000` (default 2000). `--probe` prints
-JSON containing the foreground HWND, owning PID, screen rectangle, window DPI,
-and primary display dimensions, including in release builds. Close all fixture
-windows to exit. All binaries accept `--help`.
+By default, switching desktops minimizes shared windows; returning does not reveal
+them until requested. With no saved layout, a manual rail restore uses the last usable
+layout adjusted to stay on an available display.
 
-For a warmed populated idle sample, keep two pinned windows stable and run
-`./scripts/Measure-RailIdle.ps1`. It checks inventory, geometry, visibility,
-desktop generation and both process lifetimes throughout the sample. It rejects
-unavailable integration or a changed workload. `--status` also exposes bounded
-`dispatch_latency` statistics in microseconds from integration-worker desktop-event
-receipt to an accepted automatic minimize call. These include snapshot/IPC/queue
-delay, exclude application redraw, and exclude time waiting in winvd's notification
-queue before worker receipt.
+Enable **Restore saved layouts on desktop switch** in Settings to restore windows
+that have a saved destination layout, without taking focus. Windows without a layout
+there still minimize. Manual rail restores and stable external Windows restores
+(such as taskbar restores) save the resulting layout for that desktop. Move, resize,
+and maximize normally to update it. Automatic restoration preserves saved geometry;
+minimizing does not forget layouts.
 
-The compatibility checker requires at least Windows build **26100.2605** for
-`winvd 0.0.49`. The VM runs **26300.9457** and clears the version gate, but its
-read-only probe now collects observations while distinguishing unsupported shell
-views from actual query failures. The separate compatibility spike passed on
-this exact baseline; a read-only report alone cannot clear that gate. See
-[environment readiness](.devdocs/Environment-Readiness.md) for setup and evidence.
-Exit status **2** means unavailable, **1** means invocation/report I/O failed, and
-**0** means read-only observations were collected, not that compatibility passed.
-Versions below the adapter minimum cannot bypass the build gate.
+Pause suspends both automatic minimization and restoration. Starting the app,
+resuming, recovering integration, or changing the restoration setting does not
+immediately move windows; the next desktop switch applies the policy.
 
-On an eligible build, `--observe-seconds 1..60` (default 2) records desktop GUIDs/names,
-notification kinds, and one-second samples of window/app pin queries. Calls and
-listener teardown run in an owned subprocess with a duration-plus-ten-second
-watchdog. Event queues, observations, candidates, and output size are bounded.
-The checker does not switch desktops, change pinning, or move/minimize windows.
-Reports contain local desktop names and transient HWND/PID observations; these
-are diagnostics, not persistent window identities. No window titles are captured.
-`--output` atomically replaces the report in an existing directory.
+Layouts survive rail restarts while their application windows remain running.
+Restarting an application gives its windows fresh identities rather than guessing
+which old layout belongs to which window.
 
-Schema version 2 records candidate class names, per-candidate observation times,
-sample duration/current desktop, and GUIDs on desktop events. Both pin queries
-returning `WindowNotFound` means no shell ApplicationView exists for that HWND;
-the candidate remains in diagnostics as `unsupported`. Mixed results and other
-errors remain `query_failed`. A sample with no queryable candidates, an event
-limit, or a desktop change during sampling still makes the report unavailable.
-The bounded notification queue may drop events; this is not a lossless recorder.
+## Troubleshooting and limitations
 
-The separate **compatibility exercise changes fixture state** and requires the
-explicit `--run-owned-fixture` switch. Close existing native fixtures first. It
-launches two owned fixture windows, tests individual/application pinning, checks
-that distinct non-pointer identity properties survive separate helper processes,
-removes the properties, restores pinning, and terminates its fixture. Each shell
-operation runs in a subprocess with a ten-second watchdog. This experiment does
-not switch desktops or control other applications. It prints JSON; exit 0 means
-the experiment passed, 2 means failed/unavailable, and 1 means invalid invocation.
-Keep `rail-native-smoke.exe` beside it. Run interactive checks serially.
+- **No desktop dots or window controls:** read the integration status in Settings.
+  Below-minimum Windows builds are blocked. For initialization or runtime failures,
+  use **Retry desktop integration**. An amber warning triangle replaces the normal
+  Play/Pause icon while integration is unavailable; its tooltip explains the status.
+- **Missing window:** check Task View pinning, including app-level pinning. Unsupported
+  or inaccessible windows are omitted. This preview expects about two or three shared
+  windows and has no scrolling or overflow controls.
+- **Layout not reused after an app restart:** this is the conservative identity policy
+  described above. Arrange the new window to establish new layouts.
+- **Startup uses an old path:** disable startup and enable it again from the new location.
 
-`--run-pin-discovery` adds a separate observer that polls two cached candidates
-once per second. It measures warmed idle process CPU and four API-triggered pin
-transitions over about 42 seconds. QPC timestamps come from independent actor and
-observer processes. Recorded latency includes actor dispatch/IPC overhead; it is
-not Task View click latency. CPU counters have finite resolution and this short
-fixture run does not certify product idle performance or a larger inventory.
+Configuration, previous-state backup, and bounded diagnostics live under
+`%LOCALAPPDATA%\VirtualDesktopRail`. Layout history is limited to 512 window identities
+and 64 desktop layouts per identity; new identities are omitted at the identity limit.
+There is no history-management UI yet.
 
-`--run-window-control` tests minimizing/restoring an owned modal group and async
-minimization during a 1500 ms fixture UI stall. It separately records API
-acceptance, observed visibility, foreground verification, and action completion.
-The hidden standard-dialog lookup is fixture-specific; it is not a general
-application identity or dialog-discovery policy.
+Physical hardware, mixed DPI and monitor changes, actual Explorer restart,
+screen-reader/high-contrast review, and the full Obsidian workflow still need broader
+validation. The preview does not promise support for every application or privilege level.
+Third-party notices and license texts accompany portable packages.
 
-`rail-desktop-exercise --run-desktop-fixture` creates three temporary desktops,
-names only those desktops, switches through them and the original, and verifies
-GUIDs and notification identities. It then restores the original desktop and
-removes created desktops only after a broad window inventory finds no associated
-windows. If a user moves/opens a window there, cleanup preserves the desktop and
-reports the failure. Each operation and listener teardown has a ten-second
-subprocess watchdog. If creation times out after a shell-side effect, the final
-inventory reports unexpected desktops rather than guessing which ones to delete.
+<!-- repository-links:start -->
+## Contributing
 
-`--run-appbar-fixture` adds a passive 25-unit left-edge AppBar, checks a native
-maximized window against the reserved work area, observes DWM cloaking across
-all four desktops, then verifies work-area restoration. This is a compatibility
-prototype, with no product rail controls. `rail-native-smoke --appbar` can also
-launch that fixture alone; close it normally to release its reservation.
-
-For a manual Task View recording, run:
-
-```powershell
-./target/release/rail-compatibility-exercise.exe --record-task-view > artifacts/compatibility-task-view.json
-```
-
-Once the recorder says it is ready, use Windows Task View to pin one fixture
-window to all desktops, unpin it, pin all windows from the fixture application,
-then unpin them. Leave at least two seconds between changes. Recording lasts
-about two minutes; it does not mutate pinning during that period. Cleanup restores
-the fixture's initial pin state and closes it. The recording checks both observed
-state cycles, requires operator confirmation of their Task View origin, and does
-not infer click-to-discovery latency from untimestamped manual actions.
-
-The identity experiment validates a standard-user native fixture only. It does
-not establish persistence/reassociation for other applications, privilege levels,
-HWND reuse, or application restarts. Neither successful tool certifies the MVP.
-
-See [.devdocs/Implementation-Status.md](.devdocs/Implementation-Status.md) for
-verified behavior and the remaining compatibility and implementation gates.
-
-Commands needing the Rust cache or interactive desktop may require execution
-outside an agent's repository-only sandbox. Run UI checks as the ordinary signed-in
-user in the Explorer session, separately from privileged provisioning.
-
-Create a disposable Obsidian vault by copying `fixtures/obsidian-vault` to
-`artifacts/obsidian-vault`, then open that folder as a vault in Obsidian.
-`artifacts/` and Cargo build outputs are ignored by Git.
-
-See [.devdocs/Environment-Readiness.md](.devdocs/Environment-Readiness.md) for the
-verified machine baseline and outstanding integration-test prerequisites.
-
-The Play/Pause control also reports integration status: its normal icon appears
-when connected; an amber warning triangle replaces it while integration is
-unavailable. Its tooltip includes the integration status. Clicking still changes
-the saved pause/resume preference. Settings has no separate status dot.
+For building from source, architecture, testing, and implementation status, start with
+the [contributor documentation](.devdocs/README.md).
+<!-- repository-links:end -->

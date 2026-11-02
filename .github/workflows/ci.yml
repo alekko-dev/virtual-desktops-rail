@@ -82,7 +82,7 @@ jobs:
 
           $generated = gh api "repos/$env:GITHUB_REPOSITORY/releases/generate-notes" -f "tag_name=$tag" | ConvertFrom-Json
           if ($LASTEXITCODE) { throw 'GitHub release notes generation failed.' }
-          $validationUrl = "https://github.com/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/.devdocs/Implementation-Status.md"
+          $validationUrl = "https://github.com/$env:GITHUB_REPOSITORY/blob/$env:GITHUB_SHA/.devdocs/Status-and-Roadmap.md"
           $notes = @(
               '**Unsigned development preview.** This release is not broadly certified. Physical hardware, Explorer restart, and wider Windows compatibility validation remain open.'
               ''

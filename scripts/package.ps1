@@ -33,7 +33,13 @@ try {
     if (Test-Path -LiteralPath $package) { throw 'Package destination already exists.' }
     New-Item -ItemType Directory -Path "$package/licenses" -Force | Out-Null
     Copy-Item -LiteralPath 'target/release/virtual-desktop-rail.exe' -Destination $package
-    Copy-Item -LiteralPath '.devdocs/Portable-Build.md' -Destination "$package/README.md"
+    $readme = Get-Content -LiteralPath 'README.md' -Raw -Encoding utf8
+    $repositorySection = '(?s)\r?\n<!-- repository-links:start -->.*?<!-- repository-links:end -->\r?\n?'
+    if ([regex]::Matches($readme, $repositorySection).Count -ne 1) {
+        throw 'README must contain exactly one marked repository-only section.'
+    }
+    $packageReadme = [regex]::Replace($readme, $repositorySection, [Environment]::NewLine)
+    Set-Content -LiteralPath "$package/README.md" -Value $packageReadme.TrimEnd() -Encoding utf8
     $notices = @('Third-party dependencies from Cargo.lock. See accompanying license files.', '')
     foreach ($dependency in $metadata.packages | Where-Object source | Sort-Object name,version) {
         $notices += "$($dependency.name) $($dependency.version): $($dependency.license)"
