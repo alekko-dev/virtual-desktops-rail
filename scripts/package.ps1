@@ -1,3 +1,7 @@
+param(
+    [string]$Version
+)
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -5,12 +9,23 @@ $cargo = Join-Path $env:USERPROFILE '.cargo/bin/cargo.exe'
 $rustc = Join-Path $env:USERPROFILE '.cargo/bin/rustc.exe'
 Push-Location $repoRoot
 try {
+    if (!$Version) {
+        $applicationManifest = & $cargo metadata --no-deps --format-version 1 --locked
+        if ($LASTEXITCODE) { throw 'Application metadata lookup failed.' }
+        $application = ($applicationManifest | ConvertFrom-Json).packages |
+            Where-Object { $_.name -eq 'virtual-desktop-rail' } |
+            Select-Object -First 1
+        if (!$application) { throw 'Application package metadata was not found.' }
+        $Version = $application.version
+    }
+    if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release version '$Version'. Expected MAJOR.MINOR.PATCH." }
+
     & $cargo build -p virtual-desktop-rail --release --locked
     if ($LASTEXITCODE) { throw 'Release build failed.' }
     $metadataText = & $cargo metadata --format-version 1 --filter-platform x86_64-pc-windows-msvc --locked --offline
     if ($LASTEXITCODE) { throw 'Dependency metadata failed.' }
     $metadata = $metadataText | ConvertFrom-Json
-    $name = 'VirtualDesktopRail-0.1.0-windows-x64-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    $name = "VirtualDesktopRail-$Version-windows-x64"
     $package = Join-Path $repoRoot "artifacts/$name"
     if (Test-Path -LiteralPath $package) { throw 'Package destination already exists.' }
     New-Item -ItemType Directory -Path "$package/licenses" -Force | Out-Null
