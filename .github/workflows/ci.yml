@@ -64,7 +64,7 @@ jobs:
 
       - name: Build portable ZIP
         shell: pwsh
-        run: ./scripts/package.ps1 -Version '${{ steps.version.outputs.version }}'
+        run: ./scripts/package.ps1 -Version '${{ steps.version.outputs.version }}' -ReleaseTag '${{ github.ref_name }}'
 
       - name: Create draft prerelease with generated notes and assets
         shell: pwsh

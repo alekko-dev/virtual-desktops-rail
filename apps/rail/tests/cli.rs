@@ -1,6 +1,30 @@
 use std::process::Command;
 
 #[test]
+fn version_is_local_and_machine_readable() {
+    let exe = env!("CARGO_BIN_EXE_virtual-desktop-rail");
+    let output = Command::new(exe).arg("--version").output().unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.starts_with(concat!(
+        "virtual-desktop-rail ",
+        env!("CARGO_PKG_VERSION"),
+        " ("
+    )));
+    assert_eq!(text.lines().count(), 1);
+    let output = Command::new(exe)
+        .args(["--version", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let build: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(build["version"], env!("CARGO_PKG_VERSION"));
+    assert!(build["commit"].is_string() || build["commit"].is_null());
+    assert!(build["dirty"].is_boolean() || build["dirty"].is_null());
+    assert_eq!(build["commit"].is_null(), build["dirty"].is_null());
+}
+
+#[test]
 fn help_and_invalid_arguments_exit_without_starting_a_rail() {
     let exe = env!("CARGO_BIN_EXE_virtual-desktop-rail");
     let help = Command::new(exe).arg("--help").output().unwrap();

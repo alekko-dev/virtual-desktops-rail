@@ -8,6 +8,25 @@ desktops and shared windows, and remembers a separate window layout for each des
 
 This is an unsigned development preview. Broader release validation is still in progress.
 
+## Version and build identity
+
+Settings shows the application version and source identity in small gray text below
+the integration status. To inspect an executable
+without starting the app, capture its output with PowerShell:
+
+```powershell
+$p = Start-Process ./virtual-desktop-rail.exe -ArgumentList '--version' -NoNewWindow -Wait -PassThru -RedirectStandardOutput version.txt
+Get-Content ./version.txt
+```
+
+Use `--version --json` for machine-readable version, full Git commit, and dirty state.
+Windows file Properties also includes File version and Product version. A `dirty`
+marker means source changes were present at build time; `unknown source` means Git
+provenance was unavailable. Neither marker changes the application release number.
+Portable packages include `BUILD.json` and `SHA256.json` to identify the exact
+executable. Diagnostic `--status` reports the running instance's build, whereas
+`--version` describes the executable being invoked.
+
 ## Features
 
 - A 25-DIP rail on the primary display's left edge reserves space beside maximized apps.

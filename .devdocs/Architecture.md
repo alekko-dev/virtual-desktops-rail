@@ -55,9 +55,21 @@ Core usage is local; diagnostics are bounded and do not collect window titles.
 | `apps/rail/src/store.rs` | Atomic storage, backup/recovery, session merges, diagnostics and Startup shortcut |
 | `apps/rail/src/icons.rs`, `metrics.rs` | Off-UI icon extraction/cache and bounded dispatch statistics |
 | `apps/rail/src/singleton.rs`, `native.rs` | Session instance coordination and small raw Win32 declarations |
-| `apps/rail/build.rs`, `apps/rail/rail.manifest` | Embedded icons and PerMonitorV2/asInvoker/long-path manifest |
+| `apps/rail/build.rs`, `apps/rail/rail.manifest` | Cargo-derived version resources, source provenance, embedded icons and generated PerMonitorV2/asInvoker/long-path manifest |
 | `tools/compatibility-probe` | Read-only probe and explicit fixture/desktop exercises |
 | `tools/native-smoke`, `tools/fullscreen-smoke` | Ordinary duplicate/modal/stalled-window and fullscreen fixtures |
+
+
+The Settings footer places the integration indicator and two-line status above a
+10-DIP version label in the system gray text color. The label aligns with the status
+text; Done is centered beside the combined group. The compact Settings window is
+380 DIP high, retaining room for a second status/notice line.
+
+Build identity is compiled once per build and shared by Settings, local `--version`
+(and `--version --json`) and the additive `build` object in schema-1 `--status`.
+Status describes the running instance; version commands describe the invoked image
+without singleton acquisition or shell integration. See [Development](Development.md)
+for provenance refresh and release-package gates.
 
 ## Ownership and responsiveness
 

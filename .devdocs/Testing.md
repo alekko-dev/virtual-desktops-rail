@@ -176,3 +176,52 @@ raw artifacts with the release when available; missing local files must not eras
 the checked-in finding. Update [Status and roadmap](Status-and-Roadmap.md) for outstanding
 work instead of starting a new dated report. Tests on one revision, API mutations,
 or successful read-only queries do not certify all eligible Windows builds.
+
+## Version and package identity verification
+
+On 2026-11-02, the traceability build based on source commit
+`0ec6474d72906d788f81a83e808e3306beb3b204` with working-tree changes passed
+formatting, warnings-denied Clippy, 56 workspace tests, version contract checks,
+and all locked release builds in an isolated Cargo target directory. The default
+release image was running; it was preserved instead of relinked. Existing atomic
+file-replacement tests required execution outside the filesystem sandbox.
+
+An isolated disposable source repository verified clean, tracked-dirty, untracked-dirty
+and commit-only incremental builds without application edits; exported source and
+unavailable Git produced null provenance. Matching release source was accepted;
+wrong-version tags, tags pointing elsewhere, dirty source and unknown embedded
+provenance were rejected. An actual mismatched packaging version was rejected before
+building. Run `./scripts/test-versioning.ps1 -Provenance` to repeat this coverage.
+
+The final extracted portable executable had SHA-256
+`B98A1FB5C110081DE8AF92A102312B22074F0217BBC848F5D8FDA9DE167D4864`.
+The ZIP/extracted executable, BUILD.json and SHA256.json agreed; Windows fixed
+file/product versions and extracted manifest identity were 0.1.0.0, and textual
+ProductVersion was 0.1.0+g0ec6474d7290.dirty. Local version output succeeded with
+and without an instance. A separate executable with unknown provenance queried
+status and correctly received the running package's known build identity.
+
+Actual packaged Settings screenshots and real pointer/keyboard input were checked
+in the signed-in Windows 11 26H2 26300.9711 session, primary display 1708×960,
+120 DPI (125%). The version and status footer were readable without clipping;
+the version background matched the footer after a screenshot-discovered fix. Tab
+reached the first checkbox, reverse Tab reached Done without visiting the read-only
+version, and a real Done click closed Settings while the app remained running.
+The original executable was restored with pause, auto-restore and Startup preferences
+preserved, Settings closed and automation visibility off.
+
+Live 100% scaling and other display/topology configurations remain unverified:
+testing retained the user's current display settings. These checks establish local
+preview behavior, not CI execution, public release certification or signed provenance.
+
+The compact-footer refinement was also checked on the same Windows/DPI session
+using the actual portable executable with SHA-256
+`55C47CEF724F51CD162B15C158B1170554D1CBD43D94722D3C31DBE3E38EE3B6`.
+The version uses 10-DIP Segoe UI and system COLOR_GRAYTEXT, aligns beneath the
+status text, and sits beside a vertically centered Done button. The window height
+was reduced from 412 to 380 DIP while retaining two status/notice lines. Screenshot
+review confirmed readable gray text, matching footer background, balanced spacing
+and no clipping at 125%. Real Tab/reverse-Tab input and a pointer click on Done
+passed; preferences and automation visibility off were preserved. Formatting,
+warnings-denied Clippy, all 56 tests, version contracts and release builds passed.
+100% scaling and populated error/notice states were not exercised in this refinement.

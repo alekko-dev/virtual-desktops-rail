@@ -174,7 +174,7 @@ impl App {
                 return;
             }
             Command::Status { nonce } => {
-                let value = serde_json::json!({"schema_version":1,"pid":std::process::id(),"status":self.status,"ready":self.ready,"notice":self.notice,
+                let value = serde_json::json!({"schema_version":1,"build":crate::version::info(),"pid":std::process::id(),"status":self.status,"ready":self.ready,"notice":self.notice,
                     "paused":self.model.saved.paused,"startup":self.model.saved.startup,"generation":self.model.generation,"current":self.model.current,
                     "appbar":crate::appbar::diagnostics(self.window),
                     "dispatch_latency":self.dispatch_latency,
@@ -751,7 +751,7 @@ impl App {
                 200,
                 160,
                 scale(560),
-                scale(364),
+                scale(380),
                 self.window,
                 null_mut(),
                 GetModuleHandleW(null()),
@@ -767,7 +767,7 @@ impl App {
                 DeleteObject(font as Handle);
             }
         }
-        for (size, weight) in [(14, 400), (14, 600), (12, 400)] {
+        for (size, weight) in [(14, 400), (14, 600), (12, 400), (10, 400)] {
             let font = unsafe {
                 CreateFontW(
                     -scale(size),
@@ -851,9 +851,9 @@ impl App {
                 32,
             ),
             (6106, "STATIC", "", 0x50000010, 0, 274, 560, 1),
-            (DONE, "BUTTON", "Done", 0x50010001, 432, 286, 88, 34),
-            (6107, "STATIC", "●", 0x50000000, 24, 293, 10, 22),
-            (6100, "STATIC", "", 0x50000000, 36, 294, 372, 32),
+            (DONE, "BUTTON", "Done", 0x50010001, 432, 290, 88, 34),
+            (6107, "STATIC", "●", 0x50000000, 24, 285, 10, 18),
+            (6100, "STATIC", "", 0x50000000, 36, 286, 372, 28),
         ] {
             let child = unsafe {
                 CreateWindowExW(
@@ -879,6 +879,24 @@ impl App {
                 }];
                 SendMessageW(child, 0x30, font, 1);
             }
+        }
+        let label = format!("Version {}", crate::version::label());
+        unsafe {
+            let child = CreateWindowExW(
+                0,
+                wide("STATIC").as_ptr(),
+                wide(&label).as_ptr(),
+                0x50000000,
+                scale(36),
+                scale(314),
+                scale(372),
+                scale(14),
+                self.settings,
+                6108 as Handle,
+                GetModuleHandleW(null()),
+                null_mut(),
+            );
+            SendMessageW(child, 0x30, self.settings_fonts[3], 1);
         }
         self.update_settings();
     }
@@ -1356,21 +1374,30 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
     if !main {
         match message {
             0x0135 | 0x0138 => unsafe {
-                if windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
+                let control = windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
                     windows::Win32::Foundation::HWND(lparam as *mut _),
-                ) == 6107
-                {
-                    windows::Win32::Graphics::Gdi::SetTextColor(
-                        windows::Win32::Graphics::Gdi::HDC(wparam as *mut _),
-                        windows::Win32::Foundation::COLORREF(
-                            if GetWindowLongPtrW(lparam as Handle, -21) != 0 {
-                                0x00438320
-                            } else {
-                                0x000078ad
-                            },
-                        ),
-                    );
-                }
+                );
+                let color = if control == 6107 {
+                    windows::Win32::Foundation::COLORREF(
+                        if GetWindowLongPtrW(lparam as Handle, -21) != 0 {
+                            0x00438320
+                        } else {
+                            0x000078ad
+                        },
+                    )
+                } else {
+                    windows::Win32::Foundation::COLORREF(
+                        windows::Win32::Graphics::Gdi::GetSysColor(if control == 6108 {
+                            windows::Win32::Graphics::Gdi::COLOR_GRAYTEXT
+                        } else {
+                            windows::Win32::Graphics::Gdi::COLOR_WINDOWTEXT
+                        }),
+                    )
+                };
+                windows::Win32::Graphics::Gdi::SetTextColor(
+                    windows::Win32::Graphics::Gdi::HDC(wparam as *mut _),
+                    color,
+                );
                 windows::Win32::Graphics::Gdi::SetBkMode(
                     windows::Win32::Graphics::Gdi::HDC(wparam as *mut _),
                     windows::Win32::Graphics::Gdi::TRANSPARENT,
@@ -1382,6 +1409,9 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         || windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
                             windows::Win32::Foundation::HWND(lparam as *mut _),
                         ) == 6107
+                        || windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
+                            windows::Win32::Foundation::HWND(lparam as *mut _),
+                        ) == 6108
                     {
                         windows::Win32::Graphics::Gdi::COLOR_BTNFACE
                     } else {

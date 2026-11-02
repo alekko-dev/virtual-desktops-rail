@@ -1,7 +1,7 @@
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$RailArguments)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-if (!$RailArguments -or $RailArguments[0] -notin @('--status','--pause','--resume','--retry','--exit','--help','--click','--switch','--automation-ui','--experimental-integration','--auto-restore')) {
+if (!$RailArguments -or $RailArguments[0] -notin @('--status','--pause','--resume','--retry','--exit','--help','--version','--click','--switch','--automation-ui','--experimental-integration','--auto-restore')) {
     throw 'Use this helper for a rail control command; launch the GUI directly with Start-Process.'
 }
 $taskExecutable = Join-Path (Split-Path $PSScriptRoot -Parent) 'target/release/virtual-desktop-rail.exe'

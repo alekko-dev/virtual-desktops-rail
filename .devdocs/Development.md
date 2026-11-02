@@ -85,8 +85,13 @@ raw local artifact filenames alone are not portable evidence. The component map 
 ./scripts/package.ps1 -Version 0.1.0 -BuildLabel preview
 ```
 
-Use the actual Cargo application version when supplying `-Version`. The script builds
-the app with static CRT and creates a portable directory and ZIP under `artifacts/`.
+Cargo is the version source; a mismatched explicit `-Version` is rejected.
+`-BuildLabel` changes only the package name. Local dirty/unknown builds are allowed
+and marked in embedded identity and `BUILD.json`. Packaging reads the executable's
+`--version --json` output and checks Windows version resources before copying it.
+It respects Cargo's `CARGO_TARGET_DIR`, allowing isolated builds while the app runs.
+`BUILD.json` records version, full commit, dirty state, optional label and SHA-256.
+The script builds the app with static CRT and creates a portable directory and ZIP under `artifacts/`.
 It includes the executable, user README, SHA-256, third-party notices, dependency
 license texts and Rust standard-library licenses. Installed Rust documentation licenses
 are required. Existing package destinations are rejected instead of overwritten.
@@ -98,8 +103,10 @@ Verify packaged/extracted executable hashes, manifest and runtime imports for re
 changes; then launch the actual packaged executable for relevant live checks.
 
 `.github/workflows/ci.yml` runs checks on pull requests and main pushes. Version tags
-must match the application Cargo version; tag jobs package assets and create a draft
-prerelease with generated notes and the remaining-validation link. CI success does not
+must match the application Cargo version. CI passes `-ReleaseTag vMAJOR.MINOR.PATCH`;
+packaging requires its own clean Git checkout, a tag pointing to HEAD, and known clean
+embedded provenance matching that commit. This gate runs before and after building.
+Tag jobs package assets and create a draft prerelease with generated notes and the remaining-validation link. CI success does not
 replace interactive certification. Local packaging does not upload or publish anything.
 
 ## Environment references
@@ -110,3 +117,20 @@ replace interactive certification. Local packaging does not upload or publish an
 - [Windows VM requirements](https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements#virtual-machine-support)
 - [PowerShell Direct](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/powershell-direct)
 - [Enhanced Session Mode](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/enhanced-session-mode)
+
+## Build provenance
+
+The build script derives fixed Windows and manifest versions as MAJOR.MINOR.PATCH.0
+(each component at most 65535), and ProductVersion text as version+gCOMMIT[.dirty].
+CLI, Settings and status share compiled identity; no runtime Git calls are made.
+No timestamps or machine paths are embedded. The manifest source is a template;
+resolved resources and identity constants are generated only under Cargo OUT_DIR.
+
+An intentionally absent Cargo build-script input refreshes provenance on every build,
+including changes elsewhere in the workspace, new nonignored files and commit changes.
+This trades a small rebuild cost for reliable identity. Exported source trees and
+unavailable Git produce null commit/dirty fields, never enclosing-repository identity.
+
+Run ./scripts/test-versioning.ps1 -Provenance for isolated incremental-build and release
+validation. It copies current nonignored source into a disposable ignored fixture and
+creates commits/tags only there; the user's repository history is untouched.

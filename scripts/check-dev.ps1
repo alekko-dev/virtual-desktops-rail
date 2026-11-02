@@ -11,6 +11,7 @@ try {
     if ($LASTEXITCODE) { throw 'Clippy failed.' }
     & $cargo test --workspace --locked
     if ($LASTEXITCODE) { throw 'Tests failed.' }
+    & "$PSScriptRoot/test-versioning.ps1"
     & $cargo build --workspace --release --locked
     if ($LASTEXITCODE) { throw 'Release build failed.' }
     Write-Host 'Workspace checks passed. Interactive compatibility validation is separate.'

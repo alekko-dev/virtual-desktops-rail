@@ -11,6 +11,7 @@ mod platform;
 mod singleton;
 mod store;
 mod ui;
+mod version;
 use native::{Handle, Point, Rect, wide};
 use rail_core::{Layout, Saved, Snapshot};
 use std::mem::size_of;
@@ -104,9 +105,17 @@ fn main() {
 }
 
 fn run(args: Vec<String>) -> Result<i32, String> {
+    if args == ["--version"] {
+        println!("virtual-desktop-rail {}", version::label());
+        return Ok(0);
+    }
+    if args == ["--version", "--json"] {
+        println!("{}", version::info());
+        return Ok(0);
+    }
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "virtual-desktop-rail [--settings]\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nLegacy preference: --experimental-integration on|off (persisted for compatibility; no longer affects build eligibility).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Desktop integration requires Windows 11 24H2 build 26100.2605 or newer and successful runtime checks."
+            "virtual-desktop-rail [--settings]\nBuild identity: --version [--json] (this executable; no running instance required).\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nLegacy preference: --experimental-integration on|off (persisted for compatibility; no longer affects build eligibility).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Desktop integration requires Windows 11 24H2 build 26100.2605 or newer and successful runtime checks."
         );
         return Ok(0);
     }
