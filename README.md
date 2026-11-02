@@ -58,6 +58,10 @@ Desktop dots receive automatic contrasting colors (blue, orange, purple, then ot
 The app icon appears above the desktop dots and is embedded in the executable
 at multiple sizes for Windows Explorer and app windows.
 
+The rail requests DWM Peek exclusion to keep it out of Task View desktop previews.
+It remains visible in screenshots and screen sharing. Preview-exclusion failures
+are recorded in diagnostics.
+
 App icons keep their regular appearance when minimized. The indicator underneath
 is solid for visible windows and outlined for minimized windows.
 

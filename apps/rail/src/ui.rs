@@ -1710,6 +1710,23 @@ pub fn run(settings: bool) -> Result<(), String> {
             return Err(std::io::Error::last_os_error().to_string());
         }
         app.borrow_mut().window = window;
+        // Task View composes desktop previews through DWM, independently of
+        // screen-capture affinity. Exclude the rail from that composition.
+        let excluded = windows::Win32::Foundation::BOOL(1);
+        if let Err(error) = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
+            windows::Win32::Foundation::HWND(window),
+            windows::Win32::Graphics::Dwm::DWMWA_EXCLUDED_FROM_PEEK,
+            &excluded as *const _ as *const std::ffi::c_void,
+            size_of::<windows::Win32::Foundation::BOOL>() as u32,
+        ) {
+            let _ = app
+                .borrow()
+                .storage
+                .sender
+                .try_send(store::Work::Log(format!(
+                    "Could not exclude the rail from desktop previews: {error}"
+                )));
+        }
         SetWindowLongPtrW(window, -21, &*app as *const RefCell<App> as isize);
         MAIN_WINDOW.store(window as usize, Ordering::Release);
         crate::appbar::register(window).map_err(|e| e.to_string())?;
