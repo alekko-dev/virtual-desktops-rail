@@ -6,6 +6,18 @@ minimizes them on desktop changes. Click an icon to restore that window's saved
 layout for the current desktop. Pause, startup preference, and independent window
 layouts persist locally.
 
+Enable **Restore saved layouts on desktop switch** in Settings for automatic
+restoration. On each switch, a window with a saved layout for the destination
+restores there without taking focus; a window with no layout gets minimized.
+The option is off by default. Restoring manually through the rail or Windows
+(including the taskbar) saves the resulting layout for that desktop. External
+restoration waits for stable, reachable geometry before saving. Minimizing keeps
+the saved layout, so the window auto-restores on a later switch back. Startup,
+integration recovery, resume and enabling the option do not move windows.
+Pause suspends both automatic minimization and restoration. To change the option
+on a running instance from PowerShell, use
+`./scripts/Invoke-Rail.ps1 --auto-restore on` (or `off`).
+
 The documented compatibility gate passed before feature implementation. Shell
 integration defaults to the validated **10.0.26300.9457** revision. On newer
 revisions of build **26300** (including 9711 and 9818), Settings offers **Try

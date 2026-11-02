@@ -34,6 +34,14 @@ pub struct Layout {
 }
 
 impl Layout {
+    fn reachable(&self) -> bool {
+        let x = self.work_area[0] - self.monitor_rect[0];
+        let y = self.work_area[1] - self.monitor_rect[1];
+        self.normal[2].saturating_add(x) > self.work_area[0]
+            && self.normal[0].saturating_add(x) < self.work_area[2]
+            && self.normal[3].saturating_add(y) > self.work_area[1]
+            && self.normal[1].saturating_add(y) < self.work_area[3]
+    }
     /// Convert saved workspace coordinates to a reachable workspace rectangle on a current monitor.
     pub fn adjusted(
         &self,
@@ -110,6 +118,8 @@ pub struct Saved {
     #[serde(default)]
     pub experimental_integration: bool,
     #[serde(default)]
+    pub auto_restore: bool,
+    #[serde(default)]
     pub preferences_revision: u64,
     pub windows: BTreeMap<String, Record>,
 }
@@ -121,6 +131,7 @@ impl Default for Saved {
             paused: false,
             startup: false,
             experimental_integration: false,
+            auto_restore: false,
             preferences_revision: 0,
             windows: BTreeMap::new(),
         }
@@ -163,12 +174,16 @@ fn valid_layout(layout: &Layout) -> bool {
 pub enum Action {
     Minimize { automatic: bool },
     Restore(Layout),
+    RestoreAutomatic(Layout),
     Raise,
 }
 
 impl Action {
     pub fn automatic(&self) -> bool {
-        matches!(self, Self::Minimize { automatic: true })
+        matches!(
+            self,
+            Self::Minimize { automatic: true } | Self::RestoreAutomatic(_)
+        )
     }
 }
 
@@ -200,6 +215,7 @@ pub struct Runtime {
     pub ignore_geometry_through: u64,
     pub suppress_next_state: bool,
     pub present: bool,
+    pub external_restore: Option<(Layout, u64)>,
 }
 
 pub struct Model {
@@ -232,6 +248,7 @@ impl Model {
         self.generation += 1;
         for runtime in self.windows.values_mut() {
             runtime.desired = None;
+            runtime.external_restore = None;
             runtime.sequence += 1;
         }
     }
@@ -308,18 +325,41 @@ impl Model {
                 ignore_geometry_through: snapshot.tick,
                 suppress_next_state: false,
                 present: true,
+                external_restore: None,
             });
-            // A visibility change, startup baseline or our own operation is not a user edit.
-            let user_state_change = !baseline
+            // A stable external minimize -> restore transition (including the
+            // taskbar) is user intent. Startup/recovery and our own work are not.
+            let can_observe_edit = !baseline
                 && !changed
                 && !window.minimized
-                && !runtime.window.minimized
-                && window.layout.maximized != runtime.window.layout.maximized
                 && runtime.pending.is_none()
                 && !runtime.blocked
                 && !runtime.dragging
                 && !runtime.suppress_next_state
                 && snapshot.tick > runtime.ignore_geometry_through;
+            let mut external_restored = false;
+            if can_observe_edit {
+                if runtime.window.minimized {
+                    runtime.external_restore = Some((window.layout.clone(), snapshot.tick));
+                } else if let Some((layout, since)) = &mut runtime.external_restore {
+                    if *layout != window.layout {
+                        *layout = window.layout.clone();
+                        *since = snapshot.tick;
+                    } else if snapshot.tick.saturating_sub(*since) >= 100
+                        && window.layout.reachable()
+                    {
+                        external_restored = true;
+                        runtime.external_restore = None;
+                    }
+                }
+            } else {
+                runtime.external_restore = None;
+            }
+            let user_state_change = can_observe_edit
+                && window.layout.reachable()
+                && (external_restored
+                    || (!runtime.window.minimized
+                        && window.layout.maximized != runtime.window.layout.maximized));
             if user_state_change && let Some(record) = self.saved.windows.get_mut(&key) {
                 record
                     .layouts
@@ -329,20 +369,55 @@ impl Model {
             }
             runtime.window = window;
             runtime.present = true;
-            if runtime.pending.is_none() {
+            if runtime.pending.is_none() && snapshot.tick > runtime.ignore_geometry_through {
                 runtime.suppress_next_state = false;
             }
             if changed {
                 runtime.sequence += 1;
                 runtime.desired = None;
                 runtime.ignore_geometry_through = snapshot.tick;
-                if !self.saved.paused
-                    && !runtime.window.minimized
-                    && !runtime.dragging
-                    && !runtime.blocked
-                {
-                    runtime.desired = Some(Action::Minimize { automatic: true });
+                if !self.saved.paused && !runtime.dragging {
+                    if self.saved.auto_restore
+                        && let Some(layout) =
+                            self.saved.windows[&key].layouts.get(&snapshot.current)
+                    {
+                        runtime.desired = Some(Action::RestoreAutomatic(layout.clone()));
+                    } else if !runtime.window.minimized
+                        || runtime.pending.as_ref().is_some_and(|pending| {
+                            matches!(
+                                pending.request.action,
+                                Action::Restore(_) | Action::RestoreAutomatic(_)
+                            )
+                        })
+                    {
+                        // Even a currently minimized window may have an older
+                        // restore in flight. Reconcile it once that completes.
+                        runtime.desired = Some(Action::Minimize { automatic: true });
+                    }
                 }
+            }
+        }
+    }
+
+    pub fn set_auto_restore(&mut self, enabled: bool) {
+        if self.saved.auto_restore == enabled {
+            return;
+        }
+        self.saved.auto_restore = enabled;
+        self.saved.preferences_revision = self.saved.preferences_revision.saturating_add(1);
+        self.dirty = true;
+        // A preference change does not move windows. Cancel queued automatic
+        // intent; the next confirmed switch applies the new policy.
+        for runtime in self.windows.values_mut() {
+            if runtime.desired.as_ref().is_some_and(Action::automatic) {
+                runtime.desired = None;
+            }
+            if runtime
+                .pending
+                .as_ref()
+                .is_some_and(|p| p.request.action.automatic())
+            {
+                runtime.sequence += 1;
             }
         }
     }
@@ -410,6 +485,7 @@ impl Model {
         }
         runtime.sequence += 1;
         runtime.desired = None;
+        runtime.external_restore = None;
         runtime.dragging = started;
         if !started
             && runtime.pending.is_none()
@@ -501,9 +577,21 @@ impl Model {
             && let Some(record) = self.saved.windows.get_mut(key)
         {
             record.last_usable = layout.clone();
+            record
+                .layouts
+                .insert(self.current.clone().unwrap(), layout.clone());
             self.dirty = true;
         }
         if verified || cancelled {
+            if verified && let Some(pending) = &runtime.pending {
+                match pending.request.action {
+                    Action::Minimize { .. } => runtime.window.minimized = true,
+                    Action::Restore(_) | Action::RestoreAutomatic(_) => {
+                        runtime.window.minimized = false
+                    }
+                    Action::Raise => {}
+                }
+            }
             runtime.pending = None;
             runtime.blocked = false;
             runtime.suppress_next_state = verified;

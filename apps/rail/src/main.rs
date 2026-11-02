@@ -106,7 +106,7 @@ fn main() {
 fn run(args: Vec<String>) -> Result<i32, String> {
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "virtual-desktop-rail [--settings]\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nExperimental opt-in: --experimental-integration on|off (persisted; newer revisions of build 26300 only).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Validated integration is default; experimental revisions require opt-in."
+            "virtual-desktop-rail [--settings]\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nExperimental opt-in: --experimental-integration on|off (persisted; newer revisions of build 26300 only).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Validated integration is default; experimental revisions require opt-in."
         );
         return Ok(0);
     }
@@ -140,6 +140,11 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         [arg] if arg == "--exit" => Some(ui::Command::Exit),
         [arg, key] if arg == "--click" => Some(ui::Command::Click { key: key.clone() }),
         [arg, guid] if arg == "--switch" => Some(ui::Command::Switch { guid: guid.clone() }),
+        [arg, value] if arg == "--auto-restore" && ["on", "off"].contains(&value.as_str()) => {
+            Some(ui::Command::AutoRestore {
+                enabled: value == "on",
+            })
+        }
         [arg, value] if arg == "--automation-ui" && ["on", "off"].contains(&value.as_str()) => {
             Some(ui::Command::AutomationUi {
                 enabled: value == "on",

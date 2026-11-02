@@ -1,5 +1,9 @@
 # Live MVP validation
 
+> The optional restoration extension is verified separately in
+> [Auto-Restore-Validation](Auto-Restore-Validation.md), including new-desktop
+> minimization, manual/external learning, maximized restore and focus preservation.
+
 > Updated evidence is recorded in [Validation-2026-11-02](Validation-2026-11-02.md).
 > The results below describe the original revision 9457 validation. The VM has
 > since updated to 9711; newer same-build revisions now have an explicit

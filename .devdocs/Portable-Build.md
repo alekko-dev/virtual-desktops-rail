@@ -27,12 +27,22 @@ indicator underneath changes: solid when visible, outlined when minimized.
 
 Switching desktops minimizes visible shared windows. Clicking an icon restores
 its layout for the current desktop, raises a visible background window, or
-minimizes a foreground window. Returning to a desktop never restores automatically.
+minimizes a foreground window. By default, returning leaves windows minimized.
 Move, resize, and maximize using the application's normal controls. Each window
 remembers its own desktop layouts. Utility restarts preserve duplicate identities;
 application restarts create new identities rather than guessing old matches.
 
-The bottom pause button suspends automatic minimization; manual controls continue
+For automatic restoration, enable **Restore saved layouts on desktop switch** in
+Settings. This preference defaults to off and saves automatically. Each window
+with a layout saved for the destination restores there without taking focus;
+each window without one gets minimized, including on newly created desktops.
+Manually restoring through the rail or taskbar saves the resulting desktop layout.
+External restores wait for stable, reachable geometry before saving. Automatic
+restores do not overwrite that memory. Minimizing a window keeps its layouts.
+Startup, recovery, resume and enabling the setting do not move or reveal windows;
+the next desktop switch applies the policy.
+
+The bottom pause button suspends automatic window actions; manual controls continue
 working. The gear opens settings, including start with Windows, integration
 retry, and exit. `virtual-desktop-rail.exe --settings` also opens settings.
 Startup is opt-in and uses a per-user Startup shortcut. Moving this directory

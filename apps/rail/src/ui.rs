@@ -22,6 +22,7 @@ const STARTUP: usize = 6001;
 const RETRY: usize = 6002;
 const EXIT: usize = 6003;
 const EXPERIMENTAL: usize = 6004;
+const AUTO_RESTORE: usize = 6005;
 
 #[derive(Clone, PartialEq, Eq)]
 enum ButtonKind {
@@ -49,6 +50,7 @@ pub enum Command {
     Switch { guid: String },
     AutomationUi { enabled: bool },
     ExperimentalIntegration { enabled: bool },
+    AutoRestore { enabled: bool },
 }
 
 struct App {
@@ -119,6 +121,7 @@ impl App {
                 );
             },
             Command::Settings => self.show_settings(),
+            Command::AutoRestore { enabled } => self.model.set_auto_restore(enabled),
             Command::ExperimentalIntegration { enabled } => {
                 if self.model.saved.experimental_integration != enabled {
                     self.model.saved.experimental_integration = enabled;
@@ -161,6 +164,7 @@ impl App {
                     "appbar":crate::appbar::diagnostics(self.window),
                     "dispatch_latency":self.dispatch_latency,
                     "experimental_integration":self.model.saved.experimental_integration,
+                    "auto_restore":self.model.saved.auto_restore,
                     "desktops":self.model.desktops,"windows":self.model.windows.iter().filter(|(_,r)|r.present).map(|(key,r)|serde_json::json!({
                         "key":key,"hwnd":r.window.hwnd,"pid":r.window.pid,"minimized":r.window.minimized,"blocked":r.blocked,
                         "responsive":r.window.responsive,"pending":r.pending.is_some(),"layout":r.window.layout,
@@ -353,7 +357,13 @@ impl App {
                         && let Some(pending) = &mut runtime.pending
                         && pending.request.sequence == sequence
                     {
-                        pending.request.action = rail_core::Action::Restore(target);
+                        pending.request.action = match pending.request.action {
+                            rail_core::Action::RestoreAutomatic(_) => {
+                                rail_core::Action::RestoreAutomatic(target)
+                            }
+                            rail_core::Action::Restore(_) => rail_core::Action::Restore(target),
+                            ref action => action.clone(),
+                        };
                     }
                     self.model.dispatched(&key, sequence);
                 }
@@ -643,9 +653,9 @@ impl App {
             self.button(
                 PAUSE,
                 if self.model.saved.paused {
-                    "Resume automatic minimization"
+                    "Resume automatic window actions"
                 } else {
-                    "Pause automatic minimization"
+                    "Pause automatic window actions"
                 },
                 bounds.bottom - 2 * cell,
                 cell,
@@ -734,7 +744,7 @@ impl App {
                 200,
                 160,
                 640,
-                410,
+                470,
                 self.window,
                 null_mut(),
                 GetModuleHandleW(null()),
@@ -749,18 +759,34 @@ impl App {
             (
                 SET_PAUSE,
                 "BUTTON",
-                "Pause automatic minimization",
+                "Pause automatic window actions",
                 0x50010003,
                 164,
                 30,
             ),
             (STARTUP, "BUTTON", "Start with Windows", 0x50010003, 200, 30),
             (
+                AUTO_RESTORE,
+                "BUTTON",
+                "Restore saved layouts on desktop switch",
+                0x50010003,
+                236,
+                30,
+            ),
+            (
+                6101,
+                "STATIC",
+                "Windows without a saved layout get minimized.",
+                0x50000000,
+                270,
+                28,
+            ),
+            (
                 EXPERIMENTAL,
                 "BUTTON",
                 "Try experimental integration on newer Windows 26300 revisions",
                 0x50010003,
-                236,
+                304,
                 36,
             ),
             (
@@ -768,10 +794,10 @@ impl App {
                 "BUTTON",
                 "Retry desktop integration",
                 0x50010000,
-                304,
+                364,
                 34,
             ),
-            (EXIT, "BUTTON", "Exit", 0x50010000, 304, 34),
+            (EXIT, "BUTTON", "Exit", 0x50010000, 364, 34),
         ] {
             let (x, width) = if id == EXIT {
                 (440, 120)
@@ -806,14 +832,15 @@ impl App {
             return;
         }
         let signature = format!(
-            "{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}",
             self.status,
             self.notice,
             self.model.saved.paused,
             self.model.saved.startup,
             self.startup_busy,
             self.loaded,
-            self.model.saved.experimental_integration
+            self.model.saved.experimental_integration,
+            self.model.saved.auto_restore
         );
         if signature == self.settings_signature {
             return;
@@ -842,6 +869,16 @@ impl App {
                 0xf1,
                 self.model.saved.experimental_integration as usize,
                 0,
+            );
+            SendMessageW(
+                GetDlgItem(self.settings, AUTO_RESTORE as i32),
+                0xf1,
+                self.model.saved.auto_restore as usize,
+                0,
+            );
+            EnableWindow(
+                GetDlgItem(self.settings, AUTO_RESTORE as i32),
+                self.loaded as i32,
             );
             EnableWindow(
                 GetDlgItem(self.settings, EXPERIMENTAL as i32),
@@ -1303,6 +1340,12 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                             SendMessageW(GetDlgItem(window, EXPERIMENTAL as i32), 0xf0, 0, 0)
                         } != 0;
                         app.command(Command::ExperimentalIntegration { enabled });
+                    }
+                    AUTO_RESTORE => {
+                        let enabled = unsafe {
+                            SendMessageW(GetDlgItem(window, AUTO_RESTORE as i32), 0xf0, 0, 0)
+                        } != 0;
+                        app.command(Command::AutoRestore { enabled });
                     }
                     EXIT => app.command(Command::Exit),
                     _ => {}

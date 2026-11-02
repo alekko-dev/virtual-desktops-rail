@@ -10,6 +10,19 @@ tags:
 
 # Virtual Desktop Rail — MVP
 
+## Approved extension — 2026-11-02
+
+Settings now includes an opt-in **Restore saved layouts on desktop switch** mode.
+On each confirmed desktop switch, independently for each pinned window: restore
+its destination layout without taking focus if one exists; otherwise minimize it.
+New desktops therefore minimize windows until layouts are established there.
+Manual restoration through the rail or Windows/taskbar establishes or updates
+that desktop's layout, after stable reachable geometry is observed for external
+restores. Automatic restoration preserves stored geometry. Minimization does not
+forget layouts. Pause suspends both automatic actions; startup, recovery, resume
+and changing the preference establish no immediate visibility changes. The
+original minimize-on-switch/restore-on-demand policy below remains the default.
+
 ## Purpose
 
 A lightweight Windows 11 utility that makes the current virtual desktop obvious and provides quick access to shared application windows, such as Obsidian, without leaving them visible across every desktop.

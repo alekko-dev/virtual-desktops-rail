@@ -7,6 +7,29 @@ tags: [project, windows, architecture]
 
 # Virtual Desktop Rail — Implementation Architecture
 
+## Approved automatic-restoration extension — 2026-11-02
+
+The original restore-on-demand policy below remains the default. An opt-in
+`auto_restore` preference selects automatic destination-layout restoration:
+restore only windows with a saved layout for that desktop; minimize windows
+without one. Restoration is automatic intent, so it obeys pause, generations,
+per-window sequencing and timeout quarantine, and never requests foreground.
+Native automatic restoration establishes minimized restore state, including
+`WPF_RESTORETOMAXIMIZED`, then reveals with `SW_SHOWNOACTIVATE`. The intermediate
+accepted operation retains its per-window slot even if reveal is declined.
+
+Explicit rail restores now establish destination layouts after verified, current
+completion. External minimize-to-visible transitions (including taskbar restores)
+are treated as manual intent only within a stable desktop baseline, outside our
+pending/late operations and drags. Require matching reachable geometry samples
+at least 100 ms apart before saving; reject transient off-screen coordinates.
+Automatic restores never rewrite saved geometry or the last-usable fallback.
+Startup/recovery/discovery do not learn a layout merely from visibility.
+Enabling the preference or resuming does not reveal windows until a new switch.
+Already accepted operations cannot be retracted; newer destinations reconcile
+after observation, including minimizing a late restore on a desktop without a
+layout. Schema 1 adds a default-false field and preserves existing identities.
+
 Companion to [the MVP](Virtual-Desktop-Rail-MVP.md) and [the development environment](Virtual-Desktop-Rail-Dev-Environment.md). This is a proposed implementation, not a tested implementation or a claim of support for every Windows 11 build.
 
 ## Stack and support boundary

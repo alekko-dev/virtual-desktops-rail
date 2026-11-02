@@ -7,7 +7,13 @@ fn help_and_invalid_arguments_exit_without_starting_a_rail() {
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("--settings"));
     assert!(String::from_utf8_lossy(&help.stdout).contains("--experimental-integration on|off"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--auto-restore on|off"));
     let invalid = Command::new(exe).arg("--unknown-option").output().unwrap();
+    assert_eq!(invalid.status.code(), Some(1));
+    let invalid = Command::new(exe)
+        .args(["--auto-restore", "maybe"])
+        .output()
+        .unwrap();
     assert_eq!(invalid.status.code(), Some(1));
     let invalid = Command::new(exe)
         .args(["--experimental-integration", "maybe"])

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowPlacement, IsIconic, IsWindowVisible, SW_SHOWMAXIMIZED,
     SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SetForegroundWindow, SetWindowPlacement,
-    ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT,
+    ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
 };
 
 pub struct Job {
@@ -262,7 +262,7 @@ fn dispatch(job: &Job) -> Result<Option<rail_core::Layout>, String> {
             }
             Ok(None)
         }
-        Action::Restore(saved) => {
+        Action::Restore(saved) | Action::RestoreAutomatic(saved) => {
             let target = platform::adjusted(saved, window)?;
             if !valid(job) || !platform::validate(&request.window) {
                 return Err("Restore superseded before dispatch".into());
@@ -284,13 +284,39 @@ fn dispatch(job: &Job) -> Result<Option<rail_core::Layout>, String> {
                 right: target.normal[2],
                 bottom: target.normal[3],
             };
-            unsafe { SetWindowPlacement(window, &placement) }.map_err(|e| e.to_string())?;
+            if request.action.automatic() {
+                // Establish the destination restore state while minimized,
+                // then reveal it without activating the application. Never use
+                // SW_SHOWMAXIMIZED for automatic work: that activates the target.
+                placement.showCmd = SW_SHOWMINNOACTIVE.0 as u32;
+                if target.maximized {
+                    placement.flags |= WPF_RESTORETOMAXIMIZED;
+                }
+                unsafe { SetWindowPlacement(window, &placement) }.map_err(|e| e.to_string())?;
+                // Once the intermediate native request is accepted, keep this
+                // operation outstanding until observed. Superseding intent is
+                // reconciled afterward; it cannot cancel already posted work.
+                placement.showCmd = SW_SHOWNOACTIVATE.0 as u32;
+            }
+            if let Err(error) = unsafe { SetWindowPlacement(window, &placement) } {
+                if !request.action.automatic() {
+                    return Err(error.to_string());
+                }
+                // The minimize stage may still be queued. Never release the
+                // per-window slot merely because the reveal stage was declined.
+                notify(Event::Notice(format!(
+                    "Automatic restore reveal was declined; waiting for the outstanding operation: {error}"
+                )));
+                return Ok(Some(target));
+            }
             if let Some(popup) = platform::popup(&request.window) {
                 let _ = unsafe { ShowWindowAsync(popup, SW_SHOWNOACTIVATE) };
             }
             Ok(Some(target))
         }
-        Action::Raise => Ok(None),
+        // A manual restore can become a raise if Windows already revealed the
+        // window between click and dispatch. Report its actual resulting layout.
+        Action::Raise => Ok(Some(platform::layout(window)?)),
     }
 }
 
@@ -316,7 +342,7 @@ fn verified(active: &Active) -> bool {
                     .is_none_or(|popup| !unsafe { IsWindowVisible(popup) }.as_bool())
         }
         Action::Raise => true,
-        Action::Restore(_) => {
+        Action::Restore(_) | Action::RestoreAutomatic(_) => {
             !unsafe { IsIconic(window) }.as_bool()
                 && platform::layout(window).is_ok_and(|layout| {
                     active.target.as_ref().is_some_and(|expected| {

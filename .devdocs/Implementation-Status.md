@@ -6,6 +6,8 @@ before rail feature work began. See [Compatibility-Evidence](Compatibility-Evide
 This is a development MVP; broader release certification remains open. See
 [2026-11-02 follow-up](Validation-2026-11-02.md) for the newer-revision opt-in,
 measured resource results and deferred checks.
+The later [auto-restore validation](Auto-Restore-Validation.md) records the
+approved optional restoration mode and its portable build.
 
 ## Implemented
 
@@ -15,9 +17,13 @@ measured resource results and deferred checks.
 - Discovery of eligible window-pinned OR application-pinned ordinary windows,
   including minimized windows. Cached candidates reconcile once per second;
   shell/window events trigger rescans and a 30-second safety rescan bounds drift.
-- Minimize on confirmed desktop transitions, restore only on explicit request.
+- Default mode: minimize on confirmed desktop transitions, restore on explicit request.
   Pause persists and cancels queued automatic work; resume, startup, pin discovery,
   and integration recovery establish baselines without unsolicited minimization.
+- Optional **Restore saved layouts on desktop switch**: automatically restore
+  windows with a destination layout without requesting focus; minimize windows
+  without one. Rail and stable external/taskbar restorations establish layouts.
+  Automatic restorations preserve memory; pause suspends both automatic actions.
 - Independent normal/maximized layouts per window and desktop. Move/resize end
   events commit geometry; utility-generated or external restoration does not
   overwrite saved desktop layouts. Monitor/DPI adjustment clamps restored bounds.
@@ -47,7 +53,7 @@ measured resource results and deferred checks.
 
 ## Verification
 
-`scripts/check-dev.ps1` runs formatting, warnings-denied Clippy, **41 tests**, and
+`scripts/check-dev.ps1` runs formatting, warnings-denied Clippy, **51 tests**, and
 locked release builds. Tests cover the pure controller's race/recovery behavior,
 monitor clamping, schema validation, atomic storage, corrupt-file recovery,
 cross-session merging, isolated Startup shortcut creation/removal, diagnostic

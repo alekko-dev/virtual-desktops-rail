@@ -1,3 +1,13 @@
+> **Latest: optional auto-restore implemented.** Read
+> [Auto-Restore-Validation.md](Auto-Restore-Validation.md) first. The approved
+> setting restores destination layouts without focus and minimizes windows with
+> no destination layout. Manual rail and stable external restores now establish
+> layouts. There are 51 passing tests. Latest portable ZIP:
+> `artifacts/VirtualDesktopRail-nightly-2026-11-02-autorestore-windows-x64.zip`.
+> The packaged app is left running, ready, auto-restore off (default), experimental
+> integration on for the VM, no test windows and only the original two desktops.
+> See `artifacts/auto-package-verification.json` and `auto-cleanup-final.json`.
+
 > **2026-11-02 update:** Read [Validation-2026-11-02.md](Validation-2026-11-02.md)
 > before using this historical handover. The VM is now 26300.9711; the user's
 > physical PC screenshot is 26300.9818. The default validated revision is unchanged,
