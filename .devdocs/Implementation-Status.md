@@ -1,9 +1,11 @@
 # Implementation status
 
 Updated 2026-11-02. The native Windows MVP is implemented. The documented
-compatibility gate was preserved and passed on **Windows 11 x64 10.0.26300.9457**
+initial compatibility spike passed on **Windows 11 x64 10.0.26300.9457**
 before rail feature work began. See [Compatibility-Evidence](Compatibility-Evidence.md).
 This is a development MVP; broader release certification remains open. See
+[current compatibility policy](Compatibility-Policy.md) for minimum-build
+eligibility, which supersedes the earlier revision opt-in. See
 [2026-11-02 follow-up](Validation-2026-11-02.md) for the newer-revision opt-in,
 measured resource results and deferred checks.
 The later [auto-restore validation](Auto-Restore-Validation.md) records the
@@ -39,8 +41,12 @@ approved optional restoration mode and its portable build.
   kill-on-parent-close JobObject, and reconnect backoff. TaskbarCreated handling
   re-registers the AppBar and reconnects with a fresh controller baseline.
 - Visible unavailable status and retry controls. The exact validated OS revision
-  enables integration by default. A persisted experimental opt-in allows newer
-  revisions of build 26300, while other builds remain blocked. Inaccessible and
+  is retained as historical validation evidence, not an eligibility allowlist.
+  Integration attempts initialization on Windows 11 x64 24H2 build 26100.2605
+  or newer using the shared adapter-minimum check. Legacy experimental preferences
+  remain readable/CLI-compatible but do not change eligibility; the checkbox is
+  disabled pending the settings UX update. Initialization and runtime failures
+  still disable dependent controls. Inaccessible and
   unsupported surfaces are excluded; mixed pin-query failures remain failures.
 - Per-user/session single instance, per-user opt-in Startup shortcut, atomic local
   JSON state, previous-state recovery, corrupt-file preservation, debounced writes,

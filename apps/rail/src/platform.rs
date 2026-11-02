@@ -31,15 +31,15 @@ pub fn supported(experimental: bool) -> Result<(), String> {
 
 fn support_version(
     os: rail_compatibility_probe::report::OsVersion,
-    experimental: bool,
+    _experimental: bool,
 ) -> Result<(), String> {
-    if (os.major, os.minor, os.build, os.revision) == (10, 0, 26300, 9457)
-        || (experimental && (os.major, os.minor, os.build) == (10, 0, 26300) && os.revision > 9457)
-    {
+    // Keep accepting the legacy preference, but eligibility now follows winvd's
+    // minimum. Successful initialization and runtime queries are still required.
+    if os.meets_adapter_minimum() {
         Ok(())
     } else {
         Err(format!(
-            "Windows {}.{}.{}.{} has not passed this rail's compatibility matrix. Validated baseline: 10.0.26300.9457. For newer 26300 revisions, enable experimental integration below to try desktop controls. Other builds remain unavailable.",
+            "Windows {}.{}.{}.{} does not meet the desktop integration minimum: Windows 11 24H2 build 26100.2605 or newer (Windows version 10.0).",
             os.major, os.minor, os.build, os.revision
         ))
     }
@@ -51,62 +51,81 @@ mod tests {
     use rail_compatibility_probe::report::OsVersion;
 
     #[test]
-    fn an_os_update_cannot_silently_enable_integration() {
-        let baseline = OsVersion {
+    fn integration_accepts_the_adapter_minimum_and_newer_builds_without_opt_in() {
+        let minimum = OsVersion {
             major: 10,
             minor: 0,
-            build: 26300,
-            revision: 9457,
+            build: 26100,
+            revision: 2605,
         };
-        assert!(support_version(baseline, false).is_ok());
-        assert!(support_version(baseline, true).is_ok());
         for os in [
+            minimum,
             OsVersion {
-                revision: 9711,
-                ..baseline
+                revision: 2606,
+                ..minimum
             },
             OsVersion {
+                build: 26200,
+                revision: 0,
+                ..minimum
+            },
+            OsVersion {
+                build: 26300,
                 revision: 9456,
-                ..baseline
+                ..minimum
+            },
+            OsVersion {
+                build: 26300,
+                revision: 9818,
+                ..minimum
             },
             OsVersion {
                 build: 26301,
-                ..baseline
-            },
-            OsVersion {
-                major: 11,
-                ..baseline
+                revision: 0,
+                ..minimum
             },
         ] {
-            assert!(support_version(os, false).is_err());
+            for experimental in [false, true] {
+                assert!(support_version(os, experimental).is_ok(), "{os:?}");
+            }
         }
-        for revision in [9711, 9818] {
-            assert!(
-                support_version(
-                    OsVersion {
-                        revision,
-                        ..baseline
-                    },
-                    true
-                )
-                .is_ok()
-            );
-        }
+    }
+
+    #[test]
+    fn legacy_opt_in_cannot_bypass_the_minimum_or_windows_version_guard() {
+        let minimum = OsVersion {
+            major: 10,
+            minor: 0,
+            build: 26100,
+            revision: 2605,
+        };
         for os in [
             OsVersion {
-                revision: 9456,
-                ..baseline
+                build: 26099,
+                revision: u32::MAX,
+                ..minimum
             },
             OsVersion {
-                build: 26301,
-                ..baseline
+                revision: 2604,
+                ..minimum
+            },
+            OsVersion {
+                major: 6,
+                ..minimum
+            },
+            OsVersion {
+                minor: 1,
+                ..minimum
             },
             OsVersion {
                 major: 11,
-                ..baseline
+                ..minimum
             },
         ] {
-            assert!(support_version(os, true).is_err());
+            for experimental in [false, true] {
+                let error = support_version(os, experimental).unwrap_err();
+                assert!(error.contains("26100.2605"));
+            }
         }
     }
 }

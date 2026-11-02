@@ -106,7 +106,7 @@ fn main() {
 fn run(args: Vec<String>) -> Result<i32, String> {
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "virtual-desktop-rail [--settings]\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nExperimental opt-in: --experimental-integration on|off (persisted; newer revisions of build 26300 only).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Validated integration is default; experimental revisions require opt-in."
+            "virtual-desktop-rail [--settings]\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nLegacy preference: --experimental-integration on|off (persisted for compatibility; no longer affects build eligibility).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Desktop integration requires Windows 11 24H2 build 26100.2605 or newer and successful runtime checks."
         );
         return Ok(0);
     }

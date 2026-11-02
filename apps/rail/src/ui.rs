@@ -303,8 +303,8 @@ impl App {
                     }
                 }
                 Event::Frame(frame, received, experimental) => {
-                    // Frames already queued before opting out must not reactivate
-                    // integration on an unvalidated revision.
+                    // Ignore queued frames from a worker superseded by a legacy
+                    // preference change while its replacement is reconnecting.
                     if experimental != self.model.saved.experimental_integration {
                         continue;
                     }
@@ -316,9 +316,7 @@ impl App {
                             .try_send(store::Work::Log("Desktop integration is ready.".into()));
                     }
                     self.ready = true;
-                    self.status = if self.model.saved.experimental_integration {
-                        "Desktop integration is ready. Experimental integration is enabled; this Windows revision may be unvalidated."
-                    } else { "Desktop integration is ready." }.into();
+                    self.status = "Desktop integration is ready.".into();
                     if self.model.current.as_ref().is_some_and(|current| {
                         *current != frame.current
                             || self.model.transition_serial != frame.transition_serial
@@ -784,7 +782,7 @@ impl App {
             (
                 EXPERIMENTAL,
                 "BUTTON",
-                "Try experimental integration on newer Windows 26300 revisions",
+                "Experimental integration (legacy preference; no longer required)",
                 0x50010003,
                 304,
                 36,
@@ -880,10 +878,7 @@ impl App {
                 GetDlgItem(self.settings, AUTO_RESTORE as i32),
                 self.loaded as i32,
             );
-            EnableWindow(
-                GetDlgItem(self.settings, EXPERIMENTAL as i32),
-                self.loaded as i32,
-            );
+            EnableWindow(GetDlgItem(self.settings, EXPERIMENTAL as i32), 0);
             EnableWindow(
                 GetDlgItem(self.settings, STARTUP as i32),
                 (!self.startup_busy && self.loaded) as i32,

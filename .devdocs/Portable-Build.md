@@ -4,17 +4,16 @@ Extract this directory and run `virtual-desktop-rail.exe` in an unlocked Windows
 Explorer session. No installer or administrator privileges are required. The
 Microsoft C runtime is statically linked. This local build is unsigned.
 
-Shell integration is enabled only on the validated development baseline,
-Windows 11 x64 **10.0.26300.9457** by default. Newer revisions of build **26300**
-can be tried by checking **Try experimental integration on newer Windows 26300
-revisions** in Settings. This takes effect immediately, saves the preference,
-and keeps the revision explicitly experimental. Uncheck it to return to the
-validated-only policy. Other Windows builds remain unavailable.
+Shell integration attempts initialization on Windows 11 x64 **24H2 build
+26100.2605 or newer**, using `winvd 0.0.49`'s minimum rather than an exact-revision
+allowlist. Successful initialization and runtime queries are still required;
+meeting the minimum does not certify every later revision.
 
-If you see no desktop dots or pinned-window controls and Settings reports an
-unvalidated revision such as **26300.9818**, this version restriction is the
-cause. Use the checkbox in this updated build. Revision 9818 has not been tested
-on the user's physical PC; VM checks on 9711 do not establish its compatibility.
+If there are no desktop dots or pinned-window controls, read the integration
+status in Settings. Versions below the minimum are blocked; initialization or
+runtime failures disable dependent controls and can be retried. The old
+experimental checkbox is disabled. Its saved preference and CLI flag remain
+accepted for compatibility but no longer affect eligibility.
 
 The left rail reserves 25 DIP on the primary monitor. Desktop dots switch
 desktops; hovering shows names. Dots receive automatic distinct colors, with a larger filled circle for the active desktop and colored outlines for the others. App icons represent eligible windows pinned

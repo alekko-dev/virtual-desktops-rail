@@ -7,6 +7,8 @@ fn help_and_invalid_arguments_exit_without_starting_a_rail() {
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("--settings"));
     assert!(String::from_utf8_lossy(&help.stdout).contains("--experimental-integration on|off"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("no longer affects build eligibility"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("26100.2605"));
     assert!(String::from_utf8_lossy(&help.stdout).contains("--auto-restore on|off"));
     let invalid = Command::new(exe).arg("--unknown-option").output().unwrap();
     assert_eq!(invalid.status.code(), Some(1));

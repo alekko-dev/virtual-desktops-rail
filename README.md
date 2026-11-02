@@ -18,13 +18,13 @@ Pause suspends both automatic minimization and restoration. To change the option
 on a running instance from PowerShell, use
 `./scripts/Invoke-Rail.ps1 --auto-restore on` (or `off`).
 
-The documented compatibility gate passed before feature implementation. Shell
-integration defaults to the validated **10.0.26300.9457** revision. On newer
-revisions of build **26300** (including 9711 and 9818), Settings offers **Try
-experimental integration on newer Windows 26300 revisions**. Enabling it retries
-immediately and persists across restarts. Other builds stay unavailable. This is
-an unsigned development MVP, with broader release
-validation still pending. See [implementation status](.devdocs/Implementation-Status.md),
+The initial compatibility spike passed before feature implementation. Shell
+integration now attempts initialization on Windows 11 x64 **24H2 build
+26100.2605 or newer**, matching the minimum declared by `winvd 0.0.49`.
+An exact tested revision or experimental opt-in is no longer required.
+Eligibility is not compatibility certification: initialization and runtime query
+failures still disable dependent controls. This is an unsigned development MVP,
+with broader release validation still pending. See [implementation status](.devdocs/Implementation-Status.md),
 [live evidence](.devdocs/Live-Validation.md), and [portable usage](.devdocs/Portable-Build.md).
 
 ## Run
@@ -47,12 +47,12 @@ settings. State and bounded diagnostics live in `%LOCALAPPDATA%\VirtualDesktopRa
 The MVP expects approximately two or three shared windows and has no overflow UI.
 Application restarts receive fresh identities rather than guessed layout matches.
 
-If the rail has no desktop dots and Settings says Windows has not passed the
-compatibility matrix, integration was deliberately disabled before discovery.
-On a newer 26300 revision, use the experimental checkbox to try it. This does
-not certify that revision; runtime query failures still disable dependent controls.
-The same preference can be changed on a running instance with
-`./scripts/Invoke-Rail.ps1 --experimental-integration on` (or `off`).
+If the rail has no desktop dots, check Settings for a below-minimum Windows
+version or an integration initialization/runtime failure. Use **Retry desktop
+integration** after a recoverable failure. The old experimental checkbox is
+disabled. Existing saved preferences and
+`./scripts/Invoke-Rail.ps1 --experimental-integration on` (or `off`) remain
+accepted for compatibility, but neither value changes build eligibility.
 
 Desktop dots receive automatic contrasting colors (blue, orange, purple, then other hue families). The current desktop is a larger filled circle; inactive desktops use colored outlines. The rail uses smooth dots, spaced window buttons, and a drawn sliders control for Settings.
 
@@ -120,7 +120,7 @@ this exact baseline; a read-only report alone cannot clear that gate. See
 [environment readiness](.devdocs/Environment-Readiness.md) for setup and evidence.
 Exit status **2** means unavailable, **1** means invocation/report I/O failed, and
 **0** means read-only observations were collected, not that compatibility passed.
-There is deliberately no build-gate bypass.
+Versions below the adapter minimum cannot bypass the build gate.
 
 On an eligible build, `--observe-seconds 1..60` (default 2) records desktop GUIDs/names,
 notification kinds, and one-second samples of window/app pin queries. Calls and
