@@ -32,6 +32,7 @@ executable. Diagnostic `--status` reports the running instance's build, whereas
 - A 25-DIP rail on the primary display's left edge reserves space beside maximized apps.
 - Desktop dots show the current desktop, reveal names on hover, and switch desktops on click.
 - Windows pinned through Task View appear automatically, including application-level pins.
+- Application icons use a consistent 16-DIP size with DPI-aware source selection and filtered resizing.
 - Each window remembers its position, size, and normal/maximized state per desktop.
 - Optional automatic restoration restores saved destination layouts without taking focus.
 - Pause/resume, optional startup with Windows, and local settings and layout storage.

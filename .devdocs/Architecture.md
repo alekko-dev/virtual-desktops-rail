@@ -42,6 +42,16 @@ Win32 controls and GDI painting, `winvd = 0.0.49`, and versioned JSON storage. S
 CRT and an unpackaged portable executable avoid a managed runtime, service, or driver.
 Core usage is local; diagnostics are bounded and do not collect window titles.
 
+Application icons are painted at 16 DIPs (16/20/24/32 pixels at 100/125/150/200%).
+The icon worker compares the window's small and large icons, choosing an exact-size
+image, otherwise the smallest image large enough, otherwise the largest available.
+Class icons are used only when the window provides none; size-specific executable
+extraction is the final fallback. Window-specific artwork takes precedence over
+executable artwork. WIC Fant filtering normalizes mismatched images once off the UI
+thread, preserving premultiplied alpha. Cache keys include window identity and DPI;
+extraction or WIC failure retains the existing fallback behavior. Applications that
+provide only small artwork can still require enlargement.
+
 | Path | Responsibility |
 | --- | --- |
 | `crates/rail-core/src/lib.rs` | Pure controller, layout/identity model, generations, sequencing, pause and recovery |

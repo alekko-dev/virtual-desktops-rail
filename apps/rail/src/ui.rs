@@ -1178,7 +1178,7 @@ fn draw(app: &App, item: &DrawItem) {
                         .filter(|icon| *icon != 0)
                         .map(|icon| icon as Handle)
                         .unwrap_or_else(|| LoadIconW(null_mut(), 32512usize as *const u16));
-                    let size = (width - 8).max(8);
+                    let size = icons::pixel_size(GetDpiForWindow(app.window).max(96));
                     let minimized = app
                         .model
                         .windows

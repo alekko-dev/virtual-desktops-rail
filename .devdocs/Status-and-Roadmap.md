@@ -19,6 +19,11 @@ and decisions are in [Architecture](Architecture.md); scoped results are in [Tes
 | Preferences and distribution | Persisted pause/auto-restore, opt-in per-user Startup shortcut, session singleton, static CRT portable ZIP with licenses/checksum | Isolated shortcut tests; package hash/manifest/import checks recorded. Unsigned preview. |
 | Appearance and diagnostics | Normal icons with under-icon indicators, light/dark and high-contrast palette handling, Peek-exclusion request, bounded local logs and dispatch statistics | High-contrast implementation is not a completed visual or screen-reader review; Peek exclusion is not screenshot exclusion |
 
+Application icons now use a shared 16-DIP size, dimension-based selection from window
+icon variants, size-specific executable fallback and off-thread WIC Fant filtering.
+Synthetic transparency/filtering regressions and a live 125% rendering/pointer check
+passed; visual sharpness across other DPI settings remains unverified. See [Testing](Testing.md).
+
 Latest recorded code verification before this documentation restructure: formatting,
 warnings-denied Clippy, 53 tests and locked release builds for the minimum-build policy
 change. This is dated evidence, not a permanent expected test count or a fresh test run.

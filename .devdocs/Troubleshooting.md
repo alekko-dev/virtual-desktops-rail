@@ -61,6 +61,19 @@ it independently or create another rail entry. The spike's hidden standard-dialo
 was fixture-specific and is not a general application-discovery policy.
 Verify the whole owner/modal group through minimize, explicit restore and desktop switching.
 
+## Blurred application icons and dark transparent edges
+
+Use the same 16-DIP pixel calculation for worker extraction and painting. Deriving
+icon size from scaled rail width minus fixed pixel padding produced unusual sizes
+such as 22 pixels at 125%, while small-icon-first extraction could enlarge a smaller
+source. Compare available window icon dimensions before resizing and keep all
+extraction/filtering off the UI thread.
+
+WIC HICON import exposes premultiplied HICON bytes as BGRA. Converting that import
+to PBGRA multiplies alpha again and darkens edges. Re-label its copied bytes as
+PBGRA before Fant filtering instead. The synthetic checkerboard regression verifies
+filtered alpha and color across two resizes, including a partially transparent source.
+
 ## Passive rail absent from desktop automation
 
 Normal TOOLWINDOW style is intentionally omitted by some inventories; previously selected
