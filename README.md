@@ -59,8 +59,10 @@ The C runtime is statically linked, so no separate Visual C++ runtime installati
 
 ## Installation and updates
 
-1. Obtain a portable Windows x64 ZIP from the project's release assets, when available,
-   or a build provided by the maintainer. Source archives are not runnable app packages.
+1. Obtain a portable Windows x64 ZIP from the project's release assets, when available.
+   For the latest successful `main` build, open its Windows CI run and download the
+   `VirtualDesktopRail-windows-x64-<commit>` artifact. CI artifacts expire after 90 days.
+   Source archives are not runnable app packages.
 2. Extract the whole package into a permanent folder you can write to.
 3. Run `virtual-desktop-rail.exe`. Startup with Windows is off by default.
 
