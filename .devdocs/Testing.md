@@ -51,6 +51,10 @@ native observations are explicitly unavailable when identity revalidation fails,
 the ZIP excludes window titles, content, HWNDs, PIDs, full executable paths and desktop
 names/IDs. It does not prove native group membership or any unexposed shell state. Do not
 attach/upload the archive during testing; preserve the user's chosen location and settings.
+Exercise a long absolute destination path, confirm overwrite behavior, and distinguish
+cancel from a common-dialog error. While the picker is open, produce an owned-fixture
+desktop/action event and verify the UI drains it without pausing automatic management or
+overflowing the event queue.
 For this implementation, `check-dev.ps1` passed; live verification was attempted through
 Computer Use but the passive rail had no targetable window. A subsequent status command
 timed out, so Settings appearance, picker interaction and an actual archive remain

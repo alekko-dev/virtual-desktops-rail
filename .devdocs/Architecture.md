@@ -75,9 +75,10 @@ provide only small artwork can still require enlargement.
 | `tools/native-smoke`, `tools/fullscreen-smoke` | Ordinary duplicate/modal/stalled-window and fullscreen fixtures |
 
 
-Settings includes **Save diagnostic report…** beside Retry. It opens a local ZIP save
-dialog; collection, fresh managed-window observations and archive writing run on the
-storage worker. The bounded `diagnostics-events.jsonl` history records desktop aliases,
+Settings includes **Save diagnostic report…** beside Retry. The UI snapshots report
+context, then releases its model borrow before opening the local ZIP save dialog; its
+nested message loop continues processing wake/events. Fresh managed-window observations
+and archive writing run on the storage worker. The bounded `diagnostics-events.jsonl` history records desktop aliases,
 window aliases, accepted/completed action evidence, integration readiness and selected
 setting changes without persistent window or desktop identifiers. `--status` remains a
 separate live-instance snapshot and may contain identifiers; it is not copied to the

@@ -39,6 +39,8 @@ const EXIT: usize = 6003;
 const DONE: usize = 6004;
 const AUTO_RESTORE: usize = 6005;
 const SAVE_REPORT: usize = 6105;
+const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
+const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
 
 #[derive(Clone, PartialEq, Eq)]
 enum ButtonKind {
@@ -111,6 +113,12 @@ struct App {
     taskbar_message: u32,
     shutdown_ack: Option<Receiver<Result<(), String>>>,
     stopped: bool,
+}
+
+struct ReportDraft {
+    context: serde_json::Value,
+    windows: Vec<store::ReportWindow>,
+    previous_notice: String,
 }
 
 impl App {
@@ -1212,13 +1220,14 @@ impl App {
         }
     }
 
-    fn save_report(&mut self) {
+    fn begin_report(&mut self) -> Option<ReportDraft> {
         if self.report_busy {
-            return;
+            return None;
         }
-        let Some(destination) = save_report_dialog(self.settings) else {
-            return;
-        };
+        let previous_notice = self.notice.clone();
+        self.report_busy = true;
+        self.notice = REPORT_PICKER_NOTICE.into();
+        self.update_settings();
         let aliases: BTreeMap<_, _> = self
             .model
             .desktops
@@ -1296,7 +1305,14 @@ impl App {
             "model":{"generation":self.model.generation,"transition_serial":self.model.transition_serial,"current_desktop":current_desktop},
             "dispatch_latency":self.dispatch_latency,
         });
-        self.report_busy = true;
+        Some(ReportDraft {
+            context,
+            windows,
+            previous_notice,
+        })
+    }
+
+    fn save_report(&mut self, destination: std::path::PathBuf, draft: ReportDraft) {
         self.notice = "Collecting a diagnostic report…".into();
         self.update_settings();
         if self
@@ -1304,8 +1320,8 @@ impl App {
             .sender
             .try_send(store::Work::Report(store::ReportRequest {
                 destination,
-                context,
-                windows,
+                context: draft.context,
+                windows: draft.windows,
             }))
             .is_err()
         {
@@ -1313,6 +1329,16 @@ impl App {
             self.notice = "Diagnostic report queue is busy. Try again shortly.".into();
             self.update_settings();
         }
+    }
+
+    fn cancel_report(&mut self, draft: ReportDraft, error: Option<String>) {
+        self.report_busy = false;
+        if let Some(error) = error {
+            self.notice = format!("The save dialog could not be opened: {error}");
+        } else if self.notice == REPORT_PICKER_NOTICE {
+            self.notice = draft.previous_notice;
+        }
+        self.update_settings();
     }
 
     fn diagnostic_window_label(&self, key: &str) -> String {
@@ -1352,11 +1378,19 @@ unsafe extern "system" {
     fn GetDlgItem(window: Handle, id: i32) -> Handle;
 }
 
-fn save_report_dialog(owner: Handle) -> Option<std::path::PathBuf> {
+fn report_output_path_buffer(suggested_name: &str) -> Vec<u16> {
+    let suggested_name = wide(suggested_name);
+    let mut buffer = vec![0; REPORT_OUTPUT_PATH_CAPACITY];
+    let count = suggested_name.len().min(buffer.len());
+    buffer[..count].copy_from_slice(&suggested_name[..count]);
+    buffer
+}
+
+fn save_report_dialog(owner: Handle) -> Result<Option<std::path::PathBuf>, String> {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Controls::Dialogs::{
-        GetSaveFileNameW, OFN_EXPLORER, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
-        OPEN_FILENAME_FLAGS, OPENFILENAMEW,
+        CommDlgExtendedError, GetSaveFileNameW, OFN_EXPLORER, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT,
+        OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
     };
     use windows::core::{PCWSTR, PWSTR};
 
@@ -1364,7 +1398,8 @@ fn save_report_dialog(owner: Handle) -> Option<std::path::PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let mut filename = wide(&format!("VirtualDesktopRail-diagnostic-{timestamp}.zip"));
+    let mut filename =
+        report_output_path_buffer(&format!("VirtualDesktopRail-diagnostic-{timestamp}.zip"));
     let filter: Vec<u16> = "ZIP archive (*.zip)\0*.zip\0All files (*.*)\0*.*\0\0"
         .encode_utf16()
         .collect();
@@ -1384,12 +1419,19 @@ fn save_report_dialog(owner: Handle) -> Option<std::path::PathBuf> {
         ..Default::default()
     };
     if !unsafe { GetSaveFileNameW(&mut dialog) }.as_bool() {
-        return None;
+        let error = unsafe { CommDlgExtendedError() };
+        return if error.0 == 0 {
+            Ok(None)
+        } else {
+            Err(format!("Windows common-dialog error 0x{:04x}", error.0))
+        };
     }
-    let end = filename.iter().position(|value| *value == 0)?;
-    Some(std::path::PathBuf::from(String::from_utf16_lossy(
+    let Some(end) = filename.iter().position(|value| *value == 0) else {
+        return Err("The selected path was not terminated.".into());
+    };
+    Ok(Some(std::path::PathBuf::from(String::from_utf16_lossy(
         &filename[..end],
-    )))
+    ))))
 }
 
 fn dark() -> bool {
@@ -1746,6 +1788,43 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     }
     let cell = unsafe { &*(pointer as *const RefCell<App>) };
+    if !main && message == 0x0111 && (wparam & 0xffff) == SAVE_REPORT && lparam != 0 {
+        let control = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(windows::Win32::Foundation::HWND(
+                lparam as *mut _,
+            ))
+        };
+        if control == SAVE_REPORT as i32 {
+            // Snapshot under the borrow, then drop it before the common dialog's
+            // nested message loop so WAKE and native events continue to drain.
+            let draft = {
+                let Ok(mut app) = cell.try_borrow_mut() else {
+                    return 0;
+                };
+                app.begin_report()
+            };
+            if let Some(draft) = draft {
+                match save_report_dialog(window) {
+                    Ok(Some(destination)) => {
+                        if let Ok(mut app) = cell.try_borrow_mut() {
+                            app.save_report(destination, draft);
+                        }
+                    }
+                    Ok(None) => {
+                        if let Ok(mut app) = cell.try_borrow_mut() {
+                            app.cancel_report(draft, None);
+                        }
+                    }
+                    Err(error) => {
+                        if let Ok(mut app) = cell.try_borrow_mut() {
+                            app.cancel_report(draft, Some(error));
+                        }
+                    }
+                }
+            }
+            return 0;
+        }
+    }
     if main && message == 0x4a && lparam != 0 {
         let data = unsafe { &*(lparam as *const CopyData) };
         if data.tag == 0x5241494c
@@ -1992,7 +2071,6 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         }
                     }
                     RETRY => app.command(Command::Retry),
-                    SAVE_REPORT => app.save_report(),
                     AUTO_RESTORE => {
                         let enabled = unsafe {
                             SendMessageW(GetDlgItem(window, AUTO_RESTORE as i32), 0xf0, 0, 0)
@@ -2260,7 +2338,7 @@ pub fn remote(command: &Command) -> Result<bool, String> {
 
 #[cfg(test)]
 mod visual_tests {
-    use super::desktop_color;
+    use super::{REPORT_OUTPUT_PATH_CAPACITY, desktop_color, report_output_path_buffer};
     #[test]
     fn desktop_palette_is_distinct_and_does_not_wrap_after_eight() {
         for dark in [false, true] {
@@ -2280,5 +2358,21 @@ mod visual_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn report_picker_buffer_holds_a_full_windows_path_and_suggested_name() {
+        let suggested = "VirtualDesktopRail-diagnostic-123.zip";
+        let buffer = report_output_path_buffer(suggested);
+        assert_eq!(buffer.len(), REPORT_OUTPUT_PATH_CAPACITY);
+        assert_eq!(
+            String::from_utf16_lossy(&buffer[..suggested.encode_utf16().count()]),
+            suggested
+        );
+        assert!(
+            buffer[suggested.encode_utf16().count()..]
+                .iter()
+                .all(|unit| *unit == 0)
+        );
     }
 }
