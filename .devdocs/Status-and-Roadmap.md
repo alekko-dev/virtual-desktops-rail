@@ -17,6 +17,7 @@ and decisions are in [Architecture](Architecture.md); scoped results are in [Tes
 | Recovery and eligibility | Owned COM worker, bounded IPC/watchdog/JobObject, backoff, TaskbarCreated handling, retry and unavailable controls; shared minimum-build policy | Explicit retry passed; actual Explorer restart remains open. Eligibility is broader than tested revisions. |
 | Version identity | Cargo-derived Windows/manifest version, compiled commit/dirty identity in CLI, Settings and status; package BUILD.json and clean tagged-release gates | Isolated incremental/provenance checks and extracted-package metadata/hash checks passed; live Settings checked at 125%, 100% remains open. |
 | Preferences and distribution | Persisted pause/auto-restore, opt-in per-user Startup shortcut, session singleton, static CRT portable ZIP with licenses/checksum | Isolated shortcut tests; package hash/manifest/import checks recorded. Unsigned preview. |
+| Switch presentation | Peek exclusion retained; bounded slide-in after desktop switches and Task View return; Windows reduced-motion preference respected | Scoped real input and native/pixel checks recorded in [Testing](Testing.md#completed-presentation-validation); physical cancelled gestures have no supported trigger |
 | Appearance and diagnostics | Normal icons with under-icon indicators, light/dark and high-contrast palette handling, Peek-exclusion request, bounded local logs/structured event history, dispatch statistics, and Settings ZIP support report with fresh matching-window observations | Code checks passed. Live Settings/picker/archive verification could not be completed because the passive rail had no targetable CUA window and its status request timed out. Snap Group membership is unavailable. High-contrast implementation is not a completed visual or screen-reader review; Peek exclusion is not screenshot exclusion |
 
 Application icons now use a shared 16-DIP size, dimension-based selection from window
@@ -29,6 +30,9 @@ warnings-denied Clippy, 53 tests and locked release builds for the minimum-build
 change. This is dated evidence, not a permanent expected test count or a fresh test run.
 
 ## Known limitations and unmet goals
+
+- Cancelled touchpad swipes without a desktop change have no supported reveal trigger;
+  further gesture work is outside current scope.
 
 - Layouts now store optional arranged state and visible screen bounds separately from
   normal restore bounds; matching live Snap arrangements use a no-placement reveal/no-op

@@ -41,6 +41,46 @@ const AUTO_RESTORE: usize = 6005;
 const SAVE_REPORT: usize = 6105;
 const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
 const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
+const REVEAL_TIMER: usize = 0x524c;
+// The adapter reports desktop identity before the shell finishes composing its
+// animated switch. This is a bounded presentation delay, not a completion signal.
+const EXTERNAL_SWITCH_SETTLE_MS: u64 = 400;
+const REVEAL_DURATION_MS: u64 = 200;
+
+#[derive(Default)]
+struct SlideIn {
+    started: Option<u64>,
+}
+
+impl SlideIn {
+    fn offset(&mut self, now: u64, width: i32) -> i32 {
+        let Some(started) = self.started else {
+            return 0;
+        };
+        let elapsed = now.saturating_sub(started);
+        if elapsed >= REVEAL_DURATION_MS {
+            self.started = None;
+            return 0;
+        }
+        let remaining = 1.0 - elapsed as f64 / REVEAL_DURATION_MS as f64;
+        -(f64::from(width.max(0)) * remaining.powi(3)).round() as i32
+    }
+}
+
+fn animations_enabled() -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    let mut enabled = windows::Win32::Foundation::BOOL(0);
+    unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some(&mut enabled as *mut _ as *mut _),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+        .is_ok()
+            && enabled.as_bool()
+    }
+}
 
 #[derive(Clone, PartialEq, Eq)]
 enum ButtonKind {
@@ -54,6 +94,7 @@ struct Button {
     hwnd: Handle,
     id: usize,
     kind: ButtonKind,
+    y: i32,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -113,6 +154,11 @@ struct App {
     taskbar_message: u32,
     shutdown_ack: Option<Receiver<Result<(), String>>>,
     stopped: bool,
+    reveal: SlideIn,
+    reveal_offset: i32,
+    requested_switch: Option<(String, u64)>,
+    shell_switcher: Option<usize>,
+    shell_returned: Option<u64>,
 }
 
 struct ReportDraft {
@@ -122,6 +168,105 @@ struct ReportDraft {
 }
 
 impl App {
+    fn reconcile_shell_switcher(&mut self) {
+        let switcher = platform::shell_switcher_visible(self.shell_switcher);
+        if switcher == self.shell_switcher {
+            return;
+        }
+        let was_open = self.shell_switcher.is_some();
+        self.shell_switcher = switcher;
+        let _ = self.storage.sender.try_send(store::Work::Trace(
+            serde_json::json!({"event":"shell_switcher_visibility","visible":switcher.is_some()}),
+        ));
+        if switcher.is_some() {
+            self.shell_returned = None;
+            // Hold an empty region without a frame timer while Task View is
+            // open, so its dismissal cannot flash a fully drawn rail first.
+            self.finish_reveal();
+        } else if was_open {
+            self.shell_returned = Some(platform::tick());
+            self.begin_reveal(0);
+        }
+    }
+
+    fn begin_reveal(&mut self, delay_ms: u64) {
+        use windows::Win32::UI::WindowsAndMessaging::SetTimer;
+        if !animations_enabled() || self.shell_switcher.is_some() {
+            self.finish_reveal();
+            return;
+        }
+        self.reveal.started = Some(platform::tick().saturating_add(delay_ms));
+        // Only this short-lived presentation timer runs at frame cadence.
+        if unsafe { SetTimer(platform::hwnd(self.window as usize), REVEAL_TIMER, 16, None) } == 0 {
+            self.reveal.started = None;
+        }
+        self.step_reveal();
+    }
+
+    fn finish_reveal(&mut self) {
+        self.reveal.started = None;
+        self.step_reveal();
+    }
+
+    fn step_reveal(&mut self) {
+        use windows::Win32::{Graphics::Gdi::*, UI::WindowsAndMessaging::*};
+        let window = platform::hwnd(self.window as usize);
+        let mut client = Rect::default();
+        unsafe {
+            crate::native::GetClientRect(self.window, &mut client);
+        }
+        let mut offset = if self.shell_switcher.is_some() && animations_enabled() {
+            -client.right
+        } else {
+            self.reveal.offset(platform::tick(), client.right)
+        };
+        if offset != self.reveal_offset {
+            // The AppBar HWND/bounds/reservation never move. Its visible region
+            // grows as its artwork and native hit targets slide in together.
+            let region = if offset == 0 {
+                HRGN::default()
+            } else {
+                unsafe { CreateRectRgn(0, 0, (client.right + offset).max(0), client.bottom) }
+            };
+            if (offset != 0 && region.is_invalid())
+                || unsafe { SetWindowRgn(window, region, false) } == 0
+            {
+                if !region.is_invalid() {
+                    unsafe {
+                        let _ = DeleteObject(region);
+                    }
+                }
+                self.reveal.started = None;
+                offset = 0;
+                unsafe {
+                    SetWindowRgn(window, HRGN::default(), true);
+                }
+            }
+            self.reveal_offset = offset;
+            for button in &self.buttons {
+                unsafe {
+                    let _ = SetWindowPos(
+                        platform::hwnd(button.hwnd as usize),
+                        None,
+                        offset,
+                        button.y,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                    );
+                }
+            }
+            unsafe {
+                let _ = RedrawWindow(window, None, None, RDW_INVALIDATE | RDW_ALLCHILDREN);
+            }
+        }
+        if self.reveal.started.is_none() {
+            unsafe {
+                let _ = KillTimer(window, REVEAL_TIMER);
+            }
+        }
+    }
+
     fn command(&mut self, command: Command) {
         match command {
             Command::AutomationUi { enabled } => unsafe {
@@ -180,6 +325,10 @@ impl App {
                 ));
             }
             Command::Retry => {
+                self.shell_switcher = None;
+                self.shell_returned = None;
+                self.finish_reveal();
+                self.requested_switch = None;
                 let _ = self.storage.sender.try_send(store::Work::Trace(
                     serde_json::json!({"event":"integration_retry_requested"}),
                 ));
@@ -211,6 +360,7 @@ impl App {
                 let value = serde_json::json!({"schema_version":1,"build":crate::version::info(),"pid":std::process::id(),"status":self.status,"ready":self.ready,"notice":self.notice,
                     "paused":self.model.saved.paused,"startup":self.model.saved.startup,"generation":self.model.generation,"current":self.model.current,
                     "appbar":crate::appbar::diagnostics(self.window),
+                    "reveal":{"active":self.reveal.started.is_some(),"offset_px":self.reveal_offset,"held_for_switcher":self.shell_switcher.is_some()},
                     "dispatch_latency":self.dispatch_latency,
                     "experimental_integration":self.model.saved.experimental_integration,
                     "auto_restore":self.model.saved.auto_restore,
@@ -233,12 +383,16 @@ impl App {
                 if let (true, Some(integration), Some(current)) =
                     (self.ready, &self.integration, &self.model.current)
                     && self.model.desktops.iter().any(|d| d.id == guid)
+                    && *current != guid
+                    && integration
+                        .try_send(bridge::CommandMessage::Switch {
+                            guid: guid.clone(),
+                            expected_current: current.clone(),
+                            expected_serial: self.model.transition_serial,
+                        })
+                        .is_ok()
                 {
-                    let _ = integration.try_send(bridge::CommandMessage::Switch {
-                        guid,
-                        expected_current: current.clone(),
-                        expected_serial: self.model.transition_serial,
-                    });
+                    self.requested_switch = Some((guid, platform::tick().saturating_add(2000)));
                 }
             }
             Command::Click { key } => {
@@ -358,6 +512,9 @@ impl App {
                     if experimental != self.model.saved.experimental_integration {
                         continue;
                     }
+                    // The existing reconciliation is also a fallback if a
+                    // foreground event was dropped; it adds no polling timer.
+                    self.reconcile_shell_switcher();
                     crate::appbar::foreground_changed(self.window);
                     for desktop in &frame.desktops {
                         if !self.diagnostic_desktop_labels.contains_key(&desktop.id)
@@ -397,6 +554,29 @@ impl App {
                             serde_json::json!({"event":"desktop_transition_observed","from":from,"to":to,"serial":frame.transition_serial}),
                         ));
                         self.transition_received_us = received;
+                        // A polling observation may precede the notification for
+                        // the very same switch. Do not reset its active reveal.
+                        let returning = self.reveal.started.is_some()
+                            && self.shell_returned.is_some_and(|returned| {
+                                platform::tick().saturating_sub(returned)
+                                    < EXTERNAL_SWITCH_SETTLE_MS
+                            });
+                        if !returning
+                            && (self.model.current.as_ref() != Some(&frame.current)
+                                || self.reveal.started.is_none())
+                        {
+                            let instant =
+                                self.requested_switch
+                                    .take()
+                                    .is_some_and(|(target, deadline)| {
+                                        target == frame.current && platform::tick() <= deadline
+                                    });
+                            self.begin_reveal(if instant {
+                                0
+                            } else {
+                                EXTERNAL_SWITCH_SETTLE_MS
+                            });
+                        }
                     } else if self.model.current.is_none() {
                         self.transition_received_us = None;
                     }
@@ -442,6 +622,10 @@ impl App {
                         serde_json::json!({"event":"integration_status","ready":ready}),
                     ));
                     if !ready {
+                        self.shell_switcher = None;
+                        self.shell_returned = None;
+                        self.finish_reveal();
+                        self.requested_switch = None;
                         self.transition_received_us = None;
                         self.model.unavailable();
                     }
@@ -612,6 +796,7 @@ impl App {
                         }
                     }
                     3 => {
+                        self.reconcile_shell_switcher();
                         crate::appbar::foreground_changed(self.window);
                         if let Some(integration) = &self.integration {
                             let _ = integration.try_send(bridge::CommandMessage::Refresh);
@@ -638,7 +823,14 @@ impl App {
                         self.signature.clear();
                     }
                     _ => {
-                        if let Some(integration) = &self.integration {
+                        if matches!(event, 0x8001..=0x8003 | 0x8017 | 0x8018)
+                            && self.shell_switcher == Some(hwnd)
+                        {
+                            self.reconcile_shell_switcher();
+                        }
+                        if !matches!(event, 0x8003 | 0x8017 | 0x8018)
+                            && let Some(integration) = &self.integration
+                        {
                             let _ = integration.try_send(bridge::CommandMessage::Refresh);
                         }
                     }
@@ -864,7 +1056,7 @@ impl App {
                 wide("BUTTON").as_ptr(),
                 wide(name).as_ptr(),
                 0x5001000b,
-                0,
+                self.reveal_offset,
                 y,
                 ((25 * GetDpiForWindow(self.window).max(96) + 48) / 96) as i32 - 1,
                 cell,
@@ -893,6 +1085,7 @@ impl App {
             hwnd: button,
             id,
             kind,
+            y,
         });
         button
     }
@@ -1414,6 +1607,9 @@ impl App {
             return;
         }
         self.stopped = true;
+        self.shell_switcher = None;
+        self.shell_returned = None;
+        self.finish_reveal();
         if let Some(integration) = &self.integration {
             let _ = integration.try_send(bridge::CommandMessage::Stop);
         }
@@ -2009,20 +2205,32 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             0
         }
         0x0005 if main => {
+            app.finish_reveal();
             app.render(true);
             0
         }
         0x0015 | 0x001a | 0x031a => {
+            app.finish_reveal();
             app.signature.clear();
             app.render(true);
             0
         }
         0x0014 if main => 1,
+        0x0113 if main && wparam == REVEAL_TIMER => {
+            app.step_reveal();
+            0
+        }
         0x000f if main => {
             let mut paint: Paint = unsafe { zeroed() };
             unsafe {
                 let dc = BeginPaint(window, &mut paint);
                 fill(dc, &paint.rect, palette().0);
+                let _ = windows::Win32::Graphics::Gdi::SetViewportOrgEx(
+                    windows::Win32::Graphics::Gdi::HDC(dc),
+                    app.reveal_offset,
+                    0,
+                    None,
+                );
                 let dpi = GetDpiForWindow(window).max(96) as i32;
                 let scale = |dip: i32| (dip * dpi + 48) / 96;
                 let mut client = Rect::default();
@@ -2246,6 +2454,11 @@ pub fn run(settings: bool) -> Result<(), String> {
         taskbar_message: unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) },
         shutdown_ack: None,
         stopped: false,
+        reveal: SlideIn::default(),
+        reveal_offset: 0,
+        requested_switch: None,
+        shell_switcher: None,
+        shell_returned: None,
     }));
     unsafe {
         let instance = GetModuleHandleW(null());
@@ -2285,8 +2498,8 @@ pub fn run(settings: bool) -> Result<(), String> {
             return Err(std::io::Error::last_os_error().to_string());
         }
         app.borrow_mut().window = window;
-        // Task View composes desktop previews through DWM, independently of
-        // screen-capture affinity. Exclude the rail from that composition.
+        // Keep the rail out of Task View desktop thumbnails. Windows also omits
+        // it during desktop transitions; a slide-in reveal follows observed switches.
         let excluded = windows::Win32::Foundation::BOOL(1);
         if let Err(error) = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
             windows::Win32::Foundation::HWND(window),
@@ -2308,7 +2521,13 @@ pub fn run(settings: bool) -> Result<(), String> {
         ShowWindow(window, 4);
         ShowWindow(window, 4);
         use windows::Win32::UI::Accessibility::SetWinEventHook;
-        for (first, last) in [(3, 3), (10, 11), (0x16, 0x17), (0x8001, 0x8002)] {
+        for (first, last) in [
+            (3, 3),
+            (10, 11),
+            (0x16, 0x17),
+            (0x8001, 0x8003),
+            (0x8017, 0x8018),
+        ] {
             let hook = SetWinEventHook(first, last, None, Some(window_event), 0, 0, 2);
             if !hook.is_invalid() {
                 app.borrow_mut().hooks.push(hook.0 as usize);
@@ -2400,6 +2619,40 @@ pub fn remote(command: &Command) -> Result<bool, String> {
 #[cfg(test)]
 mod visual_tests {
     use super::{REPORT_OUTPUT_PATH_CAPACITY, desktop_color, report_output_path_buffer};
+    #[test]
+    fn reveal_restarts_for_new_switch_and_late_frames_finish_without_replay() {
+        let mut reveal = super::SlideIn { started: Some(100) };
+        assert_eq!(reveal.offset(100, 38), -38);
+        let midway = reveal.offset(200, 38);
+        assert!(midway > -38 && midway < 0);
+        reveal.started = Some(280);
+        assert_eq!(reveal.offset(280, 38), -38);
+        assert!(reveal.offset(400, 38) < 0);
+        assert_eq!(reveal.offset(10_000, 38), 0);
+        assert!(reveal.started.is_none());
+        assert_eq!(reveal.offset(10_016, 38), 0);
+    }
+
+    #[test]
+    fn reveal_cancellation_restores_full_width_after_a_partial_frame() {
+        let mut reveal = super::SlideIn { started: Some(0) };
+        assert!(reveal.offset(100, 50) < 0);
+        reveal.started = None;
+        assert_eq!(reveal.offset(181, 50), 0);
+        assert_eq!(reveal.offset(200, 25), 0);
+    }
+
+    #[test]
+    fn external_switch_holds_hidden_until_settled_then_finishes() {
+        let mut reveal = super::SlideIn { started: Some(500) };
+        assert_eq!(reveal.offset(100, 31), -31);
+        assert_eq!(reveal.offset(499, 31), -31);
+        assert_eq!(reveal.offset(500, 31), -31);
+        assert!(reveal.offset(600, 31) > -31);
+        assert_eq!(reveal.offset(700, 31), 0);
+        assert!(reveal.started.is_none());
+    }
+
     #[test]
     fn desktop_palette_is_distinct_and_does_not_wrap_after_eight() {
         for dark in [false, true] {

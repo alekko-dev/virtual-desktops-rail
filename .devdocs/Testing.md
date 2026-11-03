@@ -368,3 +368,39 @@ and no clipping at 125%. Real Tab/reverse-Tab input and a pointer click on Done
 passed; preferences and automation visibility off were preserved. Formatting,
 warnings-denied Clippy, all 56 tests, version contracts and release builds passed.
 100% scaling and populated error/notice states were not exercised in this refinement.
+
+## Presentation procedure
+
+Exercise the shell's animated path as well as `winvd::switch_desktop`, which is an
+immediate path. Cloak/topmost flags can stay unchanged while DWM omits the rail's
+pixels; observe composed screen pixels and actual Task View thumbnails too. Finite
+pixel samples establish detected transitions, not every-frame smoothness.
+Task View entry alone is insufficient: confirm actual dismissal without a desktop
+change, then check full width, buttons, foreground and absence of a residual hold/timer.
+An Explorer shell activation process exit code alone does not establish the UI result.
+Respect reduced motion and distinguish a skipped effect from failed presentation.
+Mouse drags or completed switches do not reproduce a cancelled multi-finger gesture.
+
+### Completed presentation validation
+
+| Date / environment / build | Method, result and limitations |
+| --- | --- |
+| 2026-11-03; presentation source `5070793f989362d0765f395985d91dda2a99688d` plus changes; packages `9A6D41EA4097`, `FBF1D2846E9A`, `8CA6D62CD038`; Windows 26300.9711, 1708×960 / 120 DPI | Actual animated/instant/rapid switch traces showed intermediate rail regions/button positions with fixed AppBar bounds and no residual hold/timer. Real desktop-dot click and Shift+Tab/Space round trip passed using a temporarily exposed, individually pinned owned rail; passive style was tested separately. Same-desktop Task View dismissal and desktop changes while it stayed open passed. The timing refinement sampled a partial 7-pixel rail in the same sample as shell disappearance, then full width about 154 ms later; finite sampling is not frame-perfect certification. Packaged exclusion/Settings and reduced motion were checked. A later removal of background discovery passed code checks and observed return-to-full-width/input checks; its sampling attempts did not re-establish intermediate-frame timing. No physical cancelled-touchpad pass exists. Supporting families: `slide-experiment`, `taskview-experiment`, `gesture-experiment`, `return-only-experiment`. |
+
+| Prefix / use | SHA-256 |
+| --- | --- |
+| `9A6D41EA4097` slide-in package | `9A6D41EA409775617A90BF44F893F3F8D02F5F64605B4F569C555E8F6997CCB1` |
+| `FBF1D2846E9A` Task View return package | `FBF1D2846E9A25F0C2B0317E2C6A7A71433F6CD799FA9C2E9C200B2AF2986604` |
+| `8CA6D62CD038` visibility timing package; background experiment subsequently removed | `8CA6D62CD038C34F49C02FA376A3A6B79D6BCA8C0985034544B09AA52A8C4A21` |
+
+### Integration smoke check
+
+On 2026-11-03, the presentation changes combined with main's minimized-intent feature
+(`140f2b16686d` plus changes; executable SHA-256
+`2ABEF49CBB20DA54F0AE052061A458557FC9B6AD524ABCB47F339026F7E5EAAA`)
+passed `check-dev.ps1` including locked release builds. In the unlocked local Explorer
+session on Windows 26300.9711, 1708×967 / 120 DPI, Computer Use inspected the actual
+Settings screenshot and exercised its real Done button; status reported integration
+ready. Automation visibility was off, the owned process exited and original app files
+were restored byte-for-byte. No desktop switch or physical gesture was repeated in
+this smoke check; detailed motion evidence above belongs to its recorded builds.

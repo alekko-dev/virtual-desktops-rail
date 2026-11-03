@@ -24,6 +24,80 @@ pub fn tick() -> u64 {
 pub fn hwnd(value: usize) -> HWND {
     HWND(value as *mut _)
 }
+
+// Only a presentation hint, never evidence of a desktop change.
+fn is_shell_switcher_window(window: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetShellWindow};
+    unsafe {
+        if window.is_invalid() {
+            return false;
+        }
+        let mut class = [0u16; 128];
+        let length = GetClassNameW(window, &mut class) as usize;
+        let class = String::from_utf16_lossy(&class[..length]);
+        if !matches!(
+            class.as_str(),
+            "XamlExplorerHostIslandWindow" | "MultitaskingViewFrame"
+        ) {
+            return false;
+        }
+        let shell = GetShellWindow();
+        let (mut shell_pid, mut window_pid) = (0, 0);
+        GetWindowThreadProcessId(shell, Some(&mut shell_pid));
+        GetWindowThreadProcessId(window, Some(&mut window_pid));
+        shell_pid != 0 && shell_pid == window_pid
+    }
+}
+
+fn visible_shell_switcher(window: HWND) -> Option<usize> {
+    use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+    unsafe {
+        if !IsWindowVisible(window).as_bool() || !is_shell_switcher_window(window) {
+            return None;
+        }
+        let mut cloaked = 0u32;
+        if DwmGetWindowAttribute(
+            window,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut _ as *mut _,
+            size_of::<u32>() as u32,
+        )
+        .is_err()
+            || cloaked != 0
+        {
+            return None;
+        }
+        let mut bounds = RECT::default();
+        let mut monitor = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetWindowRect(window, &mut bounds).is_err()
+            || !GetMonitorInfoW(
+                MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST),
+                &mut monitor,
+            )
+            .as_bool()
+            || bounds.left > monitor.rcMonitor.left
+            || bounds.top > monitor.rcMonitor.top
+            || bounds.right < monitor.rcMonitor.right
+            || bounds.bottom < monitor.rcMonitor.bottom
+        {
+            return None;
+        }
+        Some(window.0 as usize)
+    }
+}
+
+/// Discover a switcher only after it takes foreground. Retain that same host
+/// until hidden/cloaked so Task View's exit animation can finish before reveal.
+pub fn shell_switcher_visible(tracked: Option<usize>) -> Option<usize> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    if let Some(window) = visible_shell_switcher(unsafe { GetForegroundWindow() }) {
+        return Some(window);
+    }
+    tracked.and_then(|window| visible_shell_switcher(hwnd(window)))
+}
 pub fn supported(experimental: bool) -> Result<(), String> {
     let os = diagnostic::os_version()?;
     support_version(os, experimental)

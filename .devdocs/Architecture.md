@@ -224,11 +224,43 @@ foreground. Explicit restoration may request focus only while its original user 
 remains valid. A minimized HWND wins over stale foreground reports. Active owned dialogs
 are revealed/focused with the owner, never given separate layouts or buttons.
 
+## Rail presentation
+
+AppBars reserve work area but do not constrain manually positioned or fullscreen
+windows. Per-Monitor V2 and display/DPI notifications govern rail geometry; fullscreen
+foreground yields z-order without activation and normal foreground restores topmost.
+
+The rail requests DWM Peek exclusion to omit it from Task View desktop thumbnails,
+while remaining capturable in screenshots/screen sharing. A 200-ms cubic ease-out
+slides artwork and native buttons in from the left after a switch. The AppBar HWND,
+bounds and work-area reservation stay fixed: a temporary region clips translated
+content and is removed at completion. One transient 16-ms timer serves waiting/reveal;
+late ticks advance to current elapsed time. Windows' client-area animation preference
+disables the effect, including when it cannot be read. Size/DPI/settings changes,
+retry/unavailability and shutdown cancel presentation. Startup/recovery do not animate.
+
+Rail/CLI requests use the adapter's instant path; a matching destination observed
+within two seconds reveals immediately. Other desktop-change observations wait
+400 ms before reveal. This is a bounded settling heuristic, not shell completion.
+New destinations replace active reveals; same-destination serial updates do not
+restart one. Presentation never delays controller actions, changes memory or requests focus.
+
+Task View return is also recognized without a desktop change. Discovery requires a
+foreground, visible, uncloaked fullscreen `XamlExplorerHostIslandWindow` or
+`MultitaskingViewFrame` in the `GetShellWindow` process. Only that host is tracked
+through foreground/show/hide/destroy/cloak events and existing reconciliation until
+it disappears. The shared Alt+Tab host can receive the same effect. While visible,
+it holds the rail clipped without a reveal timer; disappearance starts the reveal
+without the desktop-event wait. A snapshot within 400 ms of that return does not
+restart an active reveal. These shell classes are compatibility hints, not desktop
+identity. There is no background-host discovery, localized-title matching or extra
+periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#known-limitations-and-unmet-goals).
+
 ## Decisions and rationale
 
 | Decision | Rationale and rejected approach |
 | --- | --- |
-| Native controls, invalidation-driven paint, cached icons | Keep idle cost small; no browser runtime, animation loop or permanent frame timer. Existing reconciliation is the measured polling exception. |
+| Native controls, invalidation-driven paint, cached icons | Keep idle cost small; no browser runtime or permanent frame timer. A bounded timer runs only during switch settling/reveal. Existing reconciliation is the measured polling exception. |
 | AppBar protocol with passive tool-window style | Negotiate work area instead of globally writing it. Presence across desktops must be tested; being an AppBar alone does not guarantee it. |
 | Process-isolated shell adapter | A deadline cannot cancel COM; unlimited replacement threads would leak blocked work. |
 | Generation/sequence and completion tracking | A Boolean around native calls cannot distinguish delayed work, rapid switches and user edits. |
@@ -241,7 +273,6 @@ AppBars do not force manually positioned or fullscreen windows to respect work a
 Use Per-Monitor V2 and display/DPI notifications for rail geometry. Explicit clicks need
 guarded activation; never bypass focus restrictions with synthetic Alt or thread-input
 attachment. Fullscreen and real-click pitfalls are documented in [Troubleshooting](Troubleshooting.md).
-The rail requests DWM Peek exclusion, not screenshot or screen-sharing exclusion.
 
 ## API references
 
