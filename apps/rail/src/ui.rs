@@ -38,6 +38,9 @@ const RETRY: usize = 6002;
 const EXIT: usize = 6003;
 const DONE: usize = 6004;
 const AUTO_RESTORE: usize = 6005;
+const SAVE_REPORT: usize = 6105;
+const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
+const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
 
 #[derive(Clone, PartialEq, Eq)]
 enum ButtonKind {
@@ -100,11 +103,22 @@ struct App {
     transition_received_us: Option<u64>,
     dispatch_latency: crate::metrics::DispatchLatency,
     startup_busy: bool,
+    report_busy: bool,
+    diagnostic_window_labels: BTreeMap<String, String>,
+    diagnostic_desktop_labels: BTreeMap<String, String>,
+    next_diagnostic_window: u32,
+    next_diagnostic_desktop: u32,
     pre_foreground: Option<usize>,
     hooks: Vec<usize>,
     taskbar_message: u32,
     shutdown_ack: Option<Receiver<Result<(), String>>>,
     stopped: bool,
+}
+
+struct ReportDraft {
+    context: serde_json::Value,
+    windows: Vec<store::ReportWindow>,
+    previous_notice: String,
 }
 
 impl App {
@@ -138,7 +152,12 @@ impl App {
                 );
             },
             Command::Settings => self.show_settings(),
-            Command::AutoRestore { enabled } => self.model.set_auto_restore(enabled),
+            Command::AutoRestore { enabled } => {
+                self.model.set_auto_restore(enabled);
+                let _ = self.storage.sender.try_send(store::Work::Trace(
+                    serde_json::json!({"event":"auto_restore_changed","enabled":enabled}),
+                ));
+            }
             Command::ExperimentalIntegration { enabled } => {
                 if self.model.saved.experimental_integration != enabled {
                     self.model.saved.experimental_integration = enabled;
@@ -148,9 +167,22 @@ impl App {
                     self.command(Command::Retry);
                 }
             }
-            Command::Pause => self.model.pause(true),
-            Command::Resume => self.model.pause(false),
+            Command::Pause => {
+                self.model.pause(true);
+                let _ = self.storage.sender.try_send(store::Work::Trace(
+                    serde_json::json!({"event":"paused","value":true}),
+                ));
+            }
+            Command::Resume => {
+                self.model.pause(false);
+                let _ = self.storage.sender.try_send(store::Work::Trace(
+                    serde_json::json!({"event":"paused","value":false}),
+                ));
+            }
             Command::Retry => {
+                let _ = self.storage.sender.try_send(store::Work::Trace(
+                    serde_json::json!({"event":"integration_retry_requested"}),
+                ));
                 self.model.unavailable();
                 self.ready = false;
                 self.status = "Reconnecting to Windows desktops…".into();
@@ -326,6 +358,17 @@ impl App {
                         continue;
                     }
                     crate::appbar::foreground_changed(self.window);
+                    for desktop in &frame.desktops {
+                        if !self.diagnostic_desktop_labels.contains_key(&desktop.id)
+                            && self.diagnostic_desktop_labels.len() < 128
+                        {
+                            self.next_diagnostic_desktop += 1;
+                            self.diagnostic_desktop_labels.insert(
+                                desktop.id.clone(),
+                                format!("desktop-{:03}", self.next_diagnostic_desktop),
+                            );
+                        }
+                    }
                     if !self.ready {
                         let _ = self
                             .storage
@@ -338,11 +381,37 @@ impl App {
                         *current != frame.current
                             || self.model.transition_serial != frame.transition_serial
                     }) {
+                        let from = self
+                            .model
+                            .current
+                            .as_deref()
+                            .and_then(|id| self.diagnostic_desktop_labels.get(id).cloned())
+                            .unwrap_or_else(|| "unknown".into());
+                        let to = self
+                            .diagnostic_desktop_labels
+                            .get(&frame.current)
+                            .cloned()
+                            .unwrap_or_else(|| "unknown".into());
+                        let _ = self.storage.sender.try_send(store::Work::Trace(
+                            serde_json::json!({"event":"desktop_transition_observed","from":from,"to":to,"serial":frame.transition_serial}),
+                        ));
                         self.transition_received_us = received;
                     } else if self.model.current.is_none() {
                         self.transition_received_us = None;
                     }
                     self.model.snapshot(frame);
+                    for (key, runtime) in &self.model.windows {
+                        if runtime.present
+                            && !self.diagnostic_window_labels.contains_key(key)
+                            && self.diagnostic_window_labels.len() < 512
+                        {
+                            self.next_diagnostic_window += 1;
+                            self.diagnostic_window_labels.insert(
+                                key.clone(),
+                                format!("window-{:03}", self.next_diagnostic_window),
+                            );
+                        }
+                    }
                 }
                 Event::DispatchLatency(us) => self.dispatch_latency.record(us),
                 Event::Status(status, ready) => {
@@ -354,6 +423,9 @@ impl App {
                     }
                     self.status = status;
                     self.ready = ready;
+                    let _ = self.storage.sender.try_send(store::Work::Trace(
+                        serde_json::json!({"event":"integration_status","ready":ready}),
+                    ));
                     if !ready {
                         self.transition_received_us = None;
                         self.model.unavailable();
@@ -365,8 +437,21 @@ impl App {
                         .sender
                         .try_send(store::Work::Log(notice.clone()));
                     self.notice = notice;
+                    let _ = self.storage.sender.try_send(store::Work::Trace(
+                        serde_json::json!({"event":"user_notice","kind":if self.notice==ACTION_TIMEOUT_NOTICE{"action_timeout"}else{"other"}}),
+                    ));
                 }
                 Event::Accepted(key, sequence, target) => {
+                    let label = self.diagnostic_window_label(&key);
+                    let target_summary = target.as_ref().map(|layout| {
+                        serde_json::json!({
+                            "normal":layout.normal,"maximized":layout.maximized,
+                            "visible":layout.visible,"arranged":layout.arranged
+                        })
+                    });
+                    let _ = self.storage.sender.try_send(store::Work::Trace(
+                        serde_json::json!({"event":"window_action_accepted","window":label,"sequence":sequence,"target":target_summary}),
+                    ));
                     if let Some(target) = target
                         && let Some(runtime) = self.model.windows.get_mut(&key)
                         && let Some(pending) = &mut runtime.pending
@@ -385,6 +470,20 @@ impl App {
                 Event::ActionResult(key, sequence, tick, verified, cancelled) => {
                     self.model
                         .completed(&key, sequence, tick, verified, cancelled);
+                    let observed = self.model.windows.get(&key).map(|runtime| {
+                        serde_json::json!({
+                            "normal":runtime.window.layout.normal,
+                            "visible":runtime.window.layout.visible,
+                            "maximized":runtime.window.layout.maximized,
+                            "arranged":runtime.window.layout.arranged,
+                            "minimized":runtime.window.minimized,
+                            "pending":runtime.pending.is_some(),
+                            "blocked":runtime.blocked
+                        })
+                    });
+                    let _ = self.storage.sender.try_send(store::Work::Trace(
+                        serde_json::json!({"event":"window_action_completed","window":self.diagnostic_window_label(&key),"sequence":sequence,"verified":verified,"cancelled":cancelled,"tick_ms":tick,"observed":observed}),
+                    ));
                     if !verified && !cancelled {
                         self.notice = ACTION_TIMEOUT_NOTICE.into();
                     } else if self.notice == ACTION_TIMEOUT_NOTICE
@@ -419,6 +518,14 @@ impl App {
                         self.notice = format!("Saved layouts could not be written: {error}");
                         self.model.dirty = true;
                     }
+                }
+                Event::Report(result) => {
+                    self.report_busy = false;
+                    self.notice = match result {
+                        Ok(path) => format!("Diagnostic report saved: {}", path.display()),
+                        Err(error) => format!("Diagnostic report could not be saved: {error}"),
+                    };
+                    self.update_settings();
                 }
                 Event::Startup(value, result) => {
                     self.startup_busy = false;
@@ -861,6 +968,26 @@ impl App {
                 212,
                 32,
             ),
+            (
+                SAVE_REPORT,
+                "BUTTON",
+                "Save diagnostic report…",
+                0x50010000,
+                248,
+                226,
+                272,
+                32,
+            ),
+            (
+                6110,
+                "STATIC",
+                "Local ZIP: no titles or content. Nothing is uploaded; review before sharing.",
+                0x50000000,
+                24,
+                258,
+                496,
+                14,
+            ),
             (6106, "STATIC", "", 0x50000010, 0, 274, 560, 1),
             (DONE, "BUTTON", "Done", 0x50010001, 432, 290, 88, 34),
             (6107, "STATIC", "●", 0x50000000, 24, 285, 10, 18),
@@ -888,6 +1015,7 @@ impl App {
                 let font = self.settings_fonts[match id {
                     6102..=6104 => 1,
                     6100 | 6107 | 6109 => 2,
+                    6110 => 3,
                     _ => 0,
                 }];
                 SendMessageW(child, 0x30, font, 1);
@@ -1085,7 +1213,139 @@ impl App {
                 GetDlgItem(self.settings, SET_PAUSE as i32),
                 self.loaded as i32,
             );
+            EnableWindow(
+                GetDlgItem(self.settings, SAVE_REPORT as i32),
+                (!self.report_busy) as i32,
+            );
         }
+    }
+
+    fn begin_report(&mut self) -> Option<ReportDraft> {
+        if self.report_busy {
+            return None;
+        }
+        let previous_notice = self.notice.clone();
+        self.report_busy = true;
+        self.notice = REPORT_PICKER_NOTICE.into();
+        self.update_settings();
+        let aliases: BTreeMap<_, _> = self
+            .model
+            .desktops
+            .iter()
+            .filter_map(|desktop| {
+                self.diagnostic_desktop_labels
+                    .get(&desktop.id)
+                    .map(|label| (desktop.id.clone(), label.clone()))
+            })
+            .collect();
+        let desktops = self
+            .model
+            .desktops
+            .iter()
+            .filter_map(|desktop| {
+                let label = self.diagnostic_desktop_labels.get(&desktop.id)?;
+                Some(serde_json::json!({
+                    "label":label,
+                    "current":self.model.current.as_deref()==Some(desktop.id.as_str())
+                }))
+            })
+            .collect::<Vec<_>>();
+        let windows = self
+            .model
+            .windows
+            .iter()
+            .filter(|(_, runtime)| runtime.present)
+            .map(|(key, runtime)| {
+                let record = self.model.saved.windows.get(key);
+                let layouts = self
+                    .model
+                    .saved
+                    .windows
+                    .get(key)
+                    .map(|record| {
+                        record
+                            .layouts
+                            .iter()
+                            .enumerate()
+                            .map(|(index, (id, layout))| {
+                                (
+                                    aliases.get(id).cloned().unwrap_or_else(|| {
+                                        format!("unavailable-desktop-{:03}", index + 1)
+                                    }),
+                                    layout.clone(),
+                                )
+                            })
+                            .collect::<BTreeMap<_, _>>()
+                    })
+                    .unwrap_or_default();
+                store::ReportWindow {
+                    label: self.diagnostic_window_label(key),
+                    window: runtime.window.clone(),
+                    cached_layout: runtime.window.layout.clone(),
+                    last_usable_layout: record.map(|record| record.last_usable.clone()),
+                    saved_layouts: serde_json::json!(layouts),
+                    pending: runtime.pending.is_some(),
+                    blocked: runtime.blocked,
+                }
+            })
+            .collect();
+        let current_desktop = self
+            .model
+            .current
+            .as_ref()
+            .and_then(|id| self.diagnostic_desktop_labels.get(id));
+        let context = serde_json::json!({
+            "schema_version":1,
+            "diagnostic_run":self.storage.diagnostic_session,
+            "generated_unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),
+            "application":crate::version::info(),
+            "integration":{"status":self.status,"ready":self.ready},
+            "settings":{"paused":self.model.saved.paused,"auto_restore":self.model.saved.auto_restore,"startup":self.model.saved.startup},
+            "desktops":desktops,
+            "model":{"generation":self.model.generation,"transition_serial":self.model.transition_serial,"current_desktop":current_desktop},
+            "dispatch_latency":self.dispatch_latency,
+        });
+        Some(ReportDraft {
+            context,
+            windows,
+            previous_notice,
+        })
+    }
+
+    fn save_report(&mut self, destination: std::path::PathBuf, draft: ReportDraft) {
+        self.notice = "Collecting a diagnostic report…".into();
+        self.update_settings();
+        if self
+            .storage
+            .sender
+            .try_send(store::Work::Report(store::ReportRequest {
+                destination,
+                context: draft.context,
+                windows: draft.windows,
+            }))
+            .is_err()
+        {
+            self.report_busy = false;
+            self.notice = "Diagnostic report queue is busy. Try again shortly.".into();
+            self.update_settings();
+        }
+    }
+
+    fn cancel_report(&mut self, draft: ReportDraft, error: Option<String>) {
+        self.report_busy = false;
+        if let Some(error) = error {
+            self.notice = format!("The save dialog could not be opened: {error}");
+        } else if self.notice == REPORT_PICKER_NOTICE {
+            self.notice = draft.previous_notice;
+        }
+        self.update_settings();
+    }
+
+    fn diagnostic_window_label(&self, key: &str) -> String {
+        self.diagnostic_window_labels
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| "window-untracked".into())
     }
 
     fn stop(&mut self) {
@@ -1116,6 +1376,62 @@ impl App {
 #[link(name = "user32")]
 unsafe extern "system" {
     fn GetDlgItem(window: Handle, id: i32) -> Handle;
+}
+
+fn report_output_path_buffer(suggested_name: &str) -> Vec<u16> {
+    let suggested_name = wide(suggested_name);
+    let mut buffer = vec![0; REPORT_OUTPUT_PATH_CAPACITY];
+    let count = suggested_name.len().min(buffer.len());
+    buffer[..count].copy_from_slice(&suggested_name[..count]);
+    buffer
+}
+
+fn save_report_dialog(owner: Handle) -> Result<Option<std::path::PathBuf>, String> {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::Controls::Dialogs::{
+        CommDlgExtendedError, GetSaveFileNameW, OFN_EXPLORER, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT,
+        OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
+    };
+    use windows::core::{PCWSTR, PWSTR};
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut filename =
+        report_output_path_buffer(&format!("VirtualDesktopRail-diagnostic-{timestamp}.zip"));
+    let filter: Vec<u16> = "ZIP archive (*.zip)\0*.zip\0All files (*.*)\0*.*\0\0"
+        .encode_utf16()
+        .collect();
+    let title = wide("Save diagnostic report");
+    let extension = wide("zip");
+    let mut dialog = OPENFILENAMEW {
+        lStructSize: size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: HWND(owner),
+        lpstrFilter: PCWSTR(filter.as_ptr()),
+        lpstrFile: PWSTR(filename.as_mut_ptr()),
+        nMaxFile: filename.len() as u32,
+        lpstrTitle: PCWSTR(title.as_ptr()),
+        lpstrDefExt: PCWSTR(extension.as_ptr()),
+        Flags: OPEN_FILENAME_FLAGS(
+            OFN_EXPLORER.0 | OFN_NOCHANGEDIR.0 | OFN_OVERWRITEPROMPT.0 | OFN_PATHMUSTEXIST.0,
+        ),
+        ..Default::default()
+    };
+    if !unsafe { GetSaveFileNameW(&mut dialog) }.as_bool() {
+        let error = unsafe { CommDlgExtendedError() };
+        return if error.0 == 0 {
+            Ok(None)
+        } else {
+            Err(format!("Windows common-dialog error 0x{:04x}", error.0))
+        };
+    }
+    let Some(end) = filename.iter().position(|value| *value == 0) else {
+        return Err("The selected path was not terminated.".into());
+    };
+    Ok(Some(std::path::PathBuf::from(String::from_utf16_lossy(
+        &filename[..end],
+    ))))
 }
 
 fn dark() -> bool {
@@ -1472,6 +1788,43 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     }
     let cell = unsafe { &*(pointer as *const RefCell<App>) };
+    if !main && message == 0x0111 && (wparam & 0xffff) == SAVE_REPORT && lparam != 0 {
+        let control = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(windows::Win32::Foundation::HWND(
+                lparam as *mut _,
+            ))
+        };
+        if control == SAVE_REPORT as i32 {
+            // Snapshot under the borrow, then drop it before the common dialog's
+            // nested message loop so WAKE and native events continue to drain.
+            let draft = {
+                let Ok(mut app) = cell.try_borrow_mut() else {
+                    return 0;
+                };
+                app.begin_report()
+            };
+            if let Some(draft) = draft {
+                match save_report_dialog(window) {
+                    Ok(Some(destination)) => {
+                        if let Ok(mut app) = cell.try_borrow_mut() {
+                            app.save_report(destination, draft);
+                        }
+                    }
+                    Ok(None) => {
+                        if let Ok(mut app) = cell.try_borrow_mut() {
+                            app.cancel_report(draft, None);
+                        }
+                    }
+                    Err(error) => {
+                        if let Ok(mut app) = cell.try_borrow_mut() {
+                            app.cancel_report(draft, Some(error));
+                        }
+                    }
+                }
+            }
+            return 0;
+        }
+    }
     if main && message == 0x4a && lparam != 0 {
         let data = unsafe { &*(lparam as *const CopyData) };
         if data.tag == 0x5241494c
@@ -1822,6 +2175,11 @@ pub fn run(settings: bool) -> Result<(), String> {
         transition_received_us: None,
         dispatch_latency: Default::default(),
         startup_busy: false,
+        report_busy: false,
+        diagnostic_window_labels: BTreeMap::new(),
+        diagnostic_desktop_labels: BTreeMap::new(),
+        next_diagnostic_window: 0,
+        next_diagnostic_desktop: 0,
         pre_foreground: None,
         hooks: vec![],
         taskbar_message: unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) },
@@ -1980,7 +2338,7 @@ pub fn remote(command: &Command) -> Result<bool, String> {
 
 #[cfg(test)]
 mod visual_tests {
-    use super::desktop_color;
+    use super::{REPORT_OUTPUT_PATH_CAPACITY, desktop_color, report_output_path_buffer};
     #[test]
     fn desktop_palette_is_distinct_and_does_not_wrap_after_eight() {
         for dark in [false, true] {
@@ -2000,5 +2358,21 @@ mod visual_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn report_picker_buffer_holds_a_full_windows_path_and_suggested_name() {
+        let suggested = "VirtualDesktopRail-diagnostic-123.zip";
+        let buffer = report_output_path_buffer(suggested);
+        assert_eq!(buffer.len(), REPORT_OUTPUT_PATH_CAPACITY);
+        assert_eq!(
+            String::from_utf16_lossy(&buffer[..suggested.encode_utf16().count()]),
+            suggested
+        );
+        assert!(
+            buffer[suggested.encode_utf16().count()..]
+                .iter()
+                .all(|unit| *unit == 0)
+        );
     }
 }

@@ -44,6 +44,7 @@ enum Event {
         warning: Option<String>,
     },
     Stored(Result<(), String>),
+    Report(Result<std::path::PathBuf, String>),
     Startup(bool, Result<(), String>),
     Icon(String, u32, usize),
     NativeWindow(u32, usize, u64),

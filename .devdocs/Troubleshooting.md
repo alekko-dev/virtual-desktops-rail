@@ -4,6 +4,15 @@ User-facing recovery steps are in the [user README](../README.md). These notes p
 engineering findings and regression checks. Inspect bounded local diagnostics and
 current process identity rather than relying on an old session snapshot.
 
+For a user issue, Settings **Save diagnostic report…** creates a user-selected local ZIP.
+It contains redacted build/OS/settings context, a fresh native observation for each
+still-matching managed window, saved layouts and bounded structured event history. It
+intentionally excludes the free-form local diagnostics log, titles, document contents,
+handles, PIDs, full executable paths, desktop names/IDs and screenshots. The archive is
+not uploaded. Ask the user to review it before choosing whether and where to share it.
+Windows Snap Group membership is unavailable to the app; capture Task View separately
+only if the user chooses to provide it.
+
 ## Native snapping and clipped action notices
 
 See [Native Snap compatibility](Snapping.md) for verified mechanisms, the support
