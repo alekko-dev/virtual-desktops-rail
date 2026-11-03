@@ -271,6 +271,9 @@ pub struct Runtime {
     pub blocked: bool,
     pub ignore_geometry_through: u64,
     pub suppress_next_state: bool,
+    // Only a current verified minimize can authorize restore evidence in the
+    // otherwise-suppressed first post-completion snapshot.
+    restore_after_minimize: bool,
     pub present: bool,
     pub external_restore: Option<ExternalRestore>,
     pub state_tick: u64,
@@ -321,6 +324,7 @@ impl Model {
         for runtime in self.windows.values_mut() {
             runtime.desired = None;
             runtime.external_restore = None;
+            runtime.restore_after_minimize = false;
             runtime.sequence += 1;
         }
     }
@@ -406,6 +410,7 @@ impl Model {
                 blocked: false,
                 ignore_geometry_through: snapshot.tick,
                 suppress_next_state: false,
+                restore_after_minimize: false,
                 present: true,
                 external_restore: None,
                 state_tick: snapshot.tick,
@@ -416,7 +421,10 @@ impl Model {
                 && !changed
                 && runtime.pending.is_none()
                 && !runtime.blocked
-                && !runtime.suppress_next_state
+                && (!runtime.suppress_next_state
+                    || (runtime.restore_after_minimize
+                        && runtime.window.minimized
+                        && !window.minimized))
                 && snapshot.tick > runtime.ignore_geometry_through
                 && snapshot.tick > runtime.state_tick;
             let can_observe_state = can_observe_visibility && !runtime.dragging;
@@ -484,6 +492,7 @@ impl Model {
             runtime.present = true;
             if runtime.pending.is_none() && snapshot.tick > runtime.ignore_geometry_through {
                 runtime.suppress_next_state = false;
+                runtime.restore_after_minimize = false;
             }
             if changed {
                 runtime.sequence += 1;
@@ -723,13 +732,20 @@ impl Model {
             return;
         }
         runtime.ignore_geometry_through = runtime.ignore_geometry_through.max(tick);
-        if verified
+        let current_verified = verified
             && !cancelled
             && runtime.present
             && runtime.sequence == sequence
+            && runtime.pending.as_ref().is_some_and(|pending| {
+                !pending.timed_out && pending.request.generation == self.generation
+            });
+        let current_minimize = current_verified
+            && runtime
+                .pending
+                .as_ref()
+                .is_some_and(|pending| matches!(pending.request.action, Action::Minimize { .. }));
+        if current_verified
             && let Some(pending) = &runtime.pending
-            && !pending.timed_out
-            && pending.request.generation == self.generation
             && let Some(record) = self.saved.windows.get_mut(key)
         {
             let desktop = self.current.as_ref().unwrap();
@@ -759,6 +775,7 @@ impl Model {
             runtime.pending = None;
             runtime.blocked = false;
             runtime.suppress_next_state = verified;
+            runtime.restore_after_minimize = current_minimize;
             runtime.state_tick = runtime.state_tick.max(tick);
         } else {
             runtime.blocked = true;

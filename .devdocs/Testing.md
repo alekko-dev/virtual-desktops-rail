@@ -126,6 +126,20 @@ bounds and late capture ordering; the initial regression failed on the reviewed 
 storage. The original desktop and files were restored, fixture pins removed, automation
 visibility verified off, and owned processes identity-checked before stopping.
 
+The first-post-minimize-snapshot review regression was verified on 2026-11-03 with
+dirty source based on `0f1f501`; release SHA-256 was
+`4A0AA4DD5E16C6491D39B3E5E2694B019391ACF43FBFC307948637F32D93700B`.
+On the same OS/display, a real foreground rail-button minimize followed by external
+Computer Use activation cleared intent and established a layout. A real-dot departure
+and CLI return automatically restored the fixture, with pending/blocked false.
+Screenshots and status confirmed visible state. Separate tool calls cannot establish
+that restoration preceded the first post-completion snapshot; deterministic tests
+reproduce that precise failure on the reviewed code, then pass for explicit/automatic
+minimization, stale frames, dragging and excluded completion/recovery contexts.
+`check-dev.ps1` passed with 85 tests and locked release builds. Cleanup restored the
+original desktop and files byte-for-byte, removed owned fixture pins, verified
+automation visibility off and stopped only identity-verified test processes.
+
 For future Snap-specific verification, use two-member groups only, with a separate
 unsnapped observer when needed. Historical larger-group evidence remains valid, but
 new larger-group tests require a change in user scope. The prioritized remaining

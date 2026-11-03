@@ -38,6 +38,11 @@ An external restore first observed during a drag, or immediately before it, reta
 its observation through the drag. Drag snapshots cannot clear minimized intent;
 drag start/end reset the stability interval, and only subsequent reachable, matching
 visible observations can clear it. Late drag-end captures cannot backdate that interval.
+A current verified minimize retains completion provenance until its first fresh
+snapshot. If that snapshot is already visible, it may start an external-restore
+candidate despite normal post-action suppression; committing still requires 100 ms
+of matching reachable observations. Late, timed-out, cancelled or superseded actions,
+pending work and recovery/desktop baselines cannot authorize this exception.
 
 Each record separately stores a default-empty `minimized_desktops` set. Verified
 current explicit minimization and eligible external visible-to-minimized observations

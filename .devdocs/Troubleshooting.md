@@ -165,6 +165,14 @@ at least 100 ms apart afterward; never count time spent dragging or backdate sta
 when a delayed capture arrives. Desktop changes, recovery, pending Rail actions and
 re-minimization still invalidate the candidate.
 
+Post-action suppression also used to discard an external restore before the first
+snapshot after a verified Rail minimize. That snapshot replaced cached minimized
+state with visible state, so later matching snapshots never detected the transition.
+Retain provenance only for a current verified minimize and allow the first fresh
+visible sample to seed a candidate; require normal stable/reachable verification
+before clearing intent. Keep the suppression guard for late, cancelled, timed-out
+and superseded work, and discard the exception on pending work or a fresh baseline.
+
 Evidence limits: the event tail does not establish when the user manually minimized
 Outlook on Desktop 3 or whether foreground focus changed. Action entries do not label
 automatic versus explicit intent; their timing and saved targets support the automatic
