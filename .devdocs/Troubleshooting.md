@@ -156,6 +156,15 @@ it. Automatic minimization/restoration does neither. Destination intent override
 saved layout, including after a late restore completes. The timeout path preserves
 the single latest desired action while quarantined so late work can reconcile.
 
+External restore followed immediately by dragging previously lost the restoration
+observation: drag snapshots updated cached visibility while discarding the candidate,
+and drag-end geometry capture did not clear minimized intent. Retain the candidate
+through dragging, including a minimize-to-visible transition first sampled during the
+drag. Restart stability at drag boundaries and require reachable visible observations
+at least 100 ms apart afterward; never count time spent dragging or backdate stability
+when a delayed capture arrives. Desktop changes, recovery, pending Rail actions and
+re-minimization still invalidate the candidate.
+
 Evidence limits: the event tail does not establish when the user manually minimized
 Outlook on Desktop 3 or whether foreground focus changed. Action entries do not label
 automatic versus explicit intent; their timing and saved targets support the automatic

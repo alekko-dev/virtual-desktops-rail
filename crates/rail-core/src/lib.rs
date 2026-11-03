@@ -255,6 +255,13 @@ pub struct Pending {
 }
 
 #[derive(Clone, Debug)]
+pub struct ExternalRestore {
+    pub layout: Layout,
+    /// None retains restoration evidence while awaiting a post-drag sample.
+    pub since: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
 pub struct Runtime {
     pub window: Window,
     pub sequence: u64,
@@ -265,7 +272,7 @@ pub struct Runtime {
     pub ignore_geometry_through: u64,
     pub suppress_next_state: bool,
     pub present: bool,
-    pub external_restore: Option<(Layout, u64)>,
+    pub external_restore: Option<ExternalRestore>,
     pub state_tick: u64,
 }
 
@@ -405,14 +412,14 @@ impl Model {
             });
             // Stable external restores and geometry changes are user intent.
             // Startup/recovery and our own pending/late work are not.
-            let can_observe_state = !baseline
+            let can_observe_visibility = !baseline
                 && !changed
                 && runtime.pending.is_none()
                 && !runtime.blocked
-                && !runtime.dragging
                 && !runtime.suppress_next_state
                 && snapshot.tick > runtime.ignore_geometry_through
                 && snapshot.tick > runtime.state_tick;
+            let can_observe_state = can_observe_visibility && !runtime.dragging;
             if can_observe_state && window.minimized && !runtime.window.minimized {
                 let record = self.saved.windows.get_mut(&key).unwrap();
                 self.dirty |= record.minimized_desktops.insert(snapshot.current.clone());
@@ -424,18 +431,34 @@ impl Model {
                     || (runtime.external_restore.is_none()
                         && window.layout != runtime.window.layout)
                 {
-                    runtime.external_restore = Some((window.layout.clone(), snapshot.tick));
-                } else if let Some((layout, since)) = &mut runtime.external_restore {
-                    if *layout != window.layout {
-                        *layout = window.layout.clone();
-                        *since = snapshot.tick;
-                    } else if snapshot.tick.saturating_sub(*since) >= 100
+                    runtime.external_restore = Some(ExternalRestore {
+                        layout: window.layout.clone(),
+                        since: Some(snapshot.tick),
+                    });
+                } else if let Some(candidate) = &mut runtime.external_restore {
+                    if candidate.layout != window.layout || candidate.since.is_none() {
+                        candidate.layout = window.layout.clone();
+                        candidate.since = Some(snapshot.tick);
+                    } else if candidate
+                        .since
+                        .is_some_and(|since| snapshot.tick.saturating_sub(since) >= 100)
                         && window.layout.reachable()
                     {
                         external_restored = true;
                         runtime.external_restore = None;
                     }
                 }
+            } else if can_observe_visibility
+                && runtime.dragging
+                && !window.minimized
+                && (runtime.window.minimized || runtime.external_restore.is_some())
+            {
+                // A restore can first be seen during a drag. Retain that
+                // evidence, but restart geometry stability after dragging ends.
+                runtime.external_restore = Some(ExternalRestore {
+                    layout: window.layout.clone(),
+                    since: None,
+                });
             } else {
                 runtime.external_restore = None;
             }
@@ -609,7 +632,15 @@ impl Model {
         }
         runtime.sequence += 1;
         runtime.desired = None;
-        runtime.external_restore = None;
+        if runtime.pending.is_some() || runtime.blocked || runtime.suppress_next_state {
+            runtime.external_restore = None;
+        } else if (started || runtime.dragging)
+            && let Some(candidate) = &mut runtime.external_restore
+        {
+            // The first post-drag visible sample starts the stability interval.
+            // A late geometry capture is not another drag boundary.
+            candidate.since = None;
+        }
         runtime.dragging = started;
         if !started
             && runtime.pending.is_none()

@@ -111,6 +111,21 @@ owned fixtures, automation visibility off and byte-identical restoration of orig
 state/backup/log files. Timestamp guards, immediate post-restore minimize, and
 nonempty-report privacy assertions are covered by the automated regressions.
 
+The restore-then-drag review regression was checked on 2026-11-03 with dirty source
+based on `d182cc8`, the same OS/DPI/display and two owned app-pinned fixtures. Release
+SHA-256 was `0607B4AB18EB4ECC0F5802BF56BC1EE75FF4149890D1139F77720D17AE02E3E1`.
+A title-bar minimize established intent; external Computer Use activation restored
+the fixture, followed by a real title-bar drag. Screenshots showed the moved window;
+status confirmed cleared minimized intent and saved bounds. A real rail-dot departure
+and CLI return automatically restored it at the dragged bounds, with pending/blocked
+false. External activation was not a taskbar click, and separate tool calls do not
+prove the exact sub-poll restore/drag race. Deterministic regressions cover observation
+before/during dragging, 100 ms of post-drag stability, invalidated evidence, unreachable
+bounds and late capture ordering; the initial regression failed on the reviewed code.
+`check-dev.ps1` passed with 81 tests and locked release builds using workspace temporary
+storage. The original desktop and files were restored, fixture pins removed, automation
+visibility verified off, and owned processes identity-checked before stopping.
+
 For future Snap-specific verification, use two-member groups only, with a separate
 unsnapped observer when needed. Historical larger-group evidence remains valid, but
 new larger-group tests require a change in user scope. The prioritized remaining

@@ -34,6 +34,10 @@ minimize-to-visible restoration is manual intent only on a stable desktop, outsi
 drags and our pending/late operations: require matching reachable geometry observations
 at least 100 ms apart. Reject transient off-screen coordinates. Automatic restoration
 never rewrites saved geometry or the last-usable fallback. Minimization retains memory.
+An external restore first observed during a drag, or immediately before it, retains
+its observation through the drag. Drag snapshots cannot clear minimized intent;
+drag start/end reset the stability interval, and only subsequent reachable, matching
+visible observations can clear it. Late drag-end captures cannot backdate that interval.
 
 Each record separately stores a default-empty `minimized_desktops` set. Verified
 current explicit minimization and eligible external visible-to-minimized observations
