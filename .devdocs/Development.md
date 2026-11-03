@@ -106,9 +106,12 @@ changes; then launch the actual packaged executable for relevant live checks.
 must match the application Cargo version. CI passes `-ReleaseTag vMAJOR.MINOR.PATCH`;
 packaging requires its own clean Git checkout, a tag pointing to HEAD, and known clean
 embedded provenance matching that commit. This gate runs before and after building.
-Successful pushes to `main` package the same portable ZIP and upload it as a GitHub
-Actions artifact named with the commit SHA. The artifact is retained for 90 days and
-can be downloaded from that workflow run. Tag jobs package assets and create a draft
+Successful pushes to `main` build the portable package and upload its directory as a
+GitHub Actions artifact named with the commit SHA. Upload from the `artifacts/` parent
+and exclude the locally generated ZIP so the downloaded artifact ZIP contains one
+`VirtualDesktopRail-<version>-windows-x64/` folder, with no nested archives.
+The artifact is retained for 90 days and can be downloaded from that workflow run.
+Tag jobs package assets and create a draft
 prerelease with generated notes and the remaining-validation link; release assets are
 the versioned downloads to keep. CI success does not replace interactive certification.
 Local packaging does not upload or publish anything.
