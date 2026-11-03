@@ -18,11 +18,28 @@ use windows::core::{Interface, PCWSTR};
 pub enum Work {
     Save(Saved),
     Export(String, serde_json::Value),
+    Trace(serde_json::Value),
+    Report(ReportRequest),
     Log(String),
+}
+pub struct ReportWindow {
+    pub label: String,
+    pub window: rail_core::Window,
+    pub cached_layout: rail_core::Layout,
+    pub last_usable_layout: Option<rail_core::Layout>,
+    pub saved_layouts: serde_json::Value,
+    pub pending: bool,
+    pub blocked: bool,
+}
+pub struct ReportRequest {
+    pub destination: PathBuf,
+    pub context: serde_json::Value,
+    pub windows: Vec<ReportWindow>,
 }
 pub struct Storage {
     pub sender: Sender<Work>,
     pub stop: Sender<Shutdown>,
+    pub diagnostic_session: String,
 }
 pub type WriteAck = Sender<Result<(), String>>;
 pub type Shutdown = (Option<Saved>, WriteAck);
@@ -161,6 +178,204 @@ fn log(path: &Path, message: &str) -> Result<(), String> {
     rail_compatibility_probe::storage::replace(&path, text.as_bytes()).map_err(|e| e.to_string())
 }
 
+fn trace(path: &Path, value: &serde_json::Value, session: &str) -> Result<(), String> {
+    let _guard = crate::singleton::coordination("Diagnostics")?;
+    let path = path.with_file_name("diagnostics-events.jsonl");
+    let mut bytes = Vec::new();
+    if let Ok(file) = std::fs::File::open(&path) {
+        let _ = file.take(131072).read_to_end(&mut bytes);
+    }
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    let mut entry = value.clone();
+    if let Some(object) = entry.as_object_mut() {
+        object.insert("run".into(), serde_json::json!(session));
+        object.insert(
+            "time_unix_ms".into(),
+            serde_json::json!(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+            ),
+        );
+    }
+    text.push_str(&serde_json::to_string(&entry).map_err(|e| e.to_string())?);
+    text.push('\n');
+    if text.len() > 131072 {
+        let start = text.len() - 131072;
+        let start = text.as_bytes()[start..]
+            .iter()
+            .position(|b| *b == b'\n')
+            .map(|i| start + i + 1)
+            .unwrap_or(text.len());
+        text = text[start..].to_owned();
+    }
+    rail_compatibility_probe::storage::replace(&path, text.as_bytes()).map_err(|e| e.to_string())
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0_u32;
+    for byte in bytes {
+        crc ^= u32::from(*byte);
+        for _ in 0..8 {
+            crc = (crc >> 1) ^ (0xedb88320 & (0_u32.wrapping_sub(crc & 1)));
+        }
+    }
+    !crc
+}
+
+fn zip(entries: &[(&str, &[u8])]) -> Result<Vec<u8>, String> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    for (name, data) in entries {
+        let name = name.as_bytes();
+        let name_len = u16::try_from(name.len()).map_err(|_| "Report entry name is too long")?;
+        let size = u32::try_from(data.len()).map_err(|_| "Report is too large")?;
+        let offset = u32::try_from(out.len()).map_err(|_| "Report is too large")?;
+        let crc = crc32(data);
+        out.extend_from_slice(&0x04034b50_u32.to_le_bytes());
+        out.extend_from_slice(&20_u16.to_le_bytes());
+        out.extend_from_slice(&0x0800_u16.to_le_bytes());
+        out.extend_from_slice(&0_u16.to_le_bytes());
+        out.extend_from_slice(&0_u16.to_le_bytes());
+        out.extend_from_slice(&0_u16.to_le_bytes());
+        out.extend_from_slice(&crc.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&name_len.to_le_bytes());
+        out.extend_from_slice(&0_u16.to_le_bytes());
+        out.extend_from_slice(name);
+        out.extend_from_slice(data);
+
+        central.extend_from_slice(&0x02014b50_u32.to_le_bytes());
+        central.extend_from_slice(&20_u16.to_le_bytes());
+        central.extend_from_slice(&20_u16.to_le_bytes());
+        central.extend_from_slice(&0x0800_u16.to_le_bytes());
+        central.extend_from_slice(&0_u16.to_le_bytes());
+        central.extend_from_slice(&0_u16.to_le_bytes());
+        central.extend_from_slice(&0_u16.to_le_bytes());
+        central.extend_from_slice(&crc.to_le_bytes());
+        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&size.to_le_bytes());
+        central.extend_from_slice(&name_len.to_le_bytes());
+        central.extend_from_slice(&0_u16.to_le_bytes());
+        central.extend_from_slice(&0_u16.to_le_bytes());
+        central.extend_from_slice(&0_u16.to_le_bytes());
+        central.extend_from_slice(&0_u16.to_le_bytes());
+        central.extend_from_slice(&0_u32.to_le_bytes());
+        central.extend_from_slice(&offset.to_le_bytes());
+        central.extend_from_slice(name);
+    }
+    let count = u16::try_from(entries.len()).map_err(|_| "Too many report entries")?;
+    let central_offset = u32::try_from(out.len()).map_err(|_| "Report is too large")?;
+    let central_size = u32::try_from(central.len()).map_err(|_| "Report is too large")?;
+    out.extend_from_slice(&central);
+    out.extend_from_slice(&0x06054b50_u32.to_le_bytes());
+    out.extend_from_slice(&0_u16.to_le_bytes());
+    out.extend_from_slice(&0_u16.to_le_bytes());
+    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(&count.to_le_bytes());
+    out.extend_from_slice(&central_size.to_le_bytes());
+    out.extend_from_slice(&central_offset.to_le_bytes());
+    out.extend_from_slice(&0_u16.to_le_bytes());
+    Ok(out)
+}
+
+fn create_report(request: ReportRequest, state_path: Option<&Path>) -> Result<PathBuf, String> {
+    let mut context = request.context;
+    let windows = request
+        .windows
+        .into_iter()
+        .map(|item| {
+            let native = if crate::platform::validate(&item.window) {
+                crate::platform::layout(crate::platform::hwnd(item.window.hwnd))
+                    .map(|layout| {
+                        let handle = crate::platform::hwnd(item.window.hwnd);
+                        let visible = unsafe {
+                            windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(handle)
+                                .as_bool()
+                        };
+                        let minimized = unsafe {
+                            windows::Win32::UI::WindowsAndMessaging::IsIconic(handle).as_bool()
+                        };
+                        let mut cloaked = 0_i32;
+                        let cloak_query = unsafe {
+                            windows::Win32::Graphics::Dwm::DwmGetWindowAttribute(
+                                handle,
+                                windows::Win32::Graphics::Dwm::DWMWINDOWATTRIBUTE(14),
+                                &mut cloaked as *mut _ as *mut _,
+                                std::mem::size_of::<i32>() as u32,
+                            )
+                        };
+                        serde_json::json!({"available":true,"layout":layout,"visible":visible,"minimized":minimized,"cloaked":cloak_query.is_ok().then_some(cloaked != 0)})
+                    })
+                    .unwrap_or_else(|_| serde_json::json!({"available":false}))
+            } else {
+                serde_json::json!({"available":false,"reason":"identity_changed"})
+            };
+            let executable = std::path::Path::new(&item.window.identity.executable)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("unknown");
+            let executable = executable
+                .chars()
+                .filter(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+                })
+                .take(128)
+                .collect::<String>();
+            serde_json::json!({
+                "label":item.label,
+                "application_executable":executable,
+                "responsive":item.window.responsive,
+                "cached_minimized":item.window.minimized,
+                "cached_model_layout":item.cached_layout,
+                "last_usable_fallback":item.last_usable_layout,
+                "pending":item.pending,
+                "blocked":item.blocked,
+                "fresh_native_observation":native,
+                "saved_layouts":item.saved_layouts
+            })
+        })
+        .collect::<Vec<_>>();
+    if let Some(object) = context.as_object_mut() {
+        object.insert("windows".into(), serde_json::json!(windows));
+        object.insert(
+            "windows_version".into(),
+            serde_json::json!(rail_compatibility_probe::platform::os_version().ok()),
+        );
+    }
+    let mut events = String::new();
+    let mut event_history_available = false;
+    if let Some(path) = state_path {
+        let path = path.with_file_name("diagnostics-events.jsonl");
+        if let Ok(file) = std::fs::File::open(path) {
+            event_history_available = true;
+            let _ = file.take(131072).read_to_string(&mut events);
+        }
+    }
+    if let Some(object) = context.as_object_mut() {
+        object.insert(
+            "event_history".into(),
+            serde_json::json!({"available":event_history_available,"bytes":events.len(),"bounded_bytes":131072,"contains_tail":true}),
+        );
+        object.insert(
+            "observation_note".into(),
+            serde_json::json!("Fresh native window observations are gathered sequentially after the UI snapshot and may not represent one atomic instant."),
+        );
+    }
+    let report = serde_json::to_vec_pretty(&context).map_err(|e| e.to_string())?;
+    let readme = b"Virtual Desktop Rail diagnostic report\r\n\r\nThe report includes application/build and Windows version context, settings, desktop counts, fresh native observations for still-matching managed windows, saved geometry/state and recent redacted event history. Window titles, document contents, window handles, process IDs, full executable paths, desktop names/IDs and screenshots are excluded. Windows does not expose native Snap Group membership to the app, so this report cannot include or verify group membership. No data is uploaded. Review the files before sharing.\r\n";
+    let archive = zip(&[
+        ("README.txt", readme),
+        ("report.json", &report),
+        ("events.jsonl", events.as_bytes()),
+    ])?;
+    rail_compatibility_probe::storage::replace(&request.destination, &archive)
+        .map_err(|error| error.to_string())?;
+    Ok(request.destination)
+}
+
 pub fn export_path(nonce: &str) -> Result<PathBuf, String> {
     if nonce.len() != 32 || !nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid diagnostic request identity".into());
@@ -169,6 +384,10 @@ pub fn export_path(nonce: &str) -> Result<PathBuf, String> {
 }
 
 pub fn start() -> Storage {
+    let diagnostic_session = windows::core::GUID::new()
+        .map(|id| format!("{id:?}"))
+        .unwrap_or_else(|_| format!("run-{}", std::process::id()));
+    let trace_session = diagnostic_session.clone();
     let (sender, incoming) = crossbeam_channel::bounded(4);
     let (stop, shutdown) =
         crossbeam_channel::bounded::<(Option<Saved>, Sender<Result<(), String>>)>(1);
@@ -235,6 +454,11 @@ pub fn start() -> Storage {
                         pending = Some(saved);
                     }
                     Ok(Work::Log(message))=>{if let Some(path)=&path{let _=log(path,&message);}}
+                    Ok(Work::Trace(value))=>{if let Some(path)=&path{let _=trace(path,&value,&trace_session);}}
+                    Ok(Work::Report(request))=>{
+                        let result=create_report(request,path.as_deref());
+                        notify(Event::Report(result));
+                    }
                     Ok(Work::Export(nonce,value)) => {
                         let result = export_path(&nonce).and_then(|path| serde_json::to_vec_pretty(&value).map_err(|e| e.to_string()).and_then(|bytes|
                             rail_compatibility_probe::storage::replace(&path,&bytes).map_err(|e| e.to_string())));
@@ -245,7 +469,11 @@ pub fn start() -> Storage {
             }
         }
     });
-    Storage { sender, stop }
+    Storage {
+        sender,
+        stop,
+        diagnostic_session,
+    }
 }
 
 pub fn startup_worker() -> Sender<bool> {
@@ -446,6 +674,53 @@ mod tests {
         for nonce in ["../state", "", &"z".repeat(32)] {
             assert!(export_path(nonce).is_err());
         }
+    }
+    #[test]
+    fn diagnostic_zip_uses_valid_stored_entries_and_crc32() {
+        assert_eq!(crc32(b"123456789"), 0xcbf43926);
+        let archive = zip(&[("report.json", b"{}"), ("events.jsonl", b"")]).unwrap();
+        assert_eq!(&archive[..4], &0x04034b50_u32.to_le_bytes());
+        assert_eq!(
+            &archive[archive.len() - 22..archive.len() - 18],
+            &0x06054b50_u32.to_le_bytes()
+        );
+        assert_eq!(
+            &archive[archive.len() - 14..archive.len() - 10],
+            &[2, 0, 2, 0]
+        );
+    }
+    #[test]
+    fn support_report_contains_redacted_state_and_never_copies_the_free_form_log() {
+        let directory = Temporary::new();
+        let state_path = directory.state();
+        std::fs::write(directory.0.join("diagnostics.log"), "private-path-marker").unwrap();
+        trace(
+            &state_path,
+            &serde_json::json!({"event":"desktop_transition_observed","from":"desktop-001","to":"desktop-002"}),
+            "run-test",
+        )
+        .unwrap();
+        let destination = directory.0.join("support.zip");
+        create_report(
+            ReportRequest {
+                destination: destination.clone(),
+                context: serde_json::json!({"diagnostic_run":"run-test","desktops":[]}),
+                windows: vec![],
+            },
+            Some(&state_path),
+        )
+        .unwrap();
+        let archive = std::fs::read(destination).unwrap();
+        for member in [b"README.txt".as_slice(), b"report.json", b"events.jsonl"] {
+            assert!(archive.windows(member.len()).any(|bytes| bytes == member));
+        }
+        assert!(archive.windows(8).any(|bytes| bytes == b"run-test"));
+        assert!(archive.windows(9).any(|bytes| bytes == b"time_unix"));
+        assert!(
+            !archive
+                .windows(b"private-path-marker".len())
+                .any(|bytes| bytes == b"private-path-marker")
+        );
     }
     #[test]
     fn startup_shortcut_can_be_saved_loaded_and_removed_in_an_isolated_directory() {

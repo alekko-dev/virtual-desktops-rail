@@ -40,7 +40,12 @@ never rewrites saved geometry or the last-usable fallback. Minimization retains 
 Rust with the pinned MSVC x64 toolchain, selected `windows` crate bindings, native
 Win32 controls and GDI painting, `winvd = 0.0.49`, and versioned JSON storage. Static
 CRT and an unpackaged portable executable avoid a managed runtime, service, or driver.
-Core usage is local; diagnostics are bounded and do not collect window titles.
+Core usage is local; diagnostics are bounded and do not collect window titles. Settings
+can create a user-selected ZIP locally. Its report uses temporary window/desktop labels,
+freshly observes still-matching managed windows off the UI thread, and includes bounded
+redacted event history. It omits titles, document content, HWNDs, PIDs, full executable
+paths, desktop names/IDs and screenshots; it does not upload anything. Native Snap Group
+membership is not exposed to the app and therefore is not reported.
 
 Application icons are painted at 16 DIPs (16/20/24/32 pixels at 100/125/150/200%).
 The icon worker compares the window's small and large icons, choosing an exact-size
@@ -62,13 +67,22 @@ provide only small artwork can still require enlargement.
 | `apps/rail/src/platform.rs` | OS eligibility, window properties, candidates, identity and geometry |
 | `apps/rail/src/bridge.rs` | Shell COM subprocess, bounded protocol, watchdog, backoff and JobObject |
 | `apps/rail/src/actions.rs` | Async actions, verification, quarantine and guarded focus |
-| `apps/rail/src/store.rs` | Atomic storage, backup/recovery, session merges, diagnostics and Startup shortcut |
+| `apps/rail/src/store.rs` | Atomic storage, backup/recovery, session merges, bounded diagnostics/report archive and Startup shortcut |
 | `apps/rail/src/icons.rs`, `metrics.rs` | Off-UI icon extraction/cache and bounded dispatch statistics |
 | `apps/rail/src/singleton.rs`, `native.rs` | Session instance coordination and small raw Win32 declarations |
 | `apps/rail/build.rs`, `apps/rail/rail.manifest` | Cargo-derived version resources, source provenance, embedded icons and generated PerMonitorV2/asInvoker/long-path manifest |
 | `tools/compatibility-probe` | Read-only probe and explicit fixture/desktop exercises |
 | `tools/native-smoke`, `tools/fullscreen-smoke` | Ordinary duplicate/modal/stalled-window and fullscreen fixtures |
 
+
+Settings includes **Save diagnostic report…** beside Retry. The UI snapshots report
+context, then releases its model borrow before opening the local ZIP save dialog; its
+nested message loop continues processing wake/events. Fresh managed-window observations
+and archive writing run on the storage worker. The bounded `diagnostics-events.jsonl` history records desktop aliases,
+window aliases, accepted/completed action evidence, integration readiness and selected
+setting changes without persistent window or desktop identifiers. `--status` remains a
+separate live-instance snapshot and may contain identifiers; it is not copied to the
+support archive.
 
 The Settings footer places the integration indicator and status above a
 10-DIP version label in the system gray text color. The label aligns with the status

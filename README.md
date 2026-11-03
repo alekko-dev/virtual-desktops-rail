@@ -36,6 +36,10 @@ executable. Diagnostic `--status` reports the running instance's build, whereas
 - Each window remembers its position, size, and normal/maximized state per desktop.
 - Optional automatic restoration restores saved destination layouts without taking focus.
 - Pause/resume, optional startup with Windows, and local settings and layout storage.
+- **Save diagnostic report…** in Settings creates a local ZIP with the app/build context,
+  saved and freshly observed managed-window geometry/state, and recent diagnostic events.
+  It excludes window titles, document contents, process IDs, full executable paths,
+  desktop names/IDs and screenshots. Nothing is uploaded; review the archive before sharing.
 - Native Windows UI, no installer, no administrator privileges, and no network requirement for use.
 
 Native Windows Snap support is limited. New layouts save snapped visible bounds
@@ -99,6 +103,7 @@ window, so multiple windows from the same application can have identical icons.
 | Under-icon indicator | Solid means visible; outlined means minimized. App icons keep their normal appearance. |
 | Play/Pause | Suspend or resume automatic window actions. Manual controls continue working. |
 | Sliders button | Open Settings. Done closes Settings. |
+| Save diagnostic report… | Choose a local ZIP destination for the redacted support report. |
 | Button below Settings | Exit the app and release the reserved screen space. |
 
 Fullscreen applications can cover the rail. The rail requests exclusion from DWM Peek
@@ -142,6 +147,10 @@ Configuration, previous-state backup, and bounded diagnostics live under
 `%LOCALAPPDATA%\VirtualDesktopRail`. Layout history is limited to 512 window identities
 and 64 desktop layouts per identity; new identities are omitted at the identity limit.
 There is no history-management UI yet.
+
+The support report includes a bounded event history of desktop transitions, accepted and
+verified window actions, integration readiness and selected setting changes. It does not
+include native Snap Group membership because Windows does not expose that state to the app.
 
 Physical hardware, mixed DPI and monitor changes, actual Explorer restart,
 screen-reader/high-contrast review, and the full Obsidian workflow still need broader
