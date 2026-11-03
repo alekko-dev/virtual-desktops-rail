@@ -7,8 +7,8 @@ Start from main after the per-desktop minimized-intent changes have been committ
 and merged. Preserve that behavior, including its persistence compatibility and
 conservative rejection of ambiguous external events.
 
-Read [Architecture](Architecture.md), [Status and roadmap](Status-and-Roadmap.md),
-and [Testing](Testing.md) before implementation. Those documents remain authoritative
+Read [Architecture](../Architecture.md), [Status and roadmap](../Status-and-Roadmap.md),
+and [Testing](../Testing.md) before implementation. Those documents remain authoritative
 for product behavior and verification requirements. This document owns the refactoring
 sequence and completion criteria; update it as stages are implemented.
 
@@ -154,7 +154,7 @@ features, Snap reconstruction, or unrelated storage-format changes. Preserve the
 toolchain and lockfile. Run `./scripts/check-dev.ps1` for code changes.
 
 For interaction-affecting changes, follow the installed computer-use skill and
-[Testing](Testing.md). Exercise actual pointer/keyboard behavior with owned fixtures:
+[Testing](../Testing.md). Exercise actual pointer/keyboard behavior with owned fixtures:
 manual minimize/restore, automatic A/B/A round trips, immediate switches after external
 minimize, delayed-operation recovery, focus movement, dialogs, and supported Snap
 preservation. Serialize desktop tests, preserve user state, verify fixture identity

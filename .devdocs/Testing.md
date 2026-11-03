@@ -1,195 +1,136 @@
 # Testing and verification
 
+This document owns verification methods and completed evidence. Current behavior is
+in [Architecture](Architecture.md); verification gaps and release work are maintained
+in [Status and roadmap](Status-and-Roadmap.md).
+
 ## Verification layers
 
-Run `./scripts/check-dev.ps1` for code changes: formatting, warnings-denied Clippy,
-locked workspace tests and release builds. Pure controller tests use fake observations
-to exercise races, handle reuse, geometry clamping, recovery and action ordering.
-Storage/CLI/helper tests cover schema bounds, atomic replacement, corruption recovery,
-session merging, isolated Startup links, subprocess crashes/timeouts and argument contracts.
-Use meaningful regression scenarios; avoid asserting only implementation details.
+For code changes, run `./scripts/check-dev.ps1`: formatting, warnings-denied Clippy,
+locked workspace tests, version contracts and release builds. Pure controller tests
+exercise ordering, identity reuse, geometry, cancellation, recovery and late actions
+with fake observations. Storage/helper tests cover bounds, atomic replacement,
+corruption recovery, session merging, argument contracts and subprocess failures.
+For provenance changes, also run `./scripts/test-versioning.ps1 -Provenance`.
 
-Automated checks are necessary but cannot certify native appearance or interaction.
-For UI and behavior changes, use computer use to inspect the actual running app and
-exercise real pointer/keyboard input, then independently inspect foreground, placement,
-visibility and integration state. A CLI `--click` passed while a real mouse-click focus
-bug remained. Screenshots expose rendering defects that controller tests cannot.
+For UI or interaction changes, inspect screenshots of the actual app and exercise
+real pointer/keyboard input through the installed computer-use skill. Independently
+observe foreground, visibility, placement and integration state. CLI controls and
+controller tests cannot certify rendering, focus, tooltips or click behavior.
 
-Interactive tests run serially in the unlocked signed-in Explorer session, with owned
-fixtures. Record OS build/revision, executable hash or source revision, privilege/session,
-display/DPI, automation visibility and workload. Preserve original user windows/desktops
-and settings. Stop only verified owned processes (PID plus executable and creation time).
-Remove only known temporary desktops after a broad inventory confirms they are empty;
-after ambiguous/time-out creation, report unexpected desktops instead of guessing ownership.
-Real Explorer restart/session tests require a recorded recoverable checkpoint.
+## Evidence standards and desktop safety
+
+Run desktop tests serially in an unlocked, awake Explorer session. Use owned fixtures
+and disposable app data. Record the OS build/revision, binary hash or source revision,
+privilege/session type, display/DPI, workload, automation style and observation method.
+Use explicit passed, failed, unavailable and not-run outcomes. State whether a result
+came from a native harness, actual product CLI, real input or a physical device.
+
+Preserve user windows, desktop identities/names, pins, preferences and data. Verify
+PID, executable and creation time before stopping an owned process. After ambiguous
+desktop creation, do not guess ownership; remove only verified empty test desktops.
+Restore automation visibility off and any temporarily changed setting. Compare work
+areas with display topology as well as reservations: a user display resize is not
+permission to overwrite global work area. Explorer restart tests require a recorded
+recoverable checkpoint. Stop input on lock/disconnection or failed observation.
+
+Keep significant results below with enough context to interpret them without local
+artifacts. Record material limitations, not every failed automation attempt. Do not
+retain transient identifiers, delivery state or historical counts of passing tests.
+No evidence on one Windows revision or VM certifies other machines or release readiness.
 
 ## Computer-use procedure
 
-Read and follow the installed computer-use skill and its current API; do not copy
-obsolete agent-specific automation code. Observe the app, inspect screenshots and
-accessibility data, perform one meaningful input, then observe the result again.
-Refresh targets after renders instead of retrying stale accessibility indexes.
+Observe, inspect, perform one meaningful input, then observe again. Refresh targets
+after renders and follow the installed skill's current selection and recovery rules.
+Do not construct automation targets from diagnostic HWNDs.
 
-The passive TOOLWINDOW rail is deliberately omitted by some automation inventories.
-For real-button input checks, temporarily expose it using:
+The normal passive TOOLWINDOW rail can be absent from automation inventories. For
+real-button checks, temporarily expose it:
 
 ```powershell
 ./scripts/Invoke-Rail.ps1 --automation-ui on
-# Select the observed rail window in the computer-use tool; exercise actual controls.
+# Select the observed rail and exercise its actual controls.
 ./scripts/Invoke-Rail.ps1 --automation-ui off
 ```
 
-This nonpersistent mode changes discoverability while retaining no-activation behavior
-and the same controls/controller. Restore it off even after failed tests. Check normal
-passive style separately for cross-desktop presence, Task View exclusion and fullscreen.
-Never construct an automation target from a diagnostic HWND when the tool cannot select it.
-
-The Settings **Save diagnostic report…** workflow is local and user-directed. For a report
-change, inspect the actual Settings control and save-picker appearance, then verify one
-archive contains `README.txt`, `report.json`, and bounded `events.jsonl`. Check that fresh
-native observations are explicitly unavailable when identity revalidation fails, and that
-the ZIP excludes window titles, content, HWNDs, PIDs, full executable paths and desktop
-names/IDs. It does not prove native group membership or any unexposed shell state. Do not
-attach/upload the archive during testing; preserve the user's chosen location and settings.
-Exercise a long absolute destination path, confirm overwrite behavior, and distinguish
-cancel from a common-dialog error. While the picker is open, produce an owned-fixture
-desktop/action event and verify the UI drains it without pausing automatic management or
-overflowing the event queue.
-For this implementation, `check-dev.ps1` passed; live verification was attempted through
-Computer Use but the passive rail had no targetable window. A subsequent status command
-timed out, so Settings appearance, picker interaction and an actual archive remain
-unverified. The test-launched processes were closed and the existing state/backup/log
-files were restored byte-for-byte.
-If the desktop locks or observation fails, stop input, report what remains unverified
-and continue independent checks; a locked/RDP-disconnected run is not a UI pass.
+This changes discoverability, so test normal passive-style presence, fullscreen and
+Task View exclusion separately. Exposed windows have become shell-cloaked after
+switching; a passed exposed-style input check is not a passive-style presence pass.
+See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-automation).
 
 ## Interactive regression matrix
 
-### Per-desktop minimized intent
-
-2026-11-03 verification used Windows 26300.9711 in the unlocked Explorer session,
-144 DPI, primary display 2048 by 1152, with two owned native-smoke windows, application
-pinning and auto-restore enabled. The tested dirty `0b593b1` release executable had
-SHA-256 `06EDCCA22C67514A4ED2AE4453676133CA7DFA55CE69C07C02D65234FCAE42B5`.
-Computer Use inspected actual rail/fixture screenshots and used real title-bar and
-rail pointer input plus Space on a focused rail button. CLI status independently
-checked minimized preferences, geometry, pending/blocked work and foreground context.
-
-| Scenario | Result |
+| Area | Repeatable scenarios and observations |
 | --- | --- |
-| Title-bar minimize before any saved layout, then rail restore | Minimized intent recorded without geometry; restore cleared it and established a layout. |
-| Switch to an unsaved destination | Both fixtures minimized, without recording automatic minimization as user intent. |
-| Both destinations saved; minimize one fixture on B, real-dot B/A/B | Both restored on A; on return to B the manually minimized fixture stayed minimized while the other remained visible. No pending/blocked operations. The two UI actions were separate tool calls, so this is not a sub-poll-interval race certification. |
-| Rail restart with the same live fixtures | B's minimized preference and both layouts survived; baseline on A left both visible. |
-| Real foreground rail minimize, then Space restore | Minimize recorded A while retaining B; keyboard restore cleared A only, preserving B. |
+| Rendering/input | Active desktop shape/colors, icon visibility indicators, Settings/notices, hover tooltips, actual restore/focus/second-click minimize, keyboard focus, Done and Exit |
+| Desktop/pin integration | GUID/event identity across desktops; rail and Windows switches; actual Task View window/app pin/unpin cycles; closing/unpinning removes entries; minimized windows remain eligible |
+| Layouts/auto-restore | A/B/A normal and maximized layouts; saved/unsaved destinations; clamped fallback; duplicate windows; manual and stable external learning; unchanged automatic layout memory and independent foreground anchor |
+| Ordering | Rapid/coalesced A/B/A, pending minimize followed by restore, stalled/partial actions, timeout quarantine, late completion, held drag, destruction and fresh/reused identities |
+| Baselines/recovery | Startup, pause/resume, preference changes, retry and restart produce no immediate window actions; live duplicates retain memory; app restarts receive fresh identities; singleton/settings delivery |
+| Modal/fullscreen | Owner/dialog restore and minimize together; stalled targets leave rail responsive; passive-style fullscreen yield/recovery preserves application foreground |
+| Presentation | Animated shell switches, instant rail switches, rapid replacement, same-desktop Task View dismissal, Windows animations off, no residual clipping/timer, fixed AppBar bounds and Task View thumbnails |
+| Display/session/accessibility | Mixed DPI, primary changes, unplug/replug, sleep/resume, lock/unlock, Explorer restart, light/dark/high contrast, screen-reader/keyboard review and ordinary app workflows |
 
-Automation visibility was temporarily on. Some switches made the rail untargetable
-despite toggling visibility; fresh selection/restart was needed. This does not certify
-normal-style cross-desktop presence. The original desktop was restored, owned fixture
-pins removed, processes identity-checked before stopping, automation visibility verified
-off and original state/backup/log files restored byte-for-byte. No desktops were created.
+### Native Snap procedure
 
-Live two-window Snap regression remains unverified: Computer Use rejected the
-edge-directed drag because its endpoint was outside the fixture's window bounds.
-Windows-key switching was not attempted: the installed computer-use skill prohibits
-Windows-key shortcuts. External taskbar restore, focus preservation with an independent
-foreground anchor, and native minimize/switch delivery races remain live verification
-gaps. Controller regressions cover stable external restore, stale frames/events,
-duplicate/recycled identity, immediate-switch ordering and late/quarantined completion.
-Final `check-dev.ps1` verification passed formatting, warnings-denied Clippy, 78 tests,
-version contracts and locked release builds using a workspace-owned temporary folder
-(the default temporary folder denied report replacement). The final dirty `0b593b1`
-release executable, SHA-256
-`C3E13F2F4DCA9797273EB8648C4DDAF1EED6F76C14008A076CA16D577FB96AB6`,
-also passed fresh-fixture title-bar minimization, real rail restoration/intent clearing,
-and a saved-layout minimized A/B/A round trip. Departure used the real rail dot; the
-return was observed after an interruption, so this is not controlled rapid-switch
-timing evidence. Diagnostics recorded no restore request for the user-minimized
-fixture on return; status showed its saved A layout and minimized preference intact,
-with no pending/blocked work. Cleanup again verified the original desktop, unpinned
-owned fixtures, automation visibility off and byte-identical restoration of original
-state/backup/log files. Timestamp guards, immediate post-restore minimize, and
-nonempty-report privacy assertions are covered by the automated regressions.
+Use two group members and a separate owned unsnapped observer. Larger-group tests
+require explicit user scope; historical larger-group results below remain valid.
+Create a genuine group and confirm an explicit Task View Group thumbnail before
+testing. Adjacent rectangles or `IsWindowArranged` alone do not establish membership.
+Automation activation can alter an arrangement or dismiss the Snap flyout; inspect
+from the independent observer and reject ambiguous starting states.
 
-The restore-then-drag review regression was checked on 2026-11-03 with dirty source
-based on `d182cc8`, the same OS/DPI/display and two owned app-pinned fixtures. Release
-SHA-256 was `0607B4AB18EB4ECC0F5802BF56BC1EE75FF4149890D1139F77720D17AE02E3E1`.
-A title-bar minimize established intent; external Computer Use activation restored
-the fixture, followed by a real title-bar drag. Screenshots showed the moved window;
-status confirmed cleared minimized intent and saved bounds. A real rail-dot departure
-and CLI return automatically restored it at the dragged bounds, with pending/blocked
-false. External activation was not a taskbar click, and separate tool calls do not
-prove the exact sub-poll restore/drag race. Deterministic regressions cover observation
-before/during dragging, 100 ms of post-drag stability, invalidated evidence, unreachable
-bounds and late capture ordering; the initial regression failed on the reviewed code.
-`check-dev.ps1` passed with 81 tests and locked release builds using workspace temporary
-storage. The original desktop and files were restored, fixture pins removed, automation
-visibility verified off, and owned processes identity-checked before stopping.
+For each saved/unsaved destination and pinned/unpinned combination, test visible and
+independently verified minimized starts, auto-restore on/off, actual rail restore and
+an A/B/A trip. Observe normal restore bounds, visible screen bounds, arranged and
+minimized/maximized state, foreground, memory and pending/quarantine state. Check
+unpinned members separately. Verify the original drag-away size and shared-edge resize.
+Confirm group membership afterward. Native reveal tests do not substitute for product
+automatic switches or shell group actions. Remaining combinations belong in
+[Status](Status-and-Roadmap.md#planned-work).
 
-The first-post-minimize-snapshot review regression was verified on 2026-11-03 with
-dirty source based on `0f1f501`; release SHA-256 was
-`4A0AA4DD5E16C6491D39B3E5E2694B019391ACF43FBFC307948637F32D93700B`.
-On the same OS/display, a real foreground rail-button minimize followed by external
-Computer Use activation cleared intent and established a layout. A real-dot departure
-and CLI return automatically restored the fixture, with pending/blocked false.
-Screenshots and status confirmed visible state. Separate tool calls cannot establish
-that restoration preceded the first post-completion snapshot; deterministic tests
-reproduce that precise failure on the reviewed code, then pass for explicit/automatic
-minimization, stale frames, dragging and excluded completion/recovery contexts.
-`check-dev.ps1` passed with 85 tests and locked release builds. Cleanup restored the
-original desktop and files byte-for-byte, removed owned fixture pins, verified
-automation visibility off and stopped only identity-verified test processes.
+### Minimized-intent procedure
 
-Equal-timestamp restore candidates were checked on 2026-11-03 with dirty source based
-on `cdc536d`, release SHA-256
-`6F04526DC828A2E561830867C4837FE3EA3A6FD1413807E552F0D74EBA1BF969`.
-The new deterministic regression failed on the reviewed code. It now covers identical
-and conflicting equal-tick samples, unchanged stability timing, desktop/action
-invalidation, dragging and post-minimize restoration. `check-dev.ps1` passed with 87
-tests and locked release builds. A live real rail minimize and external activation
-restore passed on the same OS/display; screenshots and status confirmed visibility,
-cleared intent, saved layout and pending/blocked false. Exact same-tick delivery is
-covered deterministically, not established by the separate UI calls. Cleanup restored
-original files byte-for-byte, fixture pins, automation visibility and the original
-desktop; only identity-verified owned test processes were stopped.
+With auto-restore enabled and owned app-pinned fixtures, minimize before any geometry
+is saved, restore manually, then establish distinct A/B layouts and minimize only on
+B. Verify return to B preserves its preference while A restores independently.
+Exercise title-bar and rail minimize, keyboard restore, restart and paused manual
+changes. Automatic actions must not change intent. Observe stored preferences,
+actual visibility, pending/quarantine state and independent foreground.
 
-For future Snap-specific verification, use two-member groups only, with a separate
-unsnapped observer when needed. Historical larger-group evidence remains valid, but
-new larger-group tests require a change in user scope. The prioritized remaining
-Snap scenarios are maintained in [Native Snap compatibility](Snapping.md#remaining-verification-scope).
+For external restoration, cover restore-then-drag and the first snapshot after a
+verified minimize. Require fresh reachable matching post-drag observations; duplicate
+ticks must not advance stability or replace cached state. Deterministic tests cover
+exact delivery races; separate input calls cannot certify those races. External
+taskbar restore, native minimize/switch races and a live Snap regression remain open.
 
-### Centered responsive rail option
+### Presentation procedure
 
-On 2026-11-03, the centered responsive rail option (`centered_rail`, `--centered-rail on|off`,
-and Settings checkbox **Display centered responsive rail with rounded edges**) passed
-`check-dev.ps1`: formatting, warnings-denied Clippy, 88 workspace tests (including
-controller preference/schema defaults, cross-session storage merges, responsive DPI/item
-height calculation, and CLI help/validation contracts), version contracts, and locked
-release builds. The resulting release executable had SHA-256
-`B9AC61378CF084B54BB229C69C3EF3EE0C74E633B14A776FF379CBC090DB24DF`.
-No computer-use tool was installed in the session, so live desktop appearance, rounded
-region rendering, Settings checkbox pointer/keyboard interaction, and live vertical
-re-centering remain unverified.
+Exercise the shell's animated path as well as `winvd::switch_desktop`, which is an
+immediate path. Cloak/topmost flags can stay unchanged while DWM omits the rail's
+pixels; observe composed screen pixels and actual Task View thumbnails too. Finite
+pixel samples establish detected transitions, not every-frame smoothness.
+Task View entry alone is insufficient: confirm actual dismissal without a desktop
+change, then check full width, buttons, foreground and absence of a residual hold/timer.
+An Explorer shell activation process exit code alone does not establish the UI result.
+Respect reduced motion and distinguish a skipped effect from failed presentation.
+Mouse drags or completed switches do not reproduce a cancelled multi-finger gesture.
 
-| Area | Essential scenarios |
-| --- | --- |
-| Rail rendering/input | Desktop colors and active shape, visibility indicators, settings layout, tooltips, real icon restore/focus/second-click minimize, keyboard pause/resume, unavailable warning, Done versus Exit |
-| Desktop/pin integration | Four-desktop GUID/event identity; switches via rail and Windows; actual Task View window/app pin cycles; unpin/close removes entries; minimized windows stay eligible |
-| Layouts | Move/resize A/B/A, normal/maximized state, fallback without memory, two identical windows, taskbar/external restoration with stable reachable geometry |
-| Auto-restore | Mixed saved/unsaved windows, fresh desktop, passive normal/maximized restore preserving a separate foreground anchor, no memory rewrite, manual minimize retains memory |
-| Ordering | Rapid switches including A→B→A, delayed minimize then restore click, partial dispatch, timeout quarantine, late completion, user drag, identity disappearance/reuse |
-| Pause/restart | Pause across switches and rail restart; resume/setting changes do nothing immediately; rail restart preserves live duplicates; application restart gives fresh identities; second launch/settings addresses existing instance |
-| Modal/fullscreen | Owner/dialog minimize/reveal/focus, stalled target with responsive rail, fullscreen entry/exit and restored topmost state in normal style |
-| Recovery/display | Explicit retry, actual Explorer restart, sleep/resume, lock/unlock, session reconnect, primary-display changes, monitor disconnect/reconnect and mixed DPI |
-| Accessibility/apps | Light/dark/high contrast, screen-reader and keyboard review, Obsidian disposable vault, other app types and privilege combinations |
+### Diagnostic report procedure
 
-The last two rows contain substantial unverified release work; see [Status](Status-and-Roadmap.md).
-Fixtures do not substitute for real application workflows or physical display topology.
+Open Settings through real input and inspect **Save diagnostic report…** and the local
+save picker. Test save, cancel, overwrite and a long absolute destination. Verify the
+archive has `README.txt`, `report.json` and bounded `events.jsonl`; check the
+[privacy contract](Architecture.md#stack-and-source-map) and explicit unavailable
+fresh-observation results when identity revalidation fails. Do not upload the archive
+as part of a test. While the picker is open, cause an owned-fixture event and verify
+the nested UI loop continues draining work without unintended actions or queue overflow.
 
 ## Compatibility tools
 
-Build first, then run relevant exercises serially, closing existing native fixtures
-before owned-fixture runs. Each binary has `--help`:
+Build first, read each tool's `--help`, and close old owned fixtures before another
+exercise. Build/run setup is in [Development](Development.md).
 
 ```powershell
 ./target/release/rail-compatibility-probe.exe --output artifacts/compatibility.json
@@ -202,209 +143,118 @@ before owned-fixture runs. Each binary has `--help`:
 ./target/release/rail-desktop-exercise.exe --run-appbar-fixture
 ```
 
-The read-only probe never switches desktops, changes pinning or controls windows.
-`--observe-seconds 1..60` (default 2) collects GUIDs/names, event kinds and one-second
-pin samples. Calls/listener teardown run in an owned subprocess with a duration-plus-ten-
-second watchdog. Output, event queues and candidate counts are bounded; events may drop.
-Reports contain desktop names, candidate classes and transient HWND/PID observations,
-not titles or persistent identities. Schema 2 includes times/current desktop/event GUIDs.
-`--output` atomically replaces a report in an existing directory.
+| Tool | Capability and boundary |
+| --- | --- |
+| Read-only compatibility probe | Does not switch, pin or control windows. `--observe-seconds 1..60` collects GUIDs/names, events and one-second pin samples in an owned subprocess with a duration-plus-ten-second watchdog. Schema-2 reports contain transient candidate metadata, not titles or persistent window identities. Queues/output are bounded; dropped events, a changing desktop or no queryable candidates make the sample unavailable. Exit 0 means collected, 2 unavailable, 1 invocation/report I/O failure. |
+| Native smoke | One to four identical windows in one process; closing one preserves the others. Supports move/resize, minimize/maximize, an owned modal and `--delay-ms 0..10000` UI-thread stall. `--probe` reads foreground, bounds, DPI and display size. |
+| Owned/pin/control exercises | Mutate only owned fixtures and restore their pins. Pin discovery measures four API-triggered transitions over about 42 seconds; it does not measure Task View click latency. Window control distinguishes acceptance, visibility, focus and completion, including modal/stalled cases. Individual shell workers have ten-second deadlines. Exit 0 passed, 2 failed/unavailable, 1 invalid invocation. Keep native smoke beside the exercise. |
+| Desktop/AppBar exercise | Creates and names only temporary desktops, checks GUID events, returns to the original, removes verified empty owned desktops and checks work-area cleanup. AppBar mode also observes maximization and DWM cloaking. The `rail-native-smoke --appbar` prototype is not the actual product. |
+| Fullscreen smoke | `--run-owned-fullscreen` opens a disposable borderless fullscreen fixture; `--inspect-rail` reads topmost state. Tests yield/recovery separately from desktop switching. |
 
-Exit 0 means observations collected, **not compatibility passed**; 2 means unavailable;
-1 means invocation/report I/O failure. No queryable candidates, a desktop change during
-sampling or an event limit makes the report unavailable. Unsupported ApplicationViews
-and query failures are distinguished as specified in [Architecture](Architecture.md).
-
-The explicit exercise switches mutate only their owned fixtures. The owned-window
-exercise tests window/app pins and non-pointer identity across helper processes, restores
-pinning and stops its fixture. Keep `rail-native-smoke.exe` beside it. Individual shell
-operations have ten-second subprocess watchdogs. Exit 0 means passed, 2 failed/unavailable,
-1 invalid invocation.
-
-Pin-discovery exercise polls two cached candidates once per second for about 42 seconds
-and measures four API-triggered transitions with independent QPC timestamps. Measurements
-include actor dispatch/IPC, not Task View click latency. Window-control exercise distinguishes
-API acceptance, visible state, foreground and completion for a modal group and 1500 ms stall.
-Its standard-dialog fallback is fixture-specific, not general discovery policy.
-
-Desktop exercise creates three temporary desktops, names only those, verifies identity
-and events, returns to the original, then removes only verified empty owned desktops.
-AppBar exercise checks reservation, native maximization, DWM cloaking across desktops
-and work-area restoration. `rail-native-smoke --appbar` runs its passive prototype alone;
-close normally. A prototype pass is distinct from product-control verification.
-
-For actual Task View pin origin:
+To establish actual Task View pin origin, run:
 
 ```powershell
 ./target/release/rail-compatibility-exercise.exe --record-task-view > artifacts/compatibility-task-view.json
 ```
 
-Wait for recorder readiness; through Task View, pin one fixture window, unpin it, pin
-all fixture application windows, then unpin them. Leave at least two seconds between
-changes. Recording lasts about two minutes; it does not mutate pins during observation.
-Cleanup restores the initial state. Both cycles and operator confirmation of Task View
-origin are required. Observed transitions do not timestamp the user's clicks.
+Wait for readiness, then use Task View to pin one fixture window, unpin it, pin all
+fixture app windows and unpin them, leaving at least two seconds between changes.
+Recording lasts about two minutes and does not mutate pins while observing. Both
+cycles and operator confirmation of Task View origin are required; API changes alone
+do not establish origin. Probe formats are not the privacy-filtered support ZIP.
 
 ## Resource and latency measurement
 
-Provisional goals: under 20 MB private working set, effectively zero idle CPU, and an
-automatic native action issued within 50 ms of desktop-event receipt. Pin discovery
-has a provisional two-second idle-session bound. Goals require measurement.
-
 For a warmed stable two-pinned-window workload, run `./scripts/Measure-RailIdle.ps1`.
-It repeatedly checks inventory, geometry, visibility, desktop generation, pending work
-and UI/worker lifetimes; changed workloads or unavailable integration reject the sample.
-Include both processes. Distinguish private working set, total working set and private
-bytes, record duration/counter resolution/host load, and avoid concurrent UI or cleanup.
+Check inventory, geometry, visibility, generations, pending work and UI/worker lifetimes
+throughout; reject changed/unavailable workloads and overlapping cleanup. Include
+both processes and distinguish private working set, total working set, private bytes,
+duration, counter resolution and host load. Performance targets are owned by
+[Status](Status-and-Roadmap.md#performance-targets).
 
-`--status` exposes bounded `dispatch_latency` statistics in microseconds (count, max,
-over-50-ms and latest 256 samples). Cross-process QPC measures worker desktop-event
-receipt through snapshot/IPC/UI/action queues to accepted automatic minimization.
-It excludes winvd notification-queue wait before receipt and app redraw; it does not
-certify automatic-restore latency. Do not equate fixture script duration or API pin
-discovery latency with product event-to-action latency.
+`--status` reports bounded `dispatch_latency` statistics in microseconds: count, max,
+over-50-ms count and the latest 256 samples. Cross-process QPC measures integration
+worker receipt of a desktop event through snapshot/IPC/UI/action queues to accepted
+automatic minimization. It excludes winvd's preceding notification-queue wait and
+redraw, and does not measure automatic-restore completion. Script duration is not this
+latency; reported zero CPU is not proof of no work. Use representative distributions
+and independently verified outcomes before claiming the target is met.
 
-## Consolidated validation evidence
+## Compatibility and completed validation
 
-These are historical observations, not a claim that the current binary passed all
-cases. Raw JSON is local under ignored `artifacts/`; summaries remain useful without it.
-
-| Date / environment | Findings and scope | Evidence references |
-| --- | --- | --- |
-| 2026-11-02 follow-up, Windows 26300.9711, session 2, 1918×1140 physical / 120 DPI | Actual rail dot/button input plus serialized product-CLI A/B/A: automatic restoration failed visible snapped geometry for both-pinned and mixed saved-layout cases, including verified minimized starts, while arranged stayed true and actions reported success. Auto-off/manual restores, shared-edge resize, post-restore drag-away size, B normal/maximized memory, pause/resume, post-completion retry and closed/fresh identity behavior have scoped passes. Calculator exposed a duplicate frame/content entry and timeout. Synchronized five-second stall reached quarantine then cleared after late completion; stale/clipped notice persisted. Unsaved mixed permutations, held-drag switching, conclusive shell group actions and multi-monitor/DPI coverage remain open. | Same product SHA-256 `1C60C2D7925A198AF049E15BAE4E2C7081CA2A722BC079FF819329F1A81A7CC1`; `snap-next-*.json`; detailed methods, exclusions and cleanup in [Snapping](Snapping.md#actual-product-switching-application-and-recovery-evidence). |
-| 2026-11-01, Windows 11 x64 26300.9457, session 2, medium integrity, 1708×960 / 120 DPI | Initial compatibility spike passed before product work: four desktops/GUID events; actual Task View window/app pin cycles; passive AppBar visible, uncloaked and nonforeground on four desktops; 31 physical-pixel reservation and restored work area; modal focus, bounded stalled actions, duplicate-token lifetime. Lower-integrity sandbox omitted medium windows; elevated support not established. | `compatibility-four-desktops.json`, `compatibility-task-view-final.json`, `compatibility-appbar.json`, `compatibility-window-control.json`, `compatibility-identity-lifetime.json`, `compatibility-privilege-final.json` |
-| Same initial baseline | One-second cached pin checks observed four API changes in 795/626/480/333 ms including actor/IPC. Observer reported 0 ms CPU over 29 s at finite resolution; small fixture scope only. | `compatibility-pin-discovery.json` |
-| 2026-11-01, same baseline, product | Exact A/B/A geometry, maximized state, modal focus, duplicate rail restart, fresh app-restart identities, pause, second instance, retry baseline, five-second target stall with two-second quarantine and responsive rail. Fullscreen recovery and real two-icon click/keyboard tests passed after fixes. Input used temporary automation visibility; desktop/fullscreen checks used normal style. | `rail-layout-roundtrip.json`, `rail-maximized-after.json`, `rail-modal-roundtrip.json`, `rail-duplicate-restart-check.json`, `rail-app-restart.json`, `rail-retry-recovery.json`, `rail-stall-live.json`, `rail-fullscreen-pass.jsonl`, `rail-cua-*.json` |
-| 2026-11-01, final portable build, empty inventory | Combined private working set 3,993,600 bytes; 0 ms reported CPU over 30.007 s. Not literal zero CPU or a populated workload. | `rail-final-performance.json` |
-| 2026-11-02, Windows 26300.9711, session 2, 2560×1440 / 120 DPI | API pin, identity, modal/stall, four-desktop/AppBar and normal-style minimization checks passed; real pointer restore/focus/second-click passed. Cached API pin transitions: 786/630/483/316 ms. New-revision Task View origin not established. Historical experimental opt-in used; that policy is now superseded. | `compatibility-owned-20261102.json`, `compatibility-control-20261102.json`, `compatibility-identity-20261102.json`, `compatibility-appbar-20261102.json`, `compatibility-discovery-20261102.json`, `rail-preview-click-*.json` |
-| 2026-11-02, 9711, warmed stable two-window VM workload | Combined private working set 4,730,880 bytes; 62.5 ms CPU over 30.103 s with six stability checks. Includes diagnostic polling; finite counter resolution. Hash recorded in artifact predates subsequent icon-only edit. A first product dispatch observation was 72.635 ms, exceeding the 50 ms goal. | `rail-preview-populated-idle-20261102.json`; bounded dispatch metrics |
-| 2026-11-02, 9711, optional auto-restore | Saved/unsaved destinations, new desktop, manual/external learning, normal/maximized restore, preserved foreground anchor and memory, pause/resume, real settings/rail input, persistence/retry and packaged executable passed. External restore used fixture `ShowWindowAsync(SW_RESTORE)`, not a literal taskbar click. | `auto-no-layout.json`, `auto-fresh-desktop-final.json`, `auto-external-saved-final.json`, `auto-focus-max-final.json`, `auto-paused-final.json`, `auto-startup-final.json`, `auto-recovery-final.json`, `auto-real-rail-restore-final.json`, `auto-packaged-*.json` |
-| 2026-11-02, minimum-build policy change | Formatting, warnings-denied Clippy, 53 workspace tests and all release binaries passed in an alternate target directory. This validates policy code, not additional OS revisions interactively. | Historical build directory `artifacts/compatibility-policy-build` |
-| 2026-11-02, icon sizing/filtering, Windows 26300.9711, session 2, 1708×960 / 120 DPI | Formatting, warnings-denied Clippy, 58 workspace tests, version contract checks and locked release builds passed using workspace-owned temporary files. Inspected the rebuilt rail showing Notepad, Obsidian and an owned native fixture; actual pointer clicks minimized/restored the fixture and independent status/foreground probes confirmed restoration focus. A Space-key attempt reached the rail without establishing button activation, so keyboard activation is not certified by this run. Removed the fixture after unpinning, restored automation visibility off, and confirmed unchanged desktop, pause/auto-restore preferences and original two-window inventory. Other DPI values and comparative sharpness were not visually verified. | Executable SHA-256 `1C60C2D7925A198AF049E15BAE4E2C7081CA2A722BC079FF819329F1A81A7CC1`; `icon-check.log`, `icon-ui-*.json` |
-
-Auto-restore package verification identified executable SHA-256
-`12959A9BB20FFB580947A09396522BEF36BDB6E627E461443D0F8209C5F19378`;
-release/extracted/ZIP entries matched (`auto-package-verification.json`). Its 51-test
-result predates the 53-test policy change and does not identify the current binary.
-
-Do not reuse `rail-managed-idle-performance.json` as a populated-idle pass: its run was
-interrupted and fixture cleanup overlapped. Earlier `rail-performance.json` also overlapped
-interactive activity. The clean 2026-11-02 sample supersedes them. Neither observer CPU
-nor virtual-machine performance certifies physical-machine behavior. Original incomplete
-Task View recordings were incomplete sequences, not evidence of ABI failure.
-
-## Current Snap preservation increment
-
-On 2026-11-03, check-dev.ps1 passed formatting, warnings-denied Clippy, 63 workspace
-tests, version contracts and locked release builds. The pinned toolchain/lockfile were
-preserved. Actual computer-use and independent native observations covered matching
-Snap preservation through real rail saved/unsaved A/B/A, both-saved visible starts,
-two-member Task View Group survival, original drag-away size and conditional Settings
-notices/late-completion clearing. See [the detailed scoped evidence](Snapping.md#rebuilt-product-evidence)
-for executable identities, final-build differences, failed automation attempts and
-remaining coverage. Exact last-visit restoration is still incomplete.
-
-## Evidence required for release
-
-The 2026-11-02 Snap investigation passed `./scripts/check-dev.ps1` in
-`artifacts/snap-verification-build`: formatting, warnings-denied Clippy, 58 workspace
-tests, version contracts and locked release builds. The resulting rail SHA-256 was
-`756AB59E404B9A755E463A28F11E9B2321C0ED92AB01D57DFF8716865CF1B2DC`.
-No production code was changed. Native fixture experiments established snap-preserving
-no-activation reveal, native group survival across a pinned desktop round trip, a
-false-success placement-verification case, visible-start automatic-state inconsistency,
-and real drag-away sizing. Actual rail pointer restores retained the group without
-quarantine. Product automatic switching was not exercised over the user's windows;
-broader application/topology certification remains open. See [the scoped evidence](Snapping.md).
-
-Additional live Snap coverage verified a two-member mixed group and a user-prepared
-three-column group at 2560 by 1440 / 120 DPI on the same Windows revision. The latter
-passed native desktop round trips with one, two and all three members individually
-pinned, plus real rail restores with one and all three pinned. Task View explicitly
-confirmed group membership before and after the conclusive cases. Controlled rail
-exit/restart retained the group; an earlier visually matching arrangement without
-a Group entry was excluded. Original user state was checked and owned fixtures/pins
-were cleaned up. These checks do not certify product automatic desktop switching.
-
-Keep a concise capability/build matrix with passed, failed, not-run and blocked results,
-exact environment, binary identity and measurement limitations. Preserve important
-raw artifacts with the release when available; missing local files must not erase
-the checked-in finding. Update [Status and roadmap](Status-and-Roadmap.md) for outstanding
-work instead of starting a new dated report. Tests on one revision, API mutations,
-or successful read-only queries do not certify all eligible Windows builds.
-
-## Version and package identity verification
-
-On 2026-11-02, the traceability build based on source commit
-`0ec6474d72906d788f81a83e808e3306beb3b204` with working-tree changes passed
-formatting, warnings-denied Clippy, 56 workspace tests, version contract checks,
-and all locked release builds in an isolated Cargo target directory. The default
-release image was running; it was preserved instead of relinked. Existing atomic
-file-replacement tests required execution outside the filesystem sandbox.
-
-An isolated disposable source repository verified clean, tracked-dirty, untracked-dirty
-and commit-only incremental builds without application edits; exported source and
-unavailable Git produced null provenance. Matching release source was accepted;
-wrong-version tags, tags pointing elsewhere, dirty source and unknown embedded
-provenance were rejected. An actual mismatched packaging version was rejected before
-building. Run `./scripts/test-versioning.ps1 -Provenance` to repeat this coverage.
-
-The final extracted portable executable had SHA-256
-`B98A1FB5C110081DE8AF92A102312B22074F0217BBC848F5D8FDA9DE167D4864`.
-The ZIP/extracted executable, BUILD.json and SHA256.json agreed; Windows fixed
-file/product versions and extracted manifest identity were 0.1.0.0, and textual
-ProductVersion was 0.1.0+g0ec6474d7290.dirty. Local version output succeeded with
-and without an instance. A separate executable with unknown provenance queried
-status and correctly received the running package's known build identity.
-
-Actual packaged Settings screenshots and real pointer/keyboard input were checked
-in the signed-in Windows 11 26H2 26300.9711 session, primary display 1708×960,
-120 DPI (125%). The version and status footer were readable without clipping;
-the version background matched the footer after a screenshot-discovered fix. Tab
-reached the first checkbox, reverse Tab reached Done without visiting the read-only
-version, and a real Done click closed Settings while the app remained running.
-The original executable was restored with pause, auto-restore and Startup preferences
-preserved, Settings closed and automation visibility off.
-
-Live 100% scaling and other display/topology configurations remain unverified:
-testing retained the user's current display settings. These checks establish local
-preview behavior, not CI execution, public release certification or signed provenance.
-
-The compact-footer refinement was also checked on the same Windows/DPI session
-using the actual portable executable with SHA-256
-`55C47CEF724F51CD162B15C158B1170554D1CBD43D94722D3C31DBE3E38EE3B6`.
-The version uses 10-DIP Segoe UI and system COLOR_GRAYTEXT, aligns beneath the
-status text, and sits beside a vertically centered Done button. The window height
-was reduced from 412 to 380 DIP while retaining two status/notice lines. Screenshot
-review confirmed readable gray text, matching footer background, balanced spacing
-and no clipping at 125%. Real Tab/reverse-Tab input and a pointer click on Done
-passed; preferences and automation visibility off were preserved. Formatting,
-warnings-denied Clippy, all 56 tests, version contracts and release builds passed.
-100% scaling and populated error/notice states were not exercised in this refinement.
-
-## Presentation procedure
-
-Exercise the shell's animated path as well as `winvd::switch_desktop`, which is an
-immediate path. Cloak/topmost flags can stay unchanged while DWM omits the rail's
-pixels; observe composed screen pixels and actual Task View thumbnails too. Finite
-pixel samples establish detected transitions, not every-frame smoothness.
-Task View entry alone is insufficient: confirm actual dismissal without a desktop
-change, then check full width, buttons, foreground and absence of a residual hold/timer.
-An Explorer shell activation process exit code alone does not establish the UI result.
-Respect reduced motion and distinguish a skipped effect from failed presentation.
-Mouse drags or completed switches do not reproduce a cancelled multi-finger gesture.
-
-### Completed presentation validation
+These are scoped historical results, not certification of the current binary.
+Hash prefixes below identify the full executable fingerprints in the next table.
+Unknown original binary identity is stated rather than inferred. Local artifact
+families under ignored `artifacts/` are supporting references only.
 
 | Date / environment / build | Method, result and limitations |
 | --- | --- |
+| 2026-11-01; Windows 26300.9457 x64, medium integrity, 1708×960 / 120 DPI; original binary identity not recorded | Four-desktop GUID/events, actual Task View window/app pins, passive AppBar presence/uncloaking/nonactivation and 31-pixel reservation/cleanup passed. Native modal, stalled-target and duplicate-identity checks passed. Product A/B/A normal/maximized, modal, duplicate restart/fresh app identities, pause/singleton/retry and late-action quarantine passed; real pointer/focus/second-click and keyboard checks followed fixes. Input used temporary automation style; desktop/fullscreen checks used passive style. Lower-integrity discovery omitted medium windows; elevated support was not established. Supporting families: `compatibility-*`, `rail-layout-*`, `rail-cua-*`, `rail-fullscreen-*`. |
+| 2026-11-02; Windows 26300.9711, 2560×1440 / 120 DPI; original exercise binary identity not recorded | API pin, identity, modal/stall, four-desktop/AppBar and passive minimization checks passed; real pointer restore/focus/second-click passed. Actual Task View pin origin was not established on this revision. Eligibility does not certify later revisions. Supporting families: `compatibility-*-20261102`, `rail-preview-click-*`. |
+| 2026-11-02; Windows 26300.9711, 1708×960 / 120 DPI; app `1C60C2D7925A` | Icon rendering inspected with Notepad, Obsidian and an owned fixture; real minimize/restore and independent focus observations passed. A Space attempt did not establish keyboard activation. Synthetic filtering/transparency regressions passed. Other DPI sharpness was not tested. Supporting family: `icon-ui-*`. |
+| 2026-11-02; Windows 26300.9711, local owned/packaged auto-restore workload; package `12959A9BB20F` | Saved/unsaved/fresh destinations, manual/external learning, normal/maximized restoration with independent foreground anchor, unchanged memory, pause/resume, persistence/retry and real rail/Settings input passed. External restore was fixture `SW_RESTORE`, not a literal taskbar click. Package/release/extracted executable hashes agreed. Supporting family: `auto-*`. |
+| 2026-11-02; Windows 26300.9711, 1708×960 / 120 DPI, Per-Monitor V2; reviewed source `b0f497592b2d4ccdeec65eaee16d3f01ac398433`, fixture `1BE87A9ED54A` | Owned native harness distinguished visible/restore bounds, arranged state and foreground. Minimized reveal preserved snapping; placement could update normal bounds without changing visible snapped bounds, while visible-start automatic placement produced normal-sized visible bounds with arranged true. An observed no-activation unsnap followed by placement reached requested normal geometry with the 31-pixel work-area offset. These explain the troubleshooting guidance; they are not end-to-end product transition passes. Supporting family: `snap-*`. |
+| 2026-11-02; Windows 26300.9711, 1708×960 then separately 2560×1440 / 120 DPI; app `1C60C2D7925A`, fixture `1BE87A9ED54A` | Native two-member all/mixed-pin A/B/A and a user-prepared genuine three-member group with one/two/all pinned members retained visible/normal bounds and explicit Task View Group membership. Actual rail pointer restores retained membership and requested focus; drag-away restored original 640×360 size. A controlled rail restart retained the group. These were native preservation/manual-product checks, not product automatic-switch certification or group reconstruction. Unconfirmed groups were excluded. Supporting families: `snap-result-*`, `snap-switch-*`. |
+| 2026-11-02; Windows 26300.9711, 1918×1140 / 120 DPI; app `1C60C2D7925A` | Actual real-dot and product-CLI automatic A/B/A exposed normal-size visible restoration despite arranged true and reported success, in both-pinned and mixed saved-layout cases. Auto-off/manual restores, shared-edge resize, drag-away, B normal/maximized memory and pause/retry/fresh identities had scoped passes. Notepad 11.2607.14.0 and Calculator 11.2607.0.0 formed a real group; Calculator also reproduced duplicate frame/content eligibility and timeout. A synchronized five-second stall reached quarantine and late completion cleared slots, but stale/clipped notices remained. No independent foreground anchor covered the full race; mixed minimized-start evidence reused an earlier arrangement. Supporting family: `snap-next-*`. |
+| 2026-11-03; Windows 26300.9711, 1708×960 / 120 DPI; preservation `67AC94D9666B`, refinement `BD68EC29E299` | Real rail saved-A/unsaved-B/A and both-saved repeated product trips retained snapped visible bounds and 640×360 restore sizes. An independent observer kept foreground on the final diagnostic repeat; manual diagnostic focus denials are not pointer-focus passes. Task View confirmed two-member Group survival; real drag-away restored original size. Synchronized real five-second stalls reached pending/quarantine and observed late completion cleared slots/notices. Wrapped notices were inspected on the preservation build; the final refinement repeated quarantine/recovery and compact Settings/Done/Tab, but its expanded screenshot missed the transient notice. Broader repaint, relayout focus and topology coverage remain open. Supporting family: `snap-restore-*`. |
+| 2026-11-02; versioning source `0ec6474d72906d788f81a83e808e3306beb3b204` plus changes; packages `B98A1FB5C110`, footer refinement `55C47CEF724F`; Windows 26300.9711, 1708×960 / 120 DPI for UI | Isolated clean/dirty/untracked/incremental/exported-source provenance and tagged-release rejection/acceptance checks passed. Release/package/extracted/ZIP hashes, Windows resources and manifest identity agreed. CLI distinguished invoked and running builds. Real packaged Settings footer, Tab/reverse-Tab and Done passed at 125%; 100% and populated notice states were not covered by the footer refinement. |
 | 2026-11-03; presentation source `5070793f989362d0765f395985d91dda2a99688d` plus changes; packages `9A6D41EA4097`, `FBF1D2846E9A`, `8CA6D62CD038`; Windows 26300.9711, 1708×960 / 120 DPI | Actual animated/instant/rapid switch traces showed intermediate rail regions/button positions with fixed AppBar bounds and no residual hold/timer. Real desktop-dot click and Shift+Tab/Space round trip passed using a temporarily exposed, individually pinned owned rail; passive style was tested separately. Same-desktop Task View dismissal and desktop changes while it stayed open passed. The timing refinement sampled a partial 7-pixel rail in the same sample as shell disappearance, then full width about 154 ms later; finite sampling is not frame-perfect certification. Packaged exclusion/Settings and reduced motion were checked. A later removal of background discovery passed code checks and observed return-to-full-width/input checks; its sampling attempts did not re-establish intermediate-frame timing. No physical cancelled-touchpad pass exists. Supporting families: `slide-experiment`, `taskview-experiment`, `gesture-experiment`, `return-only-experiment`. |
+| 2026-11-03; user support archive, Windows 26300.9711; clean source `0b593b1131a8fa297b06cfc150271c4495bf1a18` | Archive/source analysis found verified Outlook minimization on the away desktop, followed by a saved-destination restore accepted 129 ms after return and verified visible 10 ms later. The old controller restored saved layouts without independent minimized intent. The archive does not establish when the user minimized on the destination or whether focus changed; this was not a live Outlook/Snap reproduction. Supporting archive: `VirtualDesktopRail_diagnostic_1793701509_Outlook_popedup_on_desktop.zip`. |
+| 2026-11-03; Windows 26300.9711, unlocked Explorer, 2048×1152 / 144 DPI; dirty `0b593b1` builds `06EDCCA22C67`, `C3E13F2F4DCA` | Two owned app-pinned fixtures with auto-restore passed real title-bar minimize before geometry, manual/keyboard restore and desktop-specific saved-layout intent. Rail restart preserved preference/layouts. The final build repeated minimized A/B/A with no restore request and no pending/blocked work; departure used a real dot, return was observed after interruption. Temporary automation visibility required refresh/restart after some switches; passive presence, live Snap, taskbar restore, independent focus and exact native races were not certified. Code checks passed. |
+| 2026-11-03; same OS/display/workload; dirty source `d182cc8`, executable `0607B4AB18EB` | External activation restore followed by real title-bar drag cleared intent and saved moved bounds; real-dot departure/CLI return restored those bounds with no pending/blocked work. Not a literal taskbar click or exact sub-poll race. Deterministic regression first failed on reviewed code, then covered before/during-drag candidates, 100-ms post-drag stability, invalidation, unreachable bounds and late capture. Code checks passed. |
+| 2026-11-03; same OS/display/workload; dirty source `0f1f501`, executable `4A0AA4DD5E16` | Real rail minimize/external activation cleared intent and established a layout; real-dot departure/CLI return restored visibility without pending/blocked work. Separate input calls do not establish restore before the first snapshot. Deterministic regressions cover that failure for explicit/automatic minimize, stale frames, drag and excluded recovery/completion contexts. Code checks passed. |
+| 2026-11-03; same OS/display/workload; dirty source `cdc536d`, executable `6F04526DC828` | Deterministic equal-tick regression first failed on reviewed code, then covered identical/conflicting duplicate observations, unchanged stability timing, context invalidation, drag and post-minimize restoration. Real rail minimize/external activation verified visible state, cleared intent and no pending/blocked work; exact same-tick delivery was not live-certified. Code checks passed. |
+| 2026-11-03; Windows 11 x64; source `ad1d7c5` | Centered responsive floating bar option (`centered_rail`, `--centered-rail on\|off`, and Settings checkbox **Center rail and size to content** applied on **Done**), Task View-scoped DWM Peek exclusion, immediate Task View foreground-loss reveal, and double-buffered/persistent-button GDI rendering passed `check-dev.ps1` (88 workspace tests, version contracts and locked release builds). Visual appearance beside maximized windows was inspected via user-provided screenshots; automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was installed in the session. |
+
+The actual-product `snap-next-*` run also passed pause/resume, post-completion retry,
+member close/unpin and fresh replacement identity without inherited layouts. Its
+shared-divider drag moved both boundaries by 125 pixels. These are scoped recovery
+and geometry checks, not pending-action retry or group reconstruction passes. The
+final `BD68EC29E299` build declined an incompatible saved arrangement after a member
+was dragged away, rather than claiming reconstruction.
+
+The initial native toolchain run used Build Tools 2022 17.14.44, MSVC 14.44.35207 and
+SDK 10.0.26100.0. These are evidence context, not additional setup version pins.
+A reported screenshot of physical Windows 26300.9818 did not establish a live pass.
+The initial VM's checkpoint, host/guest entitlement and connection mode were not fully
+recorded; those results do not distinguish Basic Session from Enhanced Session/RDP.
+
+### Executable fingerprints
 
 | Prefix / use | SHA-256 |
 | --- | --- |
+| `1C60C2D7925A` product icon/manual Snap/automatic-failure baseline; embedded source `68509b02268786c0b4ac1c66a129ed145997b5a9`, dirty | `1C60C2D7925A198AF049E15BAE4E2C7081CA2A722BC079FF819329F1A81A7CC1` |
+| `1BE87A9ED54A` native Snap fixture | `1BE87A9ED54A8E3F29A94CEE68A75779177CDAA8479DCD2FE28B700A48303973` |
+| `12959A9BB20F` auto-restore package | `12959A9BB20FFB580947A09396522BEF36BDB6E627E461443D0F8209C5F19378` |
+| `67AC94D9666B` matching-arrangement preservation | `67AC94D9666B448DBDDFD58508FE1FA92C1173A4D9AB65AB081E291930CAAD54` |
+| `BD68EC29E299` visibility verification/notice redraw refinement | `BD68EC29E2990E814846959A05FEC5FE389D18AF41312BA891F0B05CCE56C949` |
+| `B98A1FB5C110` traceability package | `B98A1FB5C110081DE8AF92A102312B22074F0217BBC848F5D8FDA9DE167D4864` |
+| `55C47CEF724F` compact Settings footer | `55C47CEF724F51CD162B15C158B1170554D1CBD43D94722D3C31DBE3E38EE3B6` |
 | `9A6D41EA4097` slide-in package | `9A6D41EA409775617A90BF44F893F3F8D02F5F64605B4F569C555E8F6997CCB1` |
 | `FBF1D2846E9A` Task View return package | `FBF1D2846E9A25F0C2B0317E2C6A7A71433F6CD799FA9C2E9C200B2AF2986604` |
 | `8CA6D62CD038` visibility timing package; background experiment subsequently removed | `8CA6D62CD038C34F49C02FA376A3A6B79D6BCA8C0985034544B09AA52A8C4A21` |
+| `06EDCCA22C67` initial minimized-intent check | `06EDCCA22C67514A4ED2AE4453676133CA7DFA55CE69C07C02D65234FCAE42B5` |
+| `C3E13F2F4DCA` final minimized-intent check | `C3E13F2F4DCA9797273EB8648C4DDAF1EED6F76C14008A076CA16D577FB96AB6` |
+| `0607B4AB18EB` restore-then-drag refinement | `0607B4AB18EB4ECC0F5802BF56BC1EE75FF4149890D1139F77720D17AE02E3E1` |
+| `4A0AA4DD5E16` first-post-minimize-snapshot refinement | `4A0AA4DD5E16C6491D39B3E5E2694B019391ACF43FBFC307948637F32D93700B` |
+| `6F04526DC828` equal-timestamp refinement | `6F04526DC828A2E561830867C4837FE3EA3A6FD1413807E552F0D74EBA1BF969` |
+
+### Performance evidence
+
+On 2026-11-01, Windows 26300.9457 / 120 DPI, an empty-inventory portable sample used
+3,993,600 bytes combined private working set and reported 0 ms CPU over 30.007 s.
+One-second cached pin checks saw four API changes in 795/626/480/333 ms. Neither
+result measures real Task View click timing or proves zero CPU. Binary identity was
+not recorded for these initial samples.
+
+On 2026-11-02, Windows 26300.9711, a warmed stable two-window VM workload used
+4,730,880 bytes combined private working set and 62.5 ms CPU over 30.103 s, with six
+stability checks. Diagnostic polling and counter resolution limit interpretation;
+the local artifact's hash predates the subsequent icon edit. First desktop-event-to-
+minimize acceptance was 72.635 ms. API pin samples were 786/630/483/316 ms.
+The clean `rail-preview-populated-idle-20261102.json` supersedes interrupted or
+cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json`.
+Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
 

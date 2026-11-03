@@ -1,200 +1,77 @@
 # Contributor troubleshooting
 
-User-facing recovery steps are in the [user README](../README.md). These notes preserve
-engineering findings and regression checks. Inspect bounded local diagnostics and
-current process identity rather than relying on an old session snapshot.
+User-facing recovery is in the [app README](../README.md). This document owns
+reusable symptoms, known mechanisms and proven fixes. Current contracts are in
+[Architecture](Architecture.md); validation procedures/results are in [Testing](Testing.md).
+For user evidence, use the local support report and its [privacy contract](Architecture.md#stack-and-source-map).
+It is not uploaded automatically; user review/sharing remains their decision.
 
-For a user issue, Settings **Save diagnostic report…** creates a user-selected local ZIP.
-It contains redacted build/OS/settings context, a fresh native observation for each
-still-matching managed window, saved layouts and bounded structured event history. It
-intentionally excludes the free-form local diagnostics log, titles, document contents,
-handles, PIDs, full executable paths, desktop names/IDs and screenshots. The archive is
-not uploaded. Ask the user to review it before choosing whether and where to share it.
-Windows Snap Group membership is unavailable to the app; capture Task View separately
-only if the user chooses to provide it.
+## Snapped restoration reports success at the wrong visible size
 
-## Native snapping and clipped action notices
+`GetWindowPlacement` normal restore bounds can match a request while the actual
+window stays snapped elsewhere. Conversely, an automatic placement sequence can
+make visible bounds normal-sized while `IsWindowArranged` remains true. This caused
+an actual-product false success. Verify visible bounds, normal restore bounds and
+native state together; see the [current preservation path](Architecture.md#native-snap-preservation).
 
-See [Native Snap compatibility](Snapping.md) for verified mechanisms, the support
-boundary and the implementation plan. A key verified defect is that placement can
-update normal restore bounds while the window remains visibly snapped elsewhere;
-checking normal bounds alone produces a false success. The app now models optional
-arranged state and separate visible bounds; native group membership remains unmodeled. Some existing arrangements survive its
-placement sequence, so do not claim every placement write destroys native snapping.
+Native harness checks also established that placement writes do not invariably
+destroy snapping. `SW_SHOWNA` left a minimized fixture minimized; `SW_SHOWNOACTIVATE`
+revealed a minimized arrangement without focus, but could exit arranged state when
+applied to an already-visible snapped window. Starting state matters: a visible
+matching arrangement must receive no show/placement command. Arranged state can be
+false while minimized, so saved visible evidence selects a candidate and post-reveal
+observations establish success. Window placement uses workspace coordinates; convert
+to screen coordinates before comparing visible geometry.
 
-Snap-related intermittent timeout/quarantine remains a separate unproven diagnosis.
-Preserve outstanding operations until verified; a responsive visible window is not
-proof that all queued asynchronous native work has completed.
+For an explicit normal-layout transition, a native harness successfully revealed a
+minimized window, observed it, issued the no-activation show command on the visible
+arranged window, observed arranged false, then applied normal placement. This is a
+candidate for the remaining transition work, not the current automatic product path.
+Do not issue unobserved show commands back-to-back or use activating `SW_RESTORE`
+for automatic restoration.
 
-Settings control 6100 now contains status only. Notice control 6109 is a measured,
-selectable read-only edit, hidden with zero reserved space when empty. It expands the
-window and moves Version/Done below the message, with scrolling when height is capped.
-Clip child painting and invalidate all children during relayout: parent background
-repainting after shrink otherwise left partially erased checkbox text in a live screenshot.
-Timeout wording describes unverified work rather than diagnosing a hung app; clear that
-notice only after all quarantined slots resolve, without clearing unrelated notices.
+Regression-check actual automatic and manual saved/unsaved round trips, both starting
+states, original drag-away size and Task View Group membership. Matching rectangles
+or an arranged flag do not establish native group membership or reconstruction.
+An intermittent timeout is a separate diagnosis; do not infer its cause from these
+geometry failures or release outstanding work without completion evidence.
+
+## Action notices clip, persist or erase controls
+
+Use separate status and measured read-only notice controls. Expand only while a notice
+exists, move Version/Done below it, clamp to work area and allow selection/scrolling.
+Child clipping and child redraw prevent parent background painting from erasing
+checkbox labels during shrink. Clear an action-timeout notice only after all timed-out
+slots resolve; preserve unrelated notices. Wording must describe unverified work,
+not assert a hung target. Check compact, one-line, wrapped and oversized notices,
+late completion, keyboard focus and DPI changes. Remaining coverage is in [Status](Status-and-Roadmap.md).
 
 ## Integration unavailable after Windows updates
 
-Earlier builds used an exact revision allowlist, then a newer-26300 opt-in. They could
-show no desktop dots because the worker never initialized on a different revision.
-Both restrictions are superseded by [current eligibility](Architecture.md#desktop-integration-and-eligibility).
-Check the executable actually running, native OS build/revision and runtime diagnostics.
-The registry ProductName can misleadingly retain a Windows 10 label.
-Legacy experimental flags no longer enable additional builds. Test startup and reconnect
-against the shared minimum; do not confuse an eligible build with a tested one.
+Check the executable actually running, native build/revision and runtime diagnostics
+against [current eligibility](Architecture.md#desktop-integration-and-eligibility).
+Registry ProductName can misleadingly retain a Windows 10 label. Legacy revision
+opt-ins no longer enable additional builds. Eligibility is not successful initialization
+or release certification; startup/reconnect must fail safely and retry from a baseline.
 
 ## Transient pin-query failures
 
-`ComError(HRESULT(0x80070490))` was observed around transient windows, but its cause
-has not been reproduced sufficiently to call it harmless. Preserve strict classification:
-only two `WindowNotFound` pin results mean unsupported. Mixed/other failures stay failures
-and trigger unavailable/reconnect handling. Revalidate lifetime after querying and
-attribute bounded diagnostics to class, HWND, PID, process creation time and both results;
-do not collect titles. Regression coverage must distinguish unsupported from mixed failures.
+Only both pin queries returning `WindowNotFound` means no shell ApplicationView.
+Mixed/other errors remain failures. Do not mask transient `0x80070490` as an unsupported
+window. Revalidate candidate lifetime and attribute bounded observations to class,
+handle/process/lifetime and both query results without titles. Regression checks must
+distinguish unsupported candidates from mixed failures. Root-cause work belongs in [Status](Status-and-Roadmap.md).
 
 ## Fullscreen exit leaves the rail below normal windows
 
-The AppBar initially yielded correctly but missed recovery after fullscreen closed.
-Successful `SetWindowPos` did not mean topmost style remained set. The fix reconciles
-actual foreground/monitor bounds on foreground events, shell notifications and existing
-one-second reconciliation, and checks actual topmost state. Exclude shell desktop classes
-from fullscreen inference. Keep z-order-only
-`SWP_NOOWNERZORDER | SWP_NOSENDCHANGING` with `NOMOVE | NOSIZE | NOACTIVATE`;
-the earlier raw `0x13` callback flags regressed behavior. Geometry-only AppBar position
-reporting avoids z-order feedback. Do not add a permanent frame timer.
-
-Verify fullscreen entry and exit in normal passive style, unchanged application
-foreground, yielding/topmost state and work-area restoration. Reference observations:
-`rail-packaged-fullscreen-during.json` and `rail-packaged-fullscreen-after.json`.
-
-## Real icon click restores without focus; second click fails to minimize
-
-CLI click testing missed this physical-input bug. The passive rail had not become
-foreground, so the original guard rejected explicit restore focus. Assistive activation
-could also replace the pre-click foreground with the rail itself.
-
-Preserve `Job::focus_from`, allow explicit focus only while original foreground remains
-unchanged, retain pre-rail activation from `WM_ACTIVATE`, and return `MA_NOACTIVATE`
-on `WM_MOUSEACTIVATE`. Mouse activation must not overwrite the saved foreground hint;
-non-window rail actions clear stale hints. Late or superseded completion cannot focus
-after the user moves elsewhere. Minimized state takes precedence over stale foreground.
-Regression-test actual pointer restore/focus/second-click minimize on two separate icons
-and keyboard activation; also verify late work never steals focus.
-
-## Owner restores but its modal remains hidden
-
-`GetLastActivePopup` can return the owner after a dialog is hidden. Owner-only
-`ShowWindowAsync(SW_RESTORE)` did not reveal the fixture modal. Remember and revalidate
-the owned dialog, reveal it and request user-initiated focus there. Do not save/reposition
-it independently or create another rail entry. The spike's hidden standard-dialog lookup
-was fixture-specific and is not a general application-discovery policy.
-Verify the whole owner/modal group through minimize, explicit restore and desktop switching.
-
-## Blurred application icons and dark transparent edges
-
-Use the same 16-DIP pixel calculation for worker extraction and painting. Deriving
-icon size from scaled rail width minus fixed pixel padding produced unusual sizes
-such as 22 pixels at 125%, while small-icon-first extraction could enlarge a smaller
-source. Compare available window icon dimensions before resizing and keep all
-extraction/filtering off the UI thread.
-
-WIC HICON import exposes premultiplied HICON bytes as BGRA. Converting that import
-to PBGRA multiplies alpha again and darkens edges. Re-label its copied bytes as
-PBGRA before Fant filtering instead. The synthetic checkerboard regression verifies
-filtered alpha and color across two resizes, including a partially transparent source.
-
-## Passive rail absent from desktop automation
-
-Normal TOOLWINDOW style is intentionally omitted by some inventories; previously selected
-targets can become unusable when that style returns. Use the temporary `--automation-ui`
-mode described in [Testing](Testing.md#computer-use-procedure), select an observed target,
-refresh after each render and restore off. Input checks in this mode do not certify
-normal-style cross-desktop presence. Follow the current installed computer-use skill,
-not historical library snippets or restrictions copied from old agent sessions.
-
-`GetCursorPos` access denied plus no foreground window occurred when the input desktop
-locked. Stop UI input and request unlock if needed; continue independent work. Do not
-automate lock/security screens or classify that interval as a passing run.
-
-## Build/cache/report replacement failures
-
-- If Cargo is absent from PATH, scripts use the user `.cargo/bin/cargo.exe`; reopen the
-  terminal after installing tools. Preserve the pinned toolchain and `Cargo.lock`.
-- If native cache access is sandbox-blocked, use the environment's supported execution
-  approval mechanism. Regenerating the lockfile does not repair access permissions.
-- Offline metadata without `--filter-platform x86_64-pc-windows-msvc` can try fetching
-  uncached ARM packages. Use the filtered command in [Development](Development.md).
-- A running executable can block relinking. Exit the verified instance or choose another
-  Cargo target directory; the policy change used `artifacts/compatibility-policy-build`.
-- Atomic report replacement failed in the default temporary location during a previous
-  run. A workspace-owned temporary directory resolved it; keep real user state isolated.
-- Packaging needs installed Rust documentation license files. Do not omit notices to
-  make packaging succeed; install the missing component and retry.
-
-## Misleading layout or performance observations
-
-### Outlook reappears after returning to a saved desktop
-
-The user-supplied `VirtualDesktopRail_diagnostic_1793701509_Outlook_popedup_on_desktop.zip`
-provides direct action evidence on 2026-11-03: report version 0.1.0, clean commit
-`0b593b1131a8fa297b06cfc150271c4495bf1a18`, Windows 26300.9711. Auto-restore was enabled,
-pause was off, and Outlook had a saved Desktop 3 layout. At 11:24:53.248 CET an Outlook
-action completed verified with `minimized: true` on Desktop 4. Returning to Desktop 3
-was observed at 11:24:55.299; Rail accepted sequence 34 with the saved Desktop 3
-geometry at 11:24:55.428 and verified it unminimized at 11:24:55.438. The report's
-fresh native observation also found Outlook visible and unminimized, without pending
-or blocked work. Earlier returns to Desktop 3 show the same restoration pattern.
-
-This identifies Rail restoration on desktop return, consistent with that build's
-auto-restore policy. Source at the reported commit confirms that its controller
-chooses `RestoreAutomatic` whenever auto-restore is enabled and the destination has
-a layout, even for a minimized window. That record had no independent minimized intent.
-The fix adds `minimized_desktops` separately from geometry: current verified manual
-minimization or trusted external minimize evidence sets it; manual restoration clears
-it. Automatic minimization/restoration does neither. Destination intent overrides a
-saved layout, including after a late restore completes. The timeout path preserves
-the single latest desired action while quarantined so late work can reconcile.
-
-External restore followed immediately by dragging previously lost the restoration
-observation: drag snapshots updated cached visibility while discarding the candidate,
-and drag-end geometry capture did not clear minimized intent. Retain the candidate
-through dragging, including a minimize-to-visible transition first sampled during the
-drag. Restart stability at drag boundaries and require reachable visible observations
-at least 100 ms apart afterward; never count time spent dragging or backdate stability
-when a delayed capture arrives. Desktop changes, recovery, pending Rail actions and
-re-minimization still invalidate the candidate.
-
-Post-action suppression also used to discard an external restore before the first
-snapshot after a verified Rail minimize. That snapshot replaced cached minimized
-state with visible state, so later matching snapshots never detected the transition.
-Retain provenance only for a current verified minimize and allow the first fresh
-visible sample to seed a candidate; require normal stable/reachable verification
-before clearing intent. Keep the suppression guard for late, cancelled, timed-out
-and superseded work, and discard the exception on pending work or a fresh baseline.
-
-Repeated snapshots can share a `GetTickCount64` tick during refresh-event bursts.
-The strict freshness check previously fell through to candidate invalidation, losing
-an external restore after its first visible observation. Separate context validity
-from sample freshness: preserve the candidate and its original stability timestamp
-when a duplicate adds no new evidence, but still invalidate on pending work, recovery
-or a confirmed transition. Equal-tick minimized/geometry differences are not new
-observations and must not overwrite newer cached state or saved memory.
-
-Evidence limits: the event tail does not establish when the user manually minimized
-Outlook on Desktop 3 or whether foreground focus changed. Action entries do not label
-automatic versus explicit intent; their timing and saved targets support the automatic
-path. This was archive/source analysis, not a live Outlook reproduction or Snap-group
-diagnosis.
-
-External restoration can briefly report minimized/off-screen geometry. Require stable,
-reachable observations at least 100 ms apart; exclude drags and pending/late own actions.
-Automatic restoration must not learn geometry. Preserve outstanding operation slots after
-partial dispatch failure and quarantine timeouts until observation or identity death.
-
-Do not call an interrupted or changing fixture workload warmed idle, equate API acceptance
-with completion, or treat process counters reporting 0 ms as literal zero CPU. Use
-[the measurement procedure and scoped evidence](Testing.md#resource-and-latency-measurement).
+API acceptance did not guarantee the rail's topmost style survived. Reconcile actual
+foreground/monitor bounds after shell notifications, foreground events and existing
+one-second reconciliation. Exclude desktop shell classes from fullscreen inference.
+Use z-order-only `SWP_NOOWNERZORDER | SWP_NOSENDCHANGING` with
+`NOMOVE | NOSIZE | NOACTIVATE`; avoid owner reordering and recursive AppBar negotiation.
+Report geometry changes to the shell only for actual geometry changes.
+Check passive-style entry/exit, actual topmost/yielding state, application foreground
+and released work-area reservation. Do not add a permanent frame timer.
 
 ## Rail disappears during animated desktop switches
 
@@ -215,4 +92,93 @@ also close without a desktop change. Hold a previously foreground Task View host
 it hides/cloaks; start its reveal then, without another desktop-event settling wait.
 Respect the Windows animation preference. Test the shell's animated path, actual
 thumbnails and composed pixels; an instant `winvd` switch did not reproduce the gap.
-Current trigger limits, including cancelled gestures, belong in [Status](Status-and-Roadmap.md#known-limitations-and-unmet-goals).
+Current trigger limits, including cancelled gestures, belong in [Status](Status-and-Roadmap.md#known-defects-and-unmet-behavior).
+
+## Real icon click restores without focus; second click fails to minimize
+
+CLI click testing missed this physical-input defect: a passive rail click did not
+make the rail foreground, so the old guard rejected intended restore focus. Assistive
+activation can also replace the application's foreground with the rail itself.
+Preserve the pre-click foreground in `Job::focus_from` / `WM_ACTIVATE`, return
+`MA_NOACTIVATE` on `WM_MOUSEACTIVATE`, and validate the original intent before focus.
+Mouse activation must not overwrite that saved foreground hint. Non-window actions
+clear stale hints; minimized state wins over stale foreground.
+Test actual two-icon restore/focus/second-click behavior, keyboard activation and late
+completion after the user moves elsewhere. [Architecture](Architecture.md#layout-identity-storage-and-action-ordering)
+owns the focus and action-ordering invariants.
+
+## Owner restores but its modal remains hidden
+
+`GetLastActivePopup` can return the owner once a dialog is hidden. Remember and
+revalidate the active owned dialog, reveal/focus it with its owner when intended,
+and keep it out of independent layouts/buttons. The fixture's hidden standard-dialog
+lookup is not a general application-discovery rule. Check the entire owner/modal
+interaction group through minimize, explicit restore and desktop switching.
+
+## Blurred icons and dark transparent edges
+
+Use the [shared icon size/selection pipeline](Architecture.md#stack-and-source-map).
+Rail width minus fixed padding previously produced nonstandard sizes, and small-icon-
+first selection enlarged undersized art. WIC HICON import exposes premultiplied bytes
+as BGRA; converting those bytes to PBGRA multiplies alpha again. Re-label them PBGRA
+before Fant filtering. Keep selection/filtering off the UI thread. Verify analytic
+transparency/filtering regressions and actual icons across DPI settings.
+
+## Passive rail absent from desktop automation
+
+Normal TOOLWINDOW style can be omitted by automation inventories. Follow the
+[temporary visibility procedure](Testing.md#computer-use-procedure), refresh observed
+targets and restore visibility off. Switching with exposed APPWINDOW style can leave
+a shell-cloaked view even after restoring tool style; restart only the verified owned
+test instance if needed. Do not certify passive presence from exposed input tests.
+
+Capturing/activating a target can change foreground, restore a snapped target or close
+Task View before measurement starts. Use an independent owned observer and begin native
+sampling before dismissal. Explorer's Task View shell entry opens the surface; it is
+not a reliable close toggle, and its short-lived activation process can return 1 even
+when the UI opened. Verify the actual surface. On a locked desktop, stop input and
+refresh only after unlock; a black capture/no foreground is not a passing interval.
+
+## Build, dependency and file-replacement failures
+
+- If Cargo is absent from PATH, scripts locate the user's `.cargo/bin`; reopen the
+  terminal after installation. Preserve the pinned toolchain and lockfile.
+- If native cache access is sandbox-blocked, use supported execution approval;
+  regenerating the lockfile does not repair permissions.
+- Filter offline metadata for x64 as shown in [Development](Development.md#build-and-run)
+  to avoid requesting uncached ARM dependencies.
+- A running executable can block relinking. Exit the verified instance or set another
+  `CARGO_TARGET_DIR`. Do not stop unrelated processes to clear a lock.
+- If atomic replacement is denied in the default temp directory, use a workspace-owned
+  temporary directory and isolate user state; do not weaken replacement/recovery checks.
+- Packaging needs installed Rust documentation/license files. Install the missing
+  component rather than omitting required notices.
+
+## A manually minimized window returns on a saved desktop
+
+Older builds restored every saved destination layout without independent minimized
+intent. Support-archive/source analysis identified this behavior for Outlook; the
+[evidence record](Testing.md#compatibility-and-completed-validation) states what it
+establishes and what it cannot. Current geometry and minimized preferences are
+separate; see [the intent contract](Architecture.md#product-contract-and-boundaries).
+Check per-desktop intent and accepted/completed actions rather than treating this as
+a Snap-group or focus diagnosis.
+
+Three observation failures required distinct guards: drag snapshots discarded an
+external-restore candidate while updating cached visibility; post-action suppression
+discarded restoration before the first post-minimize snapshot; and equal-tick refresh
+bursts invalidated otherwise valid candidates. Retain candidates through dragging and
+restart stability at its boundaries. Retain completion provenance only for a current
+verified minimize so its first fresh visible snapshot can seed a candidate. Separate
+context validity from sample freshness: duplicate ticks neither advance stability nor
+replace cached geometry/visibility, but pending actions, recovery and desktop changes
+still invalidate context. Never extend the exception to late, cancelled, timed-out
+or superseded work. Regression-check exact delivery orders deterministically and
+verify actual visibility/intent independently through the minimized-intent procedure.
+
+## Misleading geometry and performance observations
+
+Transient minimized/off-screen geometry is not stable manual intent; apply the
+observation guards in [Architecture](Architecture.md#layout-identity-storage-and-action-ordering).
+Sequential snapshots are not atomic. Reject changed workloads and cleanup-overlapped
+resource samples using [the measurement procedure](Testing.md#resource-and-latency-measurement).

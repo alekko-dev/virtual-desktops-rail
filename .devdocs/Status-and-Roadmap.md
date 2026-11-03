@@ -1,105 +1,76 @@
 # Implementation status and roadmap
 
-Reviewed 2026-11-03. The native development MVP is implemented; general release
-certification remains open. This file owns scope and outstanding work. Current behavior
-and decisions are in [Architecture](Architecture.md); scoped results are in [Testing](Testing.md).
+This document owns current scope and remaining work. [Architecture](Architecture.md)
+defines implemented behavior; [Testing](Testing.md#compatibility-and-completed-validation)
+owns completed validation and its limits. A scoped pass is not general release certification.
 
 ## Implemented capabilities
 
-| Area | Implementation | Verification boundary |
+| Area | Implemented scope | Verification boundary |
 | --- | --- | --- |
-| Native rail | 25-DIP primary-left AppBar, full-height bar or centered responsive mode with rounded right edges (`centered_rail`), desktop dots/names, per-window icons, pause, settings and separate exit; app icon embedded at multiple sizes | Native fixture, real pointer/keyboard and fullscreen checks recorded for full-height bar; centered responsive mode verified by unit/store/controller tests, live desktop rendering/input unverified when desktop CUA is unavailable |
-| Shared-window discovery | Window OR app pinning, minimized windows, cached one-second checks and 30-second safety rescans | Task View origin established on 26300.9457; API exercises also passed on 26300.9711 |
-| Layout management | Independent normal/maximized desktop layouts, clamped fallback, default minimize-on-switch/restore-on-demand | Fixture A/B/A, maximized, modal and duplicate-window checks passed |
-| Optional auto-restore | Default-off preference; saved destinations restore without focus, unsaved ones minimize; per-desktop user-minimized intent overrides restoration; manual/external restores establish layouts | Historical restore checks on 9711; minimized-intent verification is recorded in Testing |
-| Controller ordering | Generations/sequences, one outstanding operation per identity, deadlines/quarantine, late-result guards | Pure regression scenarios and stalled-target checks; accepted native work cannot be retracted |
-| Identity and persistence | Non-pointer token plus process lifetime/executable/session; atomic schema-1 state, backup/corrupt recovery, bounds and cross-session merges | Duplicate live windows survive rail restart; app restarts intentionally get fresh identities; real concurrent sessions remain open |
-| Recovery and eligibility | Owned COM worker, bounded IPC/watchdog/JobObject, backoff, TaskbarCreated handling, retry and unavailable controls; shared minimum-build policy | Explicit retry passed; actual Explorer restart remains open. Eligibility is broader than tested revisions. |
-| Version identity | Cargo-derived Windows/manifest version, compiled commit/dirty identity in CLI, Settings and status; package BUILD.json and clean tagged-release gates | Isolated incremental/provenance checks and extracted-package metadata/hash checks passed; live Settings checked at 125%, 100% remains open. |
-| Preferences and distribution | Persisted pause/auto-restore, opt-in per-user Startup shortcut, session singleton, static CRT portable ZIP with licenses/checksum | Isolated shortcut tests; package hash/manifest/import checks recorded. Unsigned preview. |
-| Switch presentation | Peek exclusion retained; bounded slide-in after desktop switches and Task View return; Windows reduced-motion preference respected | Scoped real input and native/pixel checks recorded in [Testing](Testing.md#completed-presentation-validation); physical cancelled gestures have no supported trigger |
-| Appearance and diagnostics | Normal icons with under-icon indicators, light/dark and high-contrast palette handling, Peek-exclusion request, bounded local logs/structured event history, dispatch statistics, and Settings ZIP support report with fresh matching-window observations | Code checks passed. Live Settings/picker/archive verification could not be completed because the passive rail had no targetable CUA window and its status request timed out. Snap Group membership is unavailable. High-contrast implementation is not a completed visual or screen-reader review; Peek exclusion is not screenshot exclusion |
+| Native rail | Primary-left AppBar, full-height bar or centered responsive floating pill (`centered_rail`), desktop dots/tooltips, icon-only shared-window controls, pause, Settings and Exit | Real input/rendering and passive fullscreen checks exist for the full-height bar; centered responsive mode verified by unit/store/controller tests and user desktop inspection; broader display/accessibility coverage remains open |
+| Shared-window discovery | Individual OR app-level pins, minimized inventory, bounded cached reconciliation/rescans | Task View pin origin established on the initial tested revision; later API tests do not establish origin |
+| Layout management | Independent normal/maximized desktop layouts, clamped fallback, default minimize-on-switch and manual restore/focus | Owned A/B/A, duplicate, modal and restart cases passed locally |
+| Auto-restore | Optional saved-destination restoration without focus; independent per-desktop minimized intent; stable manual/external learning | Scoped real-input and deterministic minimized-intent regressions exist; external changes while stopped/unavailable and ambiguous transitions are not inferred |
+| Native Snap preservation | Separate visible/restore bounds and arranged evidence; no-placement reveal for a matching live arrangement; visible-result verification | Two-member saved/unsaved and both-saved product round trips passed locally; arbitrary reconstruction and different/lost arrangements are unsupported |
+| Ordering/identity/recovery | Generations/sequences, one outstanding action per identity, verification/quarantine, late-result guards, strong live identity, isolated COM worker and fresh baselines | Pure regression, stalled-target and retry checks exist; broader shell/session and real concurrent-session coverage remain open |
+| Persistence/distribution | Bounded versioned storage, backup/corrupt recovery, session merges, optional Startup shortcut, singleton, static-CRT portable ZIP and build provenance | Storage/version/package contracts checked; preview is unsigned and installer/signing choices remain open |
+| Presentation | DPI-aware icons, color/contrast handling, DWM corner rounding/border framing, Task View Peek exclusion, double-buffered GDI/persistent button painting, bounded slide-in after Task View return, conditional notices | Scoped live checks exist; physical gesture timing, broad DPI/contrast/accessibility and relayout focus are not certified |
+| Diagnostics | Bounded local logs/event history and a redacted support ZIP with fresh matching-window observations | Code checks and Settings rendering checked; end-to-end picker/archive workflow remains unverified. Native Snap Group membership is unavailable to the app |
 
-Application icons now use a shared 16-DIP size, dimension-based selection from window
-icon variants, size-specific executable fallback and off-thread WIC Fant filtering.
-Synthetic transparency/filtering regressions and a live 125% rendering/pointer check
-passed; visual sharpness across other DPI settings remains unverified. See [Testing](Testing.md).
+## Known defects and unmet behavior
 
-Latest recorded code verification before this documentation restructure: formatting,
-warnings-denied Clippy, 53 tests and locked release builds for the minimum-build policy
-change. This is dated evidence, not a permanent expected test count or a fresh test run.
-
-## Known limitations and unmet goals
-
+- Exact last-visit restoration across all Snap, topology and concurrent-action cases
+  remains incomplete. Minimized intent is implemented; broader interactive race and
+  physical-hardware verification remain open.
+- Different/lost saved Snap arrangements and deliberate Snap-to-normal transitions do
+  not have complete exact-restoration/fallback handling. Changed topology can discard
+  arrangement evidence and use the ordinary clamped normal fallback.
+- Calculator frame/content duplicate eligibility and its reproduced timeout remain
+  undiagnosed. They do not establish the cause of the user's exact intermittent edge/Snap conflict.
+- Transient pin-query `0x80070490` failures have no established root cause. Integration
+  fails closed and reconnects; no broad unsupported-window reclassification is justified.
 - Cancelled touchpad swipes without a desktop change have no supported reveal trigger;
   further gesture work is outside current scope.
+- Application restart reassociation is intentionally conservative. Elevated/unusual
+  windows and inventories needing overflow/history-management UI are outside validated MVP scope.
 
-- Layouts now store optional arranged state and visible screen bounds separately from
-  normal restore bounds; matching live Snap arrangements use a no-placement reveal/no-op
-  path and visible-result verification. Native group membership is not stored or recreated.
-  Actual two-fixture saved/unsaved and both-saved automatic round trips now pass locally;
-  different/lost arrangements, explicit normal/Snap transitions, changed topology,
-  constrained-size completion and broader minimized-at-departure verification remain unfinished.
-  Calculator duplicate frame/content eligibility and the user's exact intermittent conflict
-  remain undiagnosed. Settings notices now expand conditionally and timeout notices clear
-  after observed late completion. See [implementation and evidence](Snapping.md).
-- Per-desktop user-minimized intent is now independently saved. External changes
-  while stopped/unavailable and events that cannot be safely attributed across a
-  desktop transition are not inferred. Exact last-visit restoration across all Snap,
-  topology and concurrent-action cases remains a broader acceptance target.
-- First observed desktop-event-to-automatic-minimize dispatch: **72.635 ms**, above the
-  provisional 50 ms target. Representative distributions and optimization remain open.
-- Transient `0x80070490` pin failures lack an established root cause; current behavior
-  fails closed and reconnects. Do not reclassify them broadly as unsupported.
-- About two or three managed windows are expected; there is no overflow UI. Storage
-  limits are 512 identities / 64 layouts per identity, with new identities omitted at cap.
-  No history-management UI exists.
-- Application restart reassociation is deliberately conservative. Elevated and unusual
-  application/window types are outside validated ordinary-window scope.
-- Performance evidence is a small VM workload. The clean two-window sample was about
-  4.73 MB combined private working set and 62.5 ms CPU over 30.103 s, with polling and
-  counter-resolution caveats; it is not physical-machine certification.
+## Performance targets
 
-## Prioritized follow-up
-
-| Work | Completion evidence / prerequisites |
+| Provisional target | Current assessment |
 | --- | --- |
-| Exact destination restoration and Snap verification | Finish explicit normal/Snap transitions and broader minimized-intent verification; cover mixed unsaved destinations, constrained-size completion, and Calculator duplicate eligibility. Preserve the verified same-arrangement visible-bounds/drag-away and notice-recovery fixes. See [Snapping](Snapping.md). |
-| Diagnose transient pin errors | Reproducible candidate-attributed evidence without window titles; preserve strict query classification |
-| Latency and realistic resource coverage | Stable populated-workload distributions, both processes, clear event boundary and counter definitions; larger inventories and physical hardware |
-| Shell/session recovery | Record a recoverable checkpoint first; actual Explorer restart, sleep/resume, lock/unlock and reconnect without layout corruption or unsolicited actions |
-| Real app workflow | Disposable Obsidian vault end-to-end plus additional application/modal types |
-| Display and accessibility matrix | Physical machine, mixed DPI, unplug/replug, primary changes, normal fullscreen behavior, light/dark/high contrast, tooltip hover, keyboard and screen-reader review |
-| Wider compatibility | Additional eligible OS revisions, actual Task View pin cycles on newer revisions, privilege combinations and real concurrent sessions |
-| History bounds | Review cap behavior and recovery expectations before expanding scope |
+| Combined private working set below 20 MB; effectively zero idle CPU | Small VM samples only; physical/populated coverage and representative distributions remain open |
+| Automatic minimize accepted within 50 ms of worker desktop-event receipt | A recorded sample exceeded the target; measurement boundaries/results are in [Testing](Testing.md#resource-and-latency-measurement) |
+| Cached pin discovery within two seconds in an idle session | Local API-triggered samples exist; real interaction and broader workloads need coverage |
 
-An observed screenshot of physical PC revision 26300.9818 was not a successful live
-test on that machine. Do not infer certification from that report or minimum eligibility.
-Host checkpoint, VMConnect mode, guest entitlement and the full host configuration
-were not recorded by earlier successful guest tests; establish them before relying on them.
+## Planned work
 
-## Future product ideas
+| Priority | Work and acceptance evidence |
+| --- | --- |
+| Exact destination restoration | Implement explicit normal/Snap transitions and fallback reporting; broaden minimized-intent verification. Verify saved same/different/unsaved destinations with an independent foreground anchor; preserve the matching-arrangement path. |
+| Complete two-member Snap coverage | Finish mixed saved/unsaved visible/minimized combinations, constrained placements, held-drag switching, pending-click/race focus, shell taskbar/Alt+Tab group actions, pause/retry while pending and member close/unpin/replacement. Use [the repeatable procedure](Testing.md#native-snap-procedure). |
+| Diagnose real-app failures | Attribute Calculator duplicates/timeouts and transient pin errors to matching live identities without collecting titles. Extend disposable ordinary-app edge/shared-divider/drag-away workflows. |
+| Resource/latency coverage | Stable populated distributions for both processes, explicit event/completion boundaries, larger inventories and physical hardware. |
+| Shell/session recovery | Actual Explorer restart after a recoverable checkpoint, sleep/resume, lock/unlock and reconnect without layout corruption or unsolicited actions. |
+| Display and accessibility | Mixed DPI, primary changes, monitor unplug/replug, physical machines, normal fullscreen-during-reveal, high contrast, screen readers, tooltips, long-notice scrolling and focus/repaint across relayout. |
+| Real workflows and compatibility | Disposable Obsidian workflow, additional eligible Windows revisions, actual Task View pin cycles there, privilege combinations and concurrent sessions. |
+| Support report workflow | Real picker save/cancel/overwrite/long-path checks, archive privacy/fresh observations and continued event processing during the dialog. |
+| History bounds | Decide history-management behavior before expanding the existing [storage limits](Architecture.md#layout-identity-storage-and-action-ordering). |
 
-These are candidates, not commitments or missing MVP requirements.
+## Speculative ideas
+
+These are later-release candidates, not commitments or missing MVP requirements.
 
 | Idea | Intended benefit |
 | --- | --- |
-| Per-window/per-desktop policies | Selective restore, leave unchanged, or keep a tool visible in a chosen context |
-| Overflow controls | Access larger managed-window collections |
-| Expanded control panel | Window names, status and larger controls |
-| On-demand previews | Inspect before restoring, with icon/title fallback |
-| Open beside rail | Place the real app in a predefined side area |
-| Optional reserved drawer | Expand working space while other apps fit alongside |
-| Vertical labels | Distinguish windows sharing an icon |
-| Context menu / extra actions | Explicit restore-position, maximize and related shortcuts |
-| Pinning controls | Change Windows all-desktop pinning from the rail |
-| Placement options | Other edges/displays or repeated multi-display controls |
-| Keyboard shortcuts / ordering | Faster access and larger-collection organization |
-| Distribution/target expansion | Decide signing and installer approach; consider ARM64 after explicit validation |
+| Per-window/per-desktop policies | Selective restore, leave unchanged or keep a tool visible in a chosen context |
+| Overflow controls and larger control panel | Access larger inventories and distinguish windows with labels |
+| On-demand previews | Inspect a window before restoring it |
+| Open beside rail / optional drawer | Provide an explicit side work area |
+| Context actions and pinning controls | Direct restore/maximize and all-desktop pin management |
+| Placement options | Other edges/displays or repeated multi-display rails |
+| Keyboard shortcuts and ordering | Faster access and inventory organization |
+| Distribution/target expansion | Signing/installer choice; ARM64 after explicit validation |
 
-## Decisions to revisit
-
-Reassess rail width, left-primary placement, icon treatment and fullscreen behavior
-only with current UI evidence. Keep the narrow MVP scope while completing release
-coverage. Automatic restoration is already implemented as one global opt-in; it should
-not remain listed as wholly future work. Broader per-window policies are still ideas.
+Keep the narrow MVP while completing release coverage. Revisit appearance/placement
+only with current UI evidence; elaborate animation infrastructure is not planned.
