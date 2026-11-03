@@ -106,11 +106,6 @@ window, so multiple windows from the same application can have identical icons.
 | Save diagnostic report… | Choose a local ZIP destination for the redacted support report. |
 | Button below Settings | Exit the app and release the reserved screen space. |
 
-Fullscreen applications can cover the rail. The rail requests exclusion from Task View
-desktop thumbnails. After a desktop switch or leaving Task View, it slides in from
-the left edge when Windows client-area animations are enabled; there is no fade-out.
-It remains visible in screenshots and screen sharing.
-
 ### Layouts and automatic restoration
 
 By default, switching desktops minimizes shared windows; returning does not reveal
