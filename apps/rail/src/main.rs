@@ -27,10 +27,11 @@ static OVERRUN: AtomicBool = AtomicBool::new(false);
 enum Event {
     Command(ui::Command),
     Frame(Snapshot, Option<u64>, bool),
+    Minimized(rail_core::MinimizeObservation),
     DispatchLatency(u64),
     Status(String, bool),
     Notice(String),
-    Accepted(String, u64, Option<Layout>),
+    Accepted(String, u64, Option<Layout>, rail_core::Action),
     ActionResult(String, u64, u64, bool, bool),
     Captured {
         key: String,

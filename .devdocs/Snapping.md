@@ -5,10 +5,11 @@
 The intended user outcome is to return to a desktop exactly as it was left: visible
 geometry, normal/maximized/snapped and minimized state, native grouping where possible,
 and the original unsnapped drag-away size. This is an acceptance target, **not the
-current implementation contract**. In particular, the current auto-restore preference
-reveals saved windows even if the user left them minimized. Native group membership
+current implementation contract**. Per-desktop user-minimized intent now overrides
+auto-restore independently of geometry. Native group membership
 is not stored. Layouts now include optional snapped visible bounds separately from
-normal restore bounds. Preserving minimized intent needs an explicit model/behavior decision in addition to the placement fixes below.
+normal restore bounds. Minimized-intent observation and persistence are described in
+[Architecture](Architecture.md); broader live Snap/minimize combinations remain part of verification.
 
 There are three different capabilities:
 
@@ -371,7 +372,7 @@ relayout need broader checks.
 
 Steps 1 and 2 and the matching-arrangement part of steps 3–4 now have an initial
 implementation and scoped evidence above. Remaining work includes explicit transitions,
-minimized intent, constrained-placement completion and the wider verification matrix.
+broader minimized-intent verification, constrained-placement completion and the wider verification matrix.
 
 1. **Make Settings notices conditional.** Keep the compact no-error layout with zero
    reserved notice space. When a notice appears, measure its wrapped text with the

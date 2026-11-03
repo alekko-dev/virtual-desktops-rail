@@ -15,6 +15,7 @@ pub enum CommandMessage {
         expected_serial: u64,
     },
     Refresh,
+    ObserveMinimize(Box<rail_core::MinimizeObservation>),
     Retry {
         experimental: bool,
     },
@@ -25,6 +26,7 @@ pub enum CommandMessage {
 enum Wire {
     Frame(Snapshot, Option<u64>),
     Failure(String),
+    Minimized(rail_core::MinimizeObservation),
 }
 
 struct KillJob(windows::Win32::Foundation::HANDLE);
@@ -100,7 +102,9 @@ pub fn worker(parent: u32, experimental: bool) -> Result<(), String> {
             let Ok(line) = line else {
                 break;
             };
-            if line.len() > 8192 {
+            // Native evidence includes the executable identity, which may use
+            // a full Windows long path. Keep IPC bounded without rejecting it.
+            if line.len() > 256 * 1024 {
                 break;
             }
             let Ok(command) = serde_json::from_str::<CommandMessage>(&line) else {
@@ -160,6 +164,35 @@ pub fn worker(parent: u32, experimental: bool) -> Result<(), String> {
         let mut messages: Vec<_> = pending.into_iter().chain(incoming.try_iter()).collect();
         if messages.iter().any(|m| matches!(m, CommandMessage::Stop)) {
             return Ok(());
+        }
+        // Confirm native intent before processing a rail-requested switch. Shell
+        // queries and identity validation belong here, never in the UI callback.
+        for message in &messages {
+            if let CommandMessage::ObserveMinimize(observation) = message {
+                let mut observation = *observation.clone();
+                let current = winvd::get_current_desktop().and_then(|d| d.get_id());
+                if observation.transition_serial == serial
+                    && current
+                        .as_ref()
+                        .is_ok_and(|id| format!("{id:?}") == observation.desktop)
+                    && platform::validate(&observation.window)
+                {
+                    observation.window.minimized = unsafe {
+                        windows::Win32::UI::WindowsAndMessaging::IsIconic(platform::hwnd(
+                            observation.window.hwnd,
+                        ))
+                    }
+                    .as_bool();
+                    let after = winvd::get_current_desktop().and_then(|d| d.get_id());
+                    if observation.window.minimized
+                        && current.as_ref().ok() == after.as_ref().ok()
+                        && platform::validate(&observation.window)
+                    {
+                        observation.tick = platform::tick();
+                        emit(Wire::Minimized(observation))?;
+                    }
+                }
+            }
         }
         // Collapse rapid explicit desktop requests to the latest intent.
         if let Some(command) = messages
@@ -267,6 +300,7 @@ fn supervise(commands: Receiver<CommandMessage>, mut experimental: bool) {
                     },
                     recv(frames) -> frame => match frame {
                         Ok(Ok(Wire::Frame(frame, received))) => { latest = Instant::now(); stale = false; backoff = 1; notify(Event::Frame(frame, received, experimental)); },
+                        Ok(Ok(Wire::Minimized(observation))) => notify(Event::Minimized(observation)),
                         Ok(Ok(Wire::Failure(error))) | Ok(Err(error)) => break Err(error),
                         Err(_) => break Err("Integration output disconnected".into()),
                     },

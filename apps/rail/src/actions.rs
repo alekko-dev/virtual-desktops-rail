@@ -126,6 +126,7 @@ pub fn start() -> Sender<Work> {
                                     request.key.clone(),
                                     request.sequence,
                                     target.clone(),
+                                    request.action.clone(),
                                 ));
                                 active.insert(
                                     request.key.clone(),

@@ -21,7 +21,7 @@ owner's interaction group. Unsupported/inaccessible windows are omitted.
 | Situation | Window policy |
 | --- | --- |
 | Confirmed desktop switch, default mode | Minimize visible managed windows; preserve layout memory. |
-| Switch with `auto_restore` enabled | Restore each saved destination layout without focus; minimize windows with no destination layout. |
+| Switch with `auto_restore` enabled | Keep user-minimized destinations minimized; otherwise restore saved destination layouts without focus, or minimize windows with no destination layout. |
 | Rail click, minimized | Restore destination layout, or last usable clamped fallback, then request guarded focus. |
 | Rail click, visible background group | Bring the group forward. |
 | Rail click, foreground group | Minimize through its owner. |
@@ -34,6 +34,34 @@ minimize-to-visible restoration is manual intent only on a stable desktop, outsi
 drags and our pending/late operations: require matching reachable geometry observations
 at least 100 ms apart. Reject transient off-screen coordinates. Automatic restoration
 never rewrites saved geometry or the last-usable fallback. Minimization retains memory.
+An external restore first observed during a drag, or immediately before it, retains
+its observation through the drag. Drag snapshots cannot clear minimized intent;
+drag start/end reset the stability interval, and only subsequent reachable, matching
+visible observations can clear it. Late drag-end captures cannot backdate that interval.
+A current verified minimize retains completion provenance until its first fresh
+snapshot. If that snapshot is already visible, it may start an external-restore
+candidate despite normal post-action suppression; committing still requires 100 ms
+of matching reachable observations. Late, timed-out, cancelled or superseded actions,
+pending work and recovery/desktop baselines cannot authorize this exception.
+Equal-timestamp snapshots do not advance or discard a pending restore candidate or
+replace its cached visibility/geometry. Context invalidation still applies even when
+the tick is unchanged, including pending actions and coalesced desktop transitions.
+
+Each record separately stores a default-empty `minimized_desktops` set. Verified
+current explicit minimization and eligible external visible-to-minimized observations
+set this intent; verified current explicit restoration and stable external restoration
+clear it only for the current desktop. Automatic actions never modify it. Remember
+minimized intent even without saved geometry and continue observing manual changes
+while paused. Initial/recovery observations do not infer intent. Windows does not
+identify a person versus application as the source of an external minimize.
+
+Native minimize-start/end WinEvents supplement snapshots. Minimize-start evidence is
+identity-validated and sampled between matching current-desktop queries in the shell
+worker, before processing any queued rail switch. Generation, transition serial,
+sequence and timestamps gate acceptance; pending/late operations, drags, stale events
+and ambiguous transitions cannot establish intent. Newer state evidence wins over
+older queued snapshots. If an external desktop switch outruns both the native evidence
+and the stable snapshot, attribution is deliberately rejected rather than guessed.
 
 ## Stack and source map
 
@@ -169,7 +197,9 @@ Snap evidence, and minimized parking rectangles are omitted from visible bounds.
 Startup observations must not overwrite saved geometry changed while the rail was stopped.
 
 Schema 1 JSON under LocalAppData defaults missing `auto_restore` to false. Storage is
-bounded to 4 MiB, 512 identities and 64 layouts per identity. At the identity cap new
+bounded to 4 MiB, 512 identities and 64 distinct remembered desktop IDs per identity
+(the union of layouts and minimized intent). Missing minimized sets default empty;
+deleted desktops are pruned from both. At the identity cap new
 identities are omitted. Ordered debounced writes use atomic replacement, previous-state
 recovery, corrupt-file preservation and coordinated cross-session merges. Shutdown
 flush is bounded. Startup is an opt-in per-user shortcut; a named user/session mutex

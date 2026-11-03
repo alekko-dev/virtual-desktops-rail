@@ -65,6 +65,94 @@ and continue independent checks; a locked/RDP-disconnected run is not a UI pass.
 
 ## Interactive regression matrix
 
+### Per-desktop minimized intent
+
+2026-11-03 verification used Windows 26300.9711 in the unlocked Explorer session,
+144 DPI, primary display 2048 by 1152, with two owned native-smoke windows, application
+pinning and auto-restore enabled. The tested dirty `0b593b1` release executable had
+SHA-256 `06EDCCA22C67514A4ED2AE4453676133CA7DFA55CE69C07C02D65234FCAE42B5`.
+Computer Use inspected actual rail/fixture screenshots and used real title-bar and
+rail pointer input plus Space on a focused rail button. CLI status independently
+checked minimized preferences, geometry, pending/blocked work and foreground context.
+
+| Scenario | Result |
+| --- | --- |
+| Title-bar minimize before any saved layout, then rail restore | Minimized intent recorded without geometry; restore cleared it and established a layout. |
+| Switch to an unsaved destination | Both fixtures minimized, without recording automatic minimization as user intent. |
+| Both destinations saved; minimize one fixture on B, real-dot B/A/B | Both restored on A; on return to B the manually minimized fixture stayed minimized while the other remained visible. No pending/blocked operations. The two UI actions were separate tool calls, so this is not a sub-poll-interval race certification. |
+| Rail restart with the same live fixtures | B's minimized preference and both layouts survived; baseline on A left both visible. |
+| Real foreground rail minimize, then Space restore | Minimize recorded A while retaining B; keyboard restore cleared A only, preserving B. |
+
+Automation visibility was temporarily on. Some switches made the rail untargetable
+despite toggling visibility; fresh selection/restart was needed. This does not certify
+normal-style cross-desktop presence. The original desktop was restored, owned fixture
+pins removed, processes identity-checked before stopping, automation visibility verified
+off and original state/backup/log files restored byte-for-byte. No desktops were created.
+
+Live two-window Snap regression remains unverified: Computer Use rejected the
+edge-directed drag because its endpoint was outside the fixture's window bounds.
+Windows-key switching was not attempted: the installed computer-use skill prohibits
+Windows-key shortcuts. External taskbar restore, focus preservation with an independent
+foreground anchor, and native minimize/switch delivery races remain live verification
+gaps. Controller regressions cover stable external restore, stale frames/events,
+duplicate/recycled identity, immediate-switch ordering and late/quarantined completion.
+Final `check-dev.ps1` verification passed formatting, warnings-denied Clippy, 78 tests,
+version contracts and locked release builds using a workspace-owned temporary folder
+(the default temporary folder denied report replacement). The final dirty `0b593b1`
+release executable, SHA-256
+`C3E13F2F4DCA9797273EB8648C4DDAF1EED6F76C14008A076CA16D577FB96AB6`,
+also passed fresh-fixture title-bar minimization, real rail restoration/intent clearing,
+and a saved-layout minimized A/B/A round trip. Departure used the real rail dot; the
+return was observed after an interruption, so this is not controlled rapid-switch
+timing evidence. Diagnostics recorded no restore request for the user-minimized
+fixture on return; status showed its saved A layout and minimized preference intact,
+with no pending/blocked work. Cleanup again verified the original desktop, unpinned
+owned fixtures, automation visibility off and byte-identical restoration of original
+state/backup/log files. Timestamp guards, immediate post-restore minimize, and
+nonempty-report privacy assertions are covered by the automated regressions.
+
+The restore-then-drag review regression was checked on 2026-11-03 with dirty source
+based on `d182cc8`, the same OS/DPI/display and two owned app-pinned fixtures. Release
+SHA-256 was `0607B4AB18EB4ECC0F5802BF56BC1EE75FF4149890D1139F77720D17AE02E3E1`.
+A title-bar minimize established intent; external Computer Use activation restored
+the fixture, followed by a real title-bar drag. Screenshots showed the moved window;
+status confirmed cleared minimized intent and saved bounds. A real rail-dot departure
+and CLI return automatically restored it at the dragged bounds, with pending/blocked
+false. External activation was not a taskbar click, and separate tool calls do not
+prove the exact sub-poll restore/drag race. Deterministic regressions cover observation
+before/during dragging, 100 ms of post-drag stability, invalidated evidence, unreachable
+bounds and late capture ordering; the initial regression failed on the reviewed code.
+`check-dev.ps1` passed with 81 tests and locked release builds using workspace temporary
+storage. The original desktop and files were restored, fixture pins removed, automation
+visibility verified off, and owned processes identity-checked before stopping.
+
+The first-post-minimize-snapshot review regression was verified on 2026-11-03 with
+dirty source based on `0f1f501`; release SHA-256 was
+`4A0AA4DD5E16C6491D39B3E5E2694B019391ACF43FBFC307948637F32D93700B`.
+On the same OS/display, a real foreground rail-button minimize followed by external
+Computer Use activation cleared intent and established a layout. A real-dot departure
+and CLI return automatically restored the fixture, with pending/blocked false.
+Screenshots and status confirmed visible state. Separate tool calls cannot establish
+that restoration preceded the first post-completion snapshot; deterministic tests
+reproduce that precise failure on the reviewed code, then pass for explicit/automatic
+minimization, stale frames, dragging and excluded completion/recovery contexts.
+`check-dev.ps1` passed with 85 tests and locked release builds. Cleanup restored the
+original desktop and files byte-for-byte, removed owned fixture pins, verified
+automation visibility off and stopped only identity-verified test processes.
+
+Equal-timestamp restore candidates were checked on 2026-11-03 with dirty source based
+on `cdc536d`, release SHA-256
+`6F04526DC828A2E561830867C4837FE3EA3A6FD1413807E552F0D74EBA1BF969`.
+The new deterministic regression failed on the reviewed code. It now covers identical
+and conflicting equal-tick samples, unchanged stability timing, desktop/action
+invalidation, dragging and post-minimize restoration. `check-dev.ps1` passed with 87
+tests and locked release builds. A live real rail minimize and external activation
+restore passed on the same OS/display; screenshots and status confirmed visibility,
+cleared intent, saved layout and pending/blocked false. Exact same-tick delivery is
+covered deterministically, not established by the separate UI calls. Cleanup restored
+original files byte-for-byte, fixture pins, automation visibility and the original
+desktop; only identity-verified owned test processes were stopped.
+
 For future Snap-specific verification, use two-member groups only, with a separate
 unsnapped observer when needed. Historical larger-group evidence remains valid, but
 new larger-group tests require a change in user scope. The prioritized remaining

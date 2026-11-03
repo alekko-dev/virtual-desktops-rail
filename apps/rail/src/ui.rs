@@ -218,6 +218,7 @@ impl App {
                         "key":key,"hwnd":r.window.hwnd,"pid":r.window.pid,"minimized":r.window.minimized,"blocked":r.blocked,
                         "responsive":r.window.responsive,"pending":r.pending.is_some(),"layout":r.window.layout,
                         "saved_layouts":self.model.saved.windows.get(key).map(|r|&r.layouts),
+                        "minimized_desktops":self.model.saved.windows.get(key).map(|r|&r.minimized_desktops),
                         "layout_count":self.model.saved.windows.get(key).map(|r|r.layouts.len()).unwrap_or(0)})).collect::<Vec<_>>()});
                 if self
                     .storage
@@ -413,6 +414,20 @@ impl App {
                         }
                     }
                 }
+                Event::Minimized(observation) => {
+                    let key = observation.window.identity.key();
+                    if self.model.observe_minimized(observation) {
+                        let label = self.diagnostic_window_label(&key);
+                        let desktop = self
+                            .model
+                            .current
+                            .as_ref()
+                            .and_then(|id| self.diagnostic_desktop_labels.get(id));
+                        let _ = self.storage.sender.try_send(store::Work::Trace(
+                            serde_json::json!({"event":"window_minimized_intent","window":label,"desktop":desktop,"source":"external"}),
+                        ));
+                    }
+                }
                 Event::DispatchLatency(us) => self.dispatch_latency.record(us),
                 Event::Status(status, ready) => {
                     if self.status != status {
@@ -441,7 +456,7 @@ impl App {
                         serde_json::json!({"event":"user_notice","kind":if self.notice==ACTION_TIMEOUT_NOTICE{"action_timeout"}else{"other"}}),
                     ));
                 }
-                Event::Accepted(key, sequence, target) => {
+                Event::Accepted(key, sequence, target, action) => {
                     let label = self.diagnostic_window_label(&key);
                     let target_summary = target.as_ref().map(|layout| {
                         serde_json::json!({
@@ -450,7 +465,7 @@ impl App {
                         })
                     });
                     let _ = self.storage.sender.try_send(store::Work::Trace(
-                        serde_json::json!({"event":"window_action_accepted","window":label,"sequence":sequence,"target":target_summary}),
+                        serde_json::json!({"event":"window_action_accepted","window":label,"sequence":sequence,"target":target_summary,"action":action.kind(),"source":action.source()}),
                     ));
                     if let Some(target) = target
                         && let Some(runtime) = self.model.windows.get_mut(&key)
@@ -468,6 +483,13 @@ impl App {
                     self.model.dispatched(&key, sequence);
                 }
                 Event::ActionResult(key, sequence, tick, verified, cancelled) => {
+                    let action = self
+                        .model
+                        .windows
+                        .get(&key)
+                        .and_then(|r| r.pending.as_ref())
+                        .filter(|p| p.request.sequence == sequence)
+                        .map(|p| (p.request.action.kind(), p.request.action.source()));
                     self.model
                         .completed(&key, sequence, tick, verified, cancelled);
                     let observed = self.model.windows.get(&key).map(|runtime| {
@@ -482,7 +504,7 @@ impl App {
                         })
                     });
                     let _ = self.storage.sender.try_send(store::Work::Trace(
-                        serde_json::json!({"event":"window_action_completed","window":self.diagnostic_window_label(&key),"sequence":sequence,"verified":verified,"cancelled":cancelled,"tick_ms":tick,"observed":observed}),
+                        serde_json::json!({"event":"window_action_completed","window":self.diagnostic_window_label(&key),"sequence":sequence,"verified":verified,"cancelled":cancelled,"tick_ms":tick,"observed":observed,"action":action.map(|a|a.0),"source":action.map(|a|a.1)}),
                     ));
                     if !verified && !cancelled {
                         self.notice = ACTION_TIMEOUT_NOTICE.into();
@@ -564,6 +586,31 @@ impl App {
                     }
                 }
                 Event::NativeWindow(event, hwnd, tick) => match event {
+                    0x16 => {
+                        if let (Some(integration), Some(desktop), Some(runtime)) = (
+                            &self.integration,
+                            &self.model.current,
+                            self.model
+                                .windows
+                                .values()
+                                .find(|r| r.present && r.window.hwnd == hwnd),
+                        ) && runtime.pending.is_none()
+                            && !runtime.blocked
+                            && !runtime.dragging
+                        {
+                            let _ = integration.try_send(bridge::CommandMessage::ObserveMinimize(
+                                Box::new(rail_core::MinimizeObservation {
+                                    window: runtime.window.clone(),
+                                    desktop: desktop.clone(),
+                                    generation: self.model.generation,
+                                    sequence: runtime.sequence,
+                                    event_tick: tick,
+                                    tick,
+                                    transition_serial: self.model.transition_serial,
+                                }),
+                            ));
+                        }
+                    }
                     3 => {
                         crate::appbar::foreground_changed(self.window);
                         if let Some(integration) = &self.integration {
@@ -1284,6 +1331,20 @@ impl App {
                     cached_layout: runtime.window.layout.clone(),
                     last_usable_layout: record.map(|record| record.last_usable.clone()),
                     saved_layouts: serde_json::json!(layouts),
+                    minimized_desktops: record
+                        .map(|record| {
+                            record
+                                .minimized_desktops
+                                .iter()
+                                .enumerate()
+                                .map(|(index, id)| {
+                                    aliases.get(id).cloned().unwrap_or_else(|| {
+                                        format!("unavailable-minimized-desktop-{:03}", index + 1)
+                                    })
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                     pending: runtime.pending.is_some(),
                     blocked: runtime.blocked,
                 }
@@ -2247,7 +2308,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         ShowWindow(window, 4);
         ShowWindow(window, 4);
         use windows::Win32::UI::Accessibility::SetWinEventHook;
-        for (first, last) in [(3, 3), (10, 11), (0x8001, 0x8002)] {
+        for (first, last) in [(3, 3), (10, 11), (0x16, 0x17), (0x8001, 0x8002)] {
             let hook = SetWinEventHook(first, last, None, Some(window_event), 0, 0, 2);
             if !hook.is_invalid() {
                 app.borrow_mut().hooks.push(hook.0 as usize);
