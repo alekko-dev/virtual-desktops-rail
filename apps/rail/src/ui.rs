@@ -1,3 +1,5 @@
+const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be verified in time. Its button remains disabled while that action is outstanding.";
+
 use crate::{
     EVENTS, Event, MAIN_WINDOW, OVERRUN, WAKE, actions, bridge, icons, native::*, notify, platform,
     store,
@@ -384,7 +386,16 @@ impl App {
                     self.model
                         .completed(&key, sequence, tick, verified, cancelled);
                     if !verified && !cancelled {
-                        self.notice="A window did not respond in time. Its button is disabled until the outstanding action is observed.".into();
+                        self.notice = ACTION_TIMEOUT_NOTICE.into();
+                    } else if self.notice == ACTION_TIMEOUT_NOTICE
+                        && !self.model.windows.values().any(|runtime| {
+                            runtime
+                                .pending
+                                .as_ref()
+                                .is_some_and(|pending| pending.timed_out)
+                        })
+                    {
+                        self.notice.clear();
                     }
                     if let Some(integration) = &self.integration {
                         let _ = integration.try_send(bridge::CommandMessage::Refresh);
@@ -747,7 +758,7 @@ impl App {
                 0x40000,
                 wide(CLASS).as_ptr(),
                 wide("Virtual Desktop Rail — Settings").as_ptr(),
-                0x10c80000,
+                0x12c80000,
                 200,
                 160,
                 scale(560),
@@ -854,6 +865,8 @@ impl App {
             (DONE, "BUTTON", "Done", 0x50010001, 432, 290, 88, 34),
             (6107, "STATIC", "●", 0x50000000, 24, 285, 10, 18),
             (6100, "STATIC", "", 0x50000000, 36, 286, 372, 28),
+            // Selectable, scrollable details; it occupies no space while hidden.
+            (6109, "EDIT", "", 0x40a10844, 24, 310, 496, 0),
         ] {
             let child = unsafe {
                 CreateWindowExW(
@@ -874,7 +887,7 @@ impl App {
             unsafe {
                 let font = self.settings_fonts[match id {
                     6102..=6104 => 1,
-                    6100 | 6107 => 2,
+                    6100 | 6107 | 6109 => 2,
                     _ => 0,
                 }];
                 SendMessageW(child, 0x30, font, 1);
@@ -901,6 +914,121 @@ impl App {
         self.update_settings();
     }
 
+    fn layout_settings_notice(&self) {
+        use windows::Win32::Foundation::{HWND, RECT};
+        use windows::Win32::Graphics::Gdi::{
+            DT_CALCRECT, DT_NOPREFIX, DT_WORDBREAK, DrawTextW, GetDC, HGDIOBJ, ReleaseDC,
+            SelectObject,
+        };
+        use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetWindowRect, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, WINDOW_EX_STYLE,
+            WINDOW_STYLE,
+        };
+        let window = HWND(self.settings);
+        let dpi = unsafe { GetDpiForWindow(self.settings) }.max(96);
+        let px = |value: i32| (i64::from(value) * i64::from(dpi) / 96) as i32;
+        unsafe {
+            let notice = GetDlgItem(self.settings, 6109);
+            SetWindowTextW(notice, wide(&self.notice).as_ptr());
+            let mut outer = RECT::default();
+            let _ = GetWindowRect(window, &mut outer);
+            let mut frame = RECT::default();
+            let _ = AdjustWindowRectExForDpi(
+                &mut frame,
+                WINDOW_STYLE(0x12c80000),
+                false,
+                WINDOW_EX_STYLE(0x40000),
+                dpi,
+            );
+            let chrome = frame.bottom - frame.top;
+            let monitor = windows::Win32::Graphics::Gdi::MonitorFromWindow(
+                window,
+                windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST,
+            );
+            let work = platform::monitor(monitor)
+                .ok()
+                .map(|context| context.2)
+                .unwrap_or([outer.left, outer.top, outer.right, outer.top + px(760)]);
+            let mut notice_height = 0;
+            if !self.notice.is_empty() {
+                let dc = GetDC(window);
+                let previous = SelectObject(dc, HGDIOBJ(self.settings_fonts[2] as *mut _));
+                let mut bounds = RECT {
+                    right: px(480),
+                    ..Default::default()
+                };
+                let mut text = wide(&self.notice);
+                text.pop();
+                DrawTextW(
+                    dc,
+                    &mut text,
+                    &mut bounds,
+                    DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX,
+                );
+                SelectObject(dc, previous);
+                ReleaseDC(window, dc);
+                // The read-only edit keeps oversized details selectable and scrollable.
+                let available = (work[3] - work[1] - chrome - px(380)).max(px(24));
+                notice_height =
+                    (bounds.bottom - bounds.top + px(12)).clamp(px(28), available.max(px(28)));
+            }
+            ShowWindow(notice, if self.notice.is_empty() { 0 } else { 5 });
+            let extra = if self.notice.is_empty() {
+                0
+            } else {
+                notice_height + px(12)
+            };
+            for (id, x, y, width, height) in [
+                (6109, px(24), px(310), px(496), notice_height),
+                (6108, px(36), px(314) + extra, px(372), px(14)),
+                (
+                    DONE as i32,
+                    px(432),
+                    if extra == 0 { px(290) } else { px(314) + extra },
+                    px(88),
+                    px(34),
+                ),
+            ] {
+                let _ = SetWindowPos(
+                    HWND(GetDlgItem(self.settings, id)),
+                    None,
+                    x,
+                    y,
+                    width,
+                    height,
+                    SWP_NOACTIVATE | SWP_NOZORDER,
+                );
+            }
+            let height = if extra == 0 {
+                px(380)
+            } else {
+                px(380) + notice_height + chrome
+            };
+            let top = outer.top.clamp(work[1], (work[3] - height).max(work[1]));
+            let left = outer
+                .left
+                .clamp(work[0], (work[2] - (outer.right - outer.left)).max(work[0]));
+            let _ = SetWindowPos(
+                window,
+                None,
+                left,
+                top,
+                outer.right - outer.left,
+                height,
+                SWP_NOACTIVATE | SWP_NOZORDER,
+            );
+            let _ = windows::Win32::Graphics::Gdi::RedrawWindow(
+                window,
+                None,
+                None,
+                windows::Win32::Graphics::Gdi::RDW_INVALIDATE
+                    | windows::Win32::Graphics::Gdi::RDW_ERASE
+                    | windows::Win32::Graphics::Gdi::RDW_ALLCHILDREN,
+            );
+        }
+    }
+
     fn update_settings(&mut self) {
         if self.settings.is_null() {
             return;
@@ -920,15 +1048,13 @@ impl App {
             return;
         }
         self.settings_signature = signature;
+        self.layout_settings_notice();
         unsafe {
             let light = GetDlgItem(self.settings, 6107);
             SetWindowLongPtrW(light, -21, self.ready as isize);
             InvalidateRect(light, null(), 1);
             let text = GetDlgItem(self.settings, 6100);
-            SetWindowTextW(
-                text,
-                wide(&format!("{}\r\n{}", self.status, self.notice)).as_ptr(),
-            );
+            SetWindowTextW(text, wide(&self.status).as_ptr());
             SendMessageW(
                 GetDlgItem(self.settings, SET_PAUSE as i32),
                 0xf1,

@@ -5,6 +5,8 @@ fn layout(left: i32) -> Layout {
     Layout {
         normal: [left, 80, left + 600, 500],
         maximized: false,
+        visible: None,
+        arranged: None,
         dpi: 96,
         monitor: "main".into(),
         monitor_rect: [0, 0, 1920, 1080],
@@ -564,4 +566,49 @@ fn stale_move_start_cannot_block_a_recycled_hwnd() {
     model.snapshot(snapshot("A", 200, vec![new]));
     model.moving(old.hwnd, true, 150, None);
     assert!(!model.windows[&key].dragging);
+}
+
+#[test]
+fn legacy_layouts_decode_without_native_evidence_and_invalid_visible_bounds_are_rejected() {
+    let (model, _, _) = baseline();
+    let mut json = serde_json::to_value(&model.saved).unwrap();
+    let records = json["windows"].as_object_mut().unwrap();
+    let record = records.values_mut().next().unwrap();
+    record["last_usable"]
+        .as_object_mut()
+        .unwrap()
+        .remove("visible");
+    record["last_usable"]
+        .as_object_mut()
+        .unwrap()
+        .remove("arranged");
+    let decoded = Saved::decode(&serde_json::to_vec(&json).unwrap()).unwrap();
+    assert_eq!(
+        decoded.windows.values().next().unwrap().last_usable.visible,
+        None
+    );
+    let record = json["windows"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+        .next()
+        .unwrap();
+    record["last_usable"]["visible"] = serde_json::json!([0, 0, -1, 500]);
+    assert!(Saved::decode(&serde_json::to_vec(&json).unwrap()).is_err());
+}
+
+#[test]
+fn snap_bounds_and_divider_changes_are_learned_only_after_stable_observations() {
+    let (mut model, mut window, key) = baseline();
+    window.layout.arranged = Some(true);
+    window.layout.visible = Some([17, 0, 970, 1048]);
+    model.snapshot(snapshot("A", 200, vec![window.clone()]));
+    assert!(model.saved.windows[&key].layouts.is_empty());
+    model.snapshot(snapshot("A", 301, vec![window.clone()]));
+    assert_eq!(model.saved.windows[&key].layouts["A"], window.layout);
+    window.layout.visible = Some([17, 0, 1100, 1048]);
+    model.snapshot(snapshot("A", 400, vec![window.clone()]));
+    assert_ne!(model.saved.windows[&key].layouts["A"], window.layout);
+    model.snapshot(snapshot("A", 501, vec![window.clone()]));
+    assert_eq!(model.saved.windows[&key].layouts["A"], window.layout);
 }

@@ -1,6 +1,6 @@
 # Architecture
 
-Current design, reconciled against the implementation on 2026-11-02. Implementation
+Current design, reconciled against the implementation on 2026-11-03. Implementation
 and release coverage are tracked in [Status and roadmap](Status-and-Roadmap.md).
 
 ## Product contract and boundaries
@@ -70,10 +70,14 @@ provide only small artwork can still require enlargement.
 | `tools/native-smoke`, `tools/fullscreen-smoke` | Ordinary duplicate/modal/stalled-window and fullscreen fixtures |
 
 
-The Settings footer places the integration indicator and two-line status above a
+The Settings footer places the integration indicator and status above a
 10-DIP version label in the system gray text color. The label aligns with the status
 text; Done is centered beside the combined group. The compact Settings window is
-380 DIP high, retaining room for a second status/notice line.
+380 DIP high. Status and notices use separate controls. A measured read-only notice area
+expands the window only while populated; oversized details remain selectable and
+vertically scrollable. Relayout preserves controls/focus, clamps to the work area,
+and redraws children. The timeout notice clears when no quarantined action remains.
+See [Native Snap compatibility](Snapping.md) for scoped verification.
 
 Build identity is compiled once per build and shared by Settings, local `--version`
 (and `--version --json`) and the additive `build` object in schema-1 `--status`.
@@ -141,10 +145,13 @@ restarts. Application restarts get fresh records; executable/class/title/order m
 is insufficient evidence for reassociation. A token is an identity hint, not authorization.
 Normal window destruction removes properties; values must not own allocated resources.
 
-Separate layout memory from actual visibility. Store normal rectangle, normal/maximized
-state, desktop GUID and monitor/DPI/work-area context; retain last usable geometry
+Separate layout memory from actual visibility. Store normal restore rectangle, optional visible screen bounds and arranged-state
+evidence, normal/maximized state, desktop GUID and monitor/DPI/work-area context; retain last usable geometry
 separately. Clamp to available work areas on restore. Placement/workspace coordinates
-need conversion before screen-coordinate operations. Snap groups are outside the contract.
+need conversion before screen-coordinate operations. Native group membership is not stored or reconstructed. Matching live Snap arrangements
+are revealed without placement writes (visible matches receive no show command); completion
+requires both visible and restore bounds plus observed native state. Legacy records lack
+Snap evidence, and minimized parking rectangles are omitted from visible bounds.
 Startup observations must not overwrite saved geometry changed while the rail was stopped.
 
 Schema 1 JSON under LocalAppData defaults missing `auto_restore` to false. Storage is
@@ -167,7 +174,7 @@ removes undispatched work only. Late actions cannot commit geometry or steal foc
 reconcile once toward still-valid latest intent, including minimizing a late restore
 on a destination without a layout. Do not build an unbounded retry backlog or fight a drag.
 
-Automatic restoration sets placement while minimized, preserves
+For ordinary placements, automatic restoration sets placement while minimized, preserves
 `WPF_RESTORETOMAXIMIZED`, then reveals with `SW_SHOWNOACTIVATE`; it never requests
 foreground. Explicit restoration may request focus only while its original user intent
 remains valid. A minimized HWND wins over stale foreground reports. Active owned dialogs

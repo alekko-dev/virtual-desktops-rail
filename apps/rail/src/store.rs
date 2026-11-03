@@ -335,6 +335,8 @@ mod tests {
             last_usable: Layout {
                 normal: [100, 100, 600, 500],
                 maximized: false,
+                visible: None,
+                arranged: None,
                 dpi: 96,
                 monitor: "test".into(),
                 monitor_rect: [0, 0, 1920, 1080],

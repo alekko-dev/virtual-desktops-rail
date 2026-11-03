@@ -38,6 +38,14 @@ executable. Diagnostic `--status` reports the running instance's build, whereas
 - Pause/resume, optional startup with Windows, and local settings and layout storage.
 - Native Windows UI, no installer, no administrator privileges, and no network requirement for use.
 
+Native Windows Snap support is limited. New layouts save snapped visible bounds
+separately from the original drag-away size. The rail can preserve a matching live
+arrangement without rewriting its placement, and verifies the visible result.
+Recreating lost or different native Snap groups is unsupported; incompatible saved
+arrangements can be declined. Changed displays and application-specific constraints
+remain unverified. Pause automatic actions when using unsupported arrangements.
+Exact last-visit restoration, including windows left minimized, is still in progress.
+
 ## Requirements
 
 - Windows 11 x64, 24H2 build **26100.2605 or newer**.

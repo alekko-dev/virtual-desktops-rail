@@ -10,8 +10,8 @@ use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     GA_ROOTOWNER, GWL_STYLE, GetAncestor, GetLastActivePopup, GetPropW, GetWindowLongPtrW,
-    GetWindowPlacement, GetWindowThreadProcessId, IsHungAppWindow, IsIconic, IsWindow,
-    IsWindowVisible, SW_SHOWMAXIMIZED, SetPropW, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
+    GetWindowPlacement, GetWindowRect, GetWindowThreadProcessId, IsHungAppWindow, IsIconic,
+    IsWindow, IsWindowVisible, SW_SHOWMAXIMIZED, SetPropW, WINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
     WS_DISABLED,
 };
 use windows::core::w;
@@ -202,6 +202,21 @@ pub fn monitor(handle: HMONITOR) -> Result<(String, [i32; 4], [i32; 4], u32), St
     ))
 }
 
+// Missing optional OS support must not become false snap evidence.
+fn arranged(handle: HWND) -> Option<bool> {
+    type Query = unsafe extern "system" fn(HWND) -> BOOL;
+    static QUERY: std::sync::OnceLock<Option<Query>> = std::sync::OnceLock::new();
+    QUERY
+        .get_or_init(|| unsafe {
+            use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+            let module = GetModuleHandleW(w!("user32.dll")).ok()?;
+            GetProcAddress(module, windows::core::s!("IsWindowArranged")).map(|address| {
+                std::mem::transmute::<unsafe extern "system" fn() -> isize, Query>(address)
+            })
+        })
+        .map(|query| unsafe { query(handle) }.as_bool())
+}
+
 pub fn layout(handle: HWND) -> Result<Layout, String> {
     let mut placement = WINDOWPLACEMENT {
         length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
@@ -210,7 +225,16 @@ pub fn layout(handle: HWND) -> Result<Layout, String> {
     unsafe { GetWindowPlacement(handle, &mut placement) }.map_err(|e| e.to_string())?;
     let (name, monitor_rect, work_area, _) =
         monitor(unsafe { MonitorFromWindow(handle, MONITOR_DEFAULTTONEAREST) })?;
+    let visible = if unsafe { IsIconic(handle) }.as_bool() {
+        None
+    } else {
+        let mut bounds = RECT::default();
+        unsafe { GetWindowRect(handle, &mut bounds) }.map_err(|e| e.to_string())?;
+        Some(rect(bounds))
+    };
     Ok(Layout {
+        visible,
+        arranged: arranged(handle),
         normal: rect(placement.rcNormalPosition),
         maximized: placement.showCmd == SW_SHOWMAXIMIZED.0 as u32
             || (unsafe { IsIconic(handle) }.as_bool()

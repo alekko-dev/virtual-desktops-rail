@@ -267,6 +267,22 @@ fn dispatch(job: &Job) -> Result<Option<rail_core::Layout>, String> {
             if !valid(job) || !platform::validate(&request.window) {
                 return Err("Restore superseded before dispatch".into());
             }
+            let observed = platform::layout(window)?;
+            if preserves_arrangement(&target, &observed) {
+                // A show request on a visible arranged window can unsnap it.
+                if unsafe { IsIconic(window) }.as_bool() {
+                    unsafe { ShowWindowAsync(window, SW_SHOWNOACTIVATE) }
+                        .ok()
+                        .map_err(|error| error.to_string())?;
+                }
+                if let Some(popup) = platform::popup(&request.window) {
+                    let _ = unsafe { ShowWindowAsync(popup, SW_SHOWNOACTIVATE) };
+                }
+                return Ok(Some(target));
+            }
+            if target.arranged == Some(true) {
+                return Err("The saved Snap arrangement cannot be preserved in the current window/display state. Automatic Snap group reconstruction is unavailable.".into());
+            }
             let mut placement = WINDOWPLACEMENT {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
@@ -344,18 +360,114 @@ fn verified(active: &Active) -> bool {
         Action::Raise => true,
         Action::Restore(_) | Action::RestoreAutomatic(_) => {
             !unsafe { IsIconic(window) }.as_bool()
+                && unsafe { IsWindowVisible(window) }.as_bool()
                 && platform::layout(window).is_ok_and(|layout| {
-                    active.target.as_ref().is_some_and(|expected| {
-                        layout.maximized == expected.maximized
-                            && layout
-                                .normal
-                                .iter()
-                                .zip(expected.normal)
-                                .all(|(a, b)| a.abs_diff(b) <= 2)
-                    })
+                    active
+                        .target
+                        .as_ref()
+                        .is_some_and(|expected| restored_layout_matches(expected, &layout))
                 })
                 && platform::popup(&request.window)
                     .is_none_or(|popup| unsafe { IsWindowVisible(popup) }.as_bool())
         }
+    }
+}
+
+fn close_bounds(actual: [i32; 4], expected: [i32; 4]) -> bool {
+    actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 2)
+}
+
+fn preserves_arrangement(saved: &rail_core::Layout, observed: &rail_core::Layout) -> bool {
+    saved.arranged == Some(true)
+        // IsWindowArranged may be false while iconic. Saved evidence selects
+        // a reveal candidate; only the visible-result verifier certifies it.
+        && (observed.visible.is_none() || observed.arranged == Some(true))
+        && saved.visible.is_some()
+        && saved.monitor == observed.monitor
+        && saved.monitor_rect == observed.monitor_rect
+        && saved.work_area == observed.work_area
+        && saved.dpi == observed.dpi
+        && close_bounds(observed.normal, saved.normal)
+        && observed.visible.is_none_or(|bounds| {
+            saved
+                .visible
+                .is_some_and(|saved| close_bounds(bounds, saved))
+        })
+}
+
+fn restored_layout_matches(expected: &rail_core::Layout, observed: &rail_core::Layout) -> bool {
+    observed.maximized == expected.maximized
+        && close_bounds(observed.normal, expected.normal)
+        && expected
+            .arranged
+            .is_none_or(|state| observed.arranged == Some(state))
+        && observed.visible.is_some_and(|bounds| {
+            if let Some(expected) = expected.visible {
+                close_bounds(bounds, expected)
+            } else if !expected.maximized {
+                let x = expected.work_area[0] - expected.monitor_rect[0];
+                let y = expected.work_area[1] - expected.monitor_rect[1];
+                close_bounds(
+                    bounds,
+                    [
+                        expected.normal[0] + x,
+                        expected.normal[1] + y,
+                        expected.normal[2] + x,
+                        expected.normal[3] + y,
+                    ],
+                )
+            } else {
+                observed.arranged != Some(true)
+            }
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn snapped() -> rail_core::Layout {
+        rail_core::Layout {
+            normal: [100, 100, 740, 460],
+            maximized: false,
+            visible: Some([23, 0, 970, 1088]),
+            arranged: Some(true),
+            dpi: 120,
+            monitor: "primary".into(),
+            monitor_rect: [0, 0, 1918, 1140],
+            work_area: [31, 0, 1918, 1080],
+        }
+    }
+    #[test]
+    fn normal_bounds_with_stale_arranged_flag_do_not_certify_snap_restoration() {
+        let saved = snapped();
+        let mut observed = saved.clone();
+        observed.visible = Some([131, 100, 771, 460]);
+        assert!(!restored_layout_matches(&saved, &observed));
+        assert!(!preserves_arrangement(&saved, &observed));
+        observed.visible = saved.visible;
+        assert!(restored_layout_matches(&saved, &observed));
+    }
+    #[test]
+    fn minimized_snap_can_be_revealed_but_not_verified_until_visible() {
+        let saved = snapped();
+        let mut observed = saved.clone();
+        observed.visible = None;
+        observed.arranged = Some(false);
+        assert!(preserves_arrangement(&saved, &observed));
+        assert!(!restored_layout_matches(&saved, &observed));
+        observed.work_area[0] += 31;
+        assert!(!preserves_arrangement(&saved, &observed));
+    }
+    #[test]
+    fn legacy_bounds_are_not_snap_evidence_and_normal_restore_checks_screen_bounds() {
+        let mut saved = snapped();
+        saved.arranged = None;
+        saved.visible = None;
+        assert!(!preserves_arrangement(&saved, &saved));
+        let mut observed = saved.clone();
+        observed.visible = Some([131, 100, 771, 460]);
+        assert!(restored_layout_matches(&saved, &observed));
+        observed.visible = Some([100, 100, 740, 460]);
+        assert!(!restored_layout_matches(&saved, &observed));
     }
 }

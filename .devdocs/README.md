@@ -9,6 +9,7 @@ belong in the [user README](../README.md).
 | [Development](Development.md) | Environment, build/run commands, fixtures, packaging and CI |
 | [Testing](Testing.md) | Verification methods, interactive procedures, evidence and release coverage |
 | [Troubleshooting](Troubleshooting.md) | Recurring engineering issues, proven fixes and regression checks |
+| [Native Snap compatibility](Snapping.md) | Snap preservation versus group reconstruction, scoped experiments and implementation plan |
 | [Status and roadmap](Status-and-Roadmap.md) | Implemented scope, verification gaps, known limitations and future ideas |
 
 Read Architecture and Status first, then Development and Testing for the work at hand.

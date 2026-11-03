@@ -27,6 +27,12 @@ pub struct Layout {
     /// WINDOWPLACEMENT workspace coordinates, never silently treated as screen coordinates.
     pub normal: [i32; 4],
     pub maximized: bool,
+    /// Screen bounds, absent for minimized parking rectangles and legacy records.
+    #[serde(default)]
+    pub visible: Option<[i32; 4]>,
+    /// None means arranged-state detection was unavailable or the record predates it.
+    #[serde(default)]
+    pub arranged: Option<bool>,
     pub dpi: u32,
     pub monitor: String,
     pub monitor_rect: [i32; 4],
@@ -69,6 +75,24 @@ impl Layout {
         Self {
             normal: [left, top, left + width, top + height],
             maximized: self.maximized,
+            visible: if self.monitor == monitor
+                && self.monitor_rect == monitor_rect
+                && self.work_area == work
+                && self.dpi == dpi
+            {
+                self.visible
+            } else {
+                None
+            },
+            arranged: if self.monitor == monitor
+                && self.monitor_rect == monitor_rect
+                && self.work_area == work
+                && self.dpi == dpi
+            {
+                self.arranged
+            } else {
+                None
+            },
             dpi,
             monitor: monitor.into(),
             monitor_rect,
@@ -161,7 +185,8 @@ impl Saved {
 
 fn valid_layout(layout: &Layout) -> bool {
     [layout.normal, layout.monitor_rect, layout.work_area]
-        .iter()
+        .into_iter()
+        .chain(layout.visible)
         .all(|rect| {
             rect.iter().all(|value| value.unsigned_abs() <= 1_000_000)
                 && rect[2] > rect[0]
@@ -327,8 +352,8 @@ impl Model {
                 present: true,
                 external_restore: None,
             });
-            // A stable external minimize -> restore transition (including the
-            // taskbar) is user intent. Startup/recovery and our own work are not.
+            // Stable external restores and geometry changes are user intent.
+            // Startup/recovery and our own pending/late work are not.
             let can_observe_edit = !baseline
                 && !changed
                 && !window.minimized
@@ -339,7 +364,10 @@ impl Model {
                 && snapshot.tick > runtime.ignore_geometry_through;
             let mut external_restored = false;
             if can_observe_edit {
-                if runtime.window.minimized {
+                if runtime.window.minimized
+                    || (runtime.external_restore.is_none()
+                        && window.layout != runtime.window.layout)
+                {
                     runtime.external_restore = Some((window.layout.clone(), snapshot.tick));
                 } else if let Some((layout, since)) = &mut runtime.external_restore {
                     if *layout != window.layout {

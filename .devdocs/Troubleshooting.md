@@ -4,6 +4,27 @@ User-facing recovery steps are in the [user README](../README.md). These notes p
 engineering findings and regression checks. Inspect bounded local diagnostics and
 current process identity rather than relying on an old session snapshot.
 
+## Native snapping and clipped action notices
+
+See [Native Snap compatibility](Snapping.md) for verified mechanisms, the support
+boundary and the implementation plan. A key verified defect is that placement can
+update normal restore bounds while the window remains visibly snapped elsewhere;
+checking normal bounds alone produces a false success. The app now models optional
+arranged state and separate visible bounds; native group membership remains unmodeled. Some existing arrangements survive its
+placement sequence, so do not claim every placement write destroys native snapping.
+
+Snap-related intermittent timeout/quarantine remains a separate unproven diagnosis.
+Preserve outstanding operations until verified; a responsive visible window is not
+proof that all queued asynchronous native work has completed.
+
+Settings control 6100 now contains status only. Notice control 6109 is a measured,
+selectable read-only edit, hidden with zero reserved space when empty. It expands the
+window and moves Version/Done below the message, with scrolling when height is capped.
+Clip child painting and invalidate all children during relayout: parent background
+repainting after shrink otherwise left partially erased checkbox text in a live screenshot.
+Timeout wording describes unverified work rather than diagnosing a hung app; clear that
+notice only after all quarantined slots resolve, without clearing unrelated notices.
+
 ## Integration unavailable after Windows updates
 
 Earlier builds used an exact revision allowlist, then a newer-26300 opt-in. They could

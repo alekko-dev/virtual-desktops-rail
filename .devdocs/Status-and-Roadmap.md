@@ -1,6 +1,6 @@
 # Implementation status and roadmap
 
-Reviewed 2026-11-02. The native development MVP is implemented; general release
+Reviewed 2026-11-03. The native development MVP is implemented; general release
 certification remains open. This file owns scope and outstanding work. Current behavior
 and decisions are in [Architecture](Architecture.md); scoped results are in [Testing](Testing.md).
 
@@ -30,6 +30,19 @@ change. This is dated evidence, not a permanent expected test count or a fresh t
 
 ## Known limitations and unmet goals
 
+- Layouts now store optional arranged state and visible screen bounds separately from
+  normal restore bounds; matching live Snap arrangements use a no-placement reveal/no-op
+  path and visible-result verification. Native group membership is not stored or recreated.
+  Actual two-fixture saved/unsaved and both-saved automatic round trips now pass locally;
+  different/lost arrangements, explicit normal/Snap transitions, changed topology,
+  constrained-size completion and minimized-at-departure intent remain unfinished.
+  Calculator duplicate frame/content eligibility and the user's exact intermittent conflict
+  remain undiagnosed. Settings notices now expand conditionally and timeout notices clear
+  after observed late completion. See [implementation and evidence](Snapping.md).
+- The requested destination behavior is exact last-visit restoration, including
+  minimized intent and snapped visible geometry. Current auto-restore reveals saved
+  windows even when previously minimized; minimized intent is not independently saved.
+  Treat exact restoration as the target, not an already-supported capability.
 - First observed desktop-event-to-automatic-minimize dispatch: **72.635 ms**, above the
   provisional 50 ms target. Representative distributions and optimization remain open.
 - Transient `0x80070490` pin failures lack an established root cause; current behavior
@@ -47,6 +60,7 @@ change. This is dated evidence, not a permanent expected test count or a fresh t
 
 | Work | Completion evidence / prerequisites |
 | --- | --- |
+| Exact destination restoration and Snap verification | Finish explicit normal/Snap transitions and minimized intent; cover mixed unsaved destinations, constrained-size completion, and Calculator duplicate eligibility. Preserve the verified same-arrangement visible-bounds/drag-away and notice-recovery fixes. See [Snapping](Snapping.md). |
 | Diagnose transient pin errors | Reproducible candidate-attributed evidence without window titles; preserve strict query classification |
 | Latency and realistic resource coverage | Stable populated-workload distributions, both processes, clear event boundary and counter definitions; larger inventories and physical hardware |
 | Shell/session recovery | Record a recoverable checkpoint first; actual Explorer restart, sleep/resume, lock/unlock and reconnect without layout corruption or unsolicited actions |

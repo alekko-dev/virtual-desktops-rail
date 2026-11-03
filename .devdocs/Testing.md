@@ -48,6 +48,11 @@ and continue independent checks; a locked/RDP-disconnected run is not a UI pass.
 
 ## Interactive regression matrix
 
+For future Snap-specific verification, use two-member groups only, with a separate
+unsnapped observer when needed. Historical larger-group evidence remains valid, but
+new larger-group tests require a change in user scope. The prioritized remaining
+Snap scenarios are maintained in [Native Snap compatibility](Snapping.md#remaining-verification-scope).
+
 | Area | Essential scenarios |
 | --- | --- |
 | Rail rendering/input | Desktop colors and active shape, visibility indicators, settings layout, tooltips, real icon restore/focus/second-click minimize, keyboard pause/resume, unavailable warning, Done versus Exit |
@@ -148,6 +153,7 @@ cases. Raw JSON is local under ignored `artifacts/`; summaries remain useful wit
 
 | Date / environment | Findings and scope | Evidence references |
 | --- | --- | --- |
+| 2026-11-02 follow-up, Windows 26300.9711, session 2, 1918×1140 physical / 120 DPI | Actual rail dot/button input plus serialized product-CLI A/B/A: automatic restoration failed visible snapped geometry for both-pinned and mixed saved-layout cases, including verified minimized starts, while arranged stayed true and actions reported success. Auto-off/manual restores, shared-edge resize, post-restore drag-away size, B normal/maximized memory, pause/resume, post-completion retry and closed/fresh identity behavior have scoped passes. Calculator exposed a duplicate frame/content entry and timeout. Synchronized five-second stall reached quarantine then cleared after late completion; stale/clipped notice persisted. Unsaved mixed permutations, held-drag switching, conclusive shell group actions and multi-monitor/DPI coverage remain open. | Same product SHA-256 `1C60C2D7925A198AF049E15BAE4E2C7081CA2A722BC079FF819329F1A81A7CC1`; `snap-next-*.json`; detailed methods, exclusions and cleanup in [Snapping](Snapping.md#actual-product-switching-application-and-recovery-evidence). |
 | 2026-11-01, Windows 11 x64 26300.9457, session 2, medium integrity, 1708×960 / 120 DPI | Initial compatibility spike passed before product work: four desktops/GUID events; actual Task View window/app pin cycles; passive AppBar visible, uncloaked and nonforeground on four desktops; 31 physical-pixel reservation and restored work area; modal focus, bounded stalled actions, duplicate-token lifetime. Lower-integrity sandbox omitted medium windows; elevated support not established. | `compatibility-four-desktops.json`, `compatibility-task-view-final.json`, `compatibility-appbar.json`, `compatibility-window-control.json`, `compatibility-identity-lifetime.json`, `compatibility-privilege-final.json` |
 | Same initial baseline | One-second cached pin checks observed four API changes in 795/626/480/333 ms including actor/IPC. Observer reported 0 ms CPU over 29 s at finite resolution; small fixture scope only. | `compatibility-pin-discovery.json` |
 | 2026-11-01, same baseline, product | Exact A/B/A geometry, maximized state, modal focus, duplicate rail restart, fresh app-restart identities, pause, second instance, retry baseline, five-second target stall with two-second quarantine and responsive rail. Fullscreen recovery and real two-icon click/keyboard tests passed after fixes. Input used temporary automation visibility; desktop/fullscreen checks used normal style. | `rail-layout-roundtrip.json`, `rail-maximized-after.json`, `rail-modal-roundtrip.json`, `rail-duplicate-restart-check.json`, `rail-app-restart.json`, `rail-retry-recovery.json`, `rail-stall-live.json`, `rail-fullscreen-pass.jsonl`, `rail-cua-*.json` |
@@ -169,7 +175,38 @@ interactive activity. The clean 2026-11-02 sample supersedes them. Neither obser
 nor virtual-machine performance certifies physical-machine behavior. Original incomplete
 Task View recordings were incomplete sequences, not evidence of ABI failure.
 
+## Current Snap preservation increment
+
+On 2026-11-03, check-dev.ps1 passed formatting, warnings-denied Clippy, 63 workspace
+tests, version contracts and locked release builds. The pinned toolchain/lockfile were
+preserved. Actual computer-use and independent native observations covered matching
+Snap preservation through real rail saved/unsaved A/B/A, both-saved visible starts,
+two-member Task View Group survival, original drag-away size and conditional Settings
+notices/late-completion clearing. See [the detailed scoped evidence](Snapping.md#rebuilt-product-evidence)
+for executable identities, final-build differences, failed automation attempts and
+remaining coverage. Exact last-visit restoration is still incomplete.
+
 ## Evidence required for release
+
+The 2026-11-02 Snap investigation passed `./scripts/check-dev.ps1` in
+`artifacts/snap-verification-build`: formatting, warnings-denied Clippy, 58 workspace
+tests, version contracts and locked release builds. The resulting rail SHA-256 was
+`756AB59E404B9A755E463A28F11E9B2321C0ED92AB01D57DFF8716865CF1B2DC`.
+No production code was changed. Native fixture experiments established snap-preserving
+no-activation reveal, native group survival across a pinned desktop round trip, a
+false-success placement-verification case, visible-start automatic-state inconsistency,
+and real drag-away sizing. Actual rail pointer restores retained the group without
+quarantine. Product automatic switching was not exercised over the user's windows;
+broader application/topology certification remains open. See [the scoped evidence](Snapping.md).
+
+Additional live Snap coverage verified a two-member mixed group and a user-prepared
+three-column group at 2560 by 1440 / 120 DPI on the same Windows revision. The latter
+passed native desktop round trips with one, two and all three members individually
+pinned, plus real rail restores with one and all three pinned. Task View explicitly
+confirmed group membership before and after the conclusive cases. Controlled rail
+exit/restart retained the group; an earlier visually matching arrangement without
+a Group entry was excluded. Original user state was checked and owned fixtures/pins
+were cleaned up. These checks do not certify product automatic desktop switching.
 
 Keep a concise capability/build matrix with passed, failed, not-run and blocked results,
 exact environment, binary identity and measurement limitations. Preserve important
