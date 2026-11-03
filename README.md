@@ -106,9 +106,6 @@ window, so multiple windows from the same application can have identical icons.
 | Save diagnostic report… | Choose a local ZIP destination for the redacted support report. |
 | Button below Settings | Exit the app and release the reserved screen space. |
 
-Fullscreen applications can cover the rail. The rail requests exclusion from DWM Peek
-previews but remains visible in screenshots and screen sharing.
-
 ### Layouts and automatic restoration
 
 By default, switching desktops minimizes shared windows; returning does not reveal

@@ -195,3 +195,24 @@ partial dispatch failure and quarantine timeouts until observation or identity d
 Do not call an interrupted or changing fixture workload warmed idle, equate API acceptance
 with completion, or treat process counters reporting 0 ms as literal zero CPU. Use
 [the measurement procedure and scoped evidence](Testing.md#resource-and-latency-measurement).
+
+## Rail disappears during animated desktop switches
+
+On the locally tested Windows revision, `DWMWA_EXCLUDED_FROM_PEEK` removes rail pixels
+from the shell transition as well as desktop thumbnails, while the window remains
+uncloaked/topmost and its AppBar reservation persists. The [current presentation](Architecture.md#rail-presentation)
+retains exclusion and reveals afterward. Do not diagnose the gap from cloak flags alone.
+
+`DWMWA_DISALLOW_PEEK` did not remove the rail from desktop thumbnails. Combining it
+or `DWMWA_TRANSITIONS_FORCEDISABLED` with Peek exclusion did not cure the omission.
+Capture exclusion removed thumbnails locally but also changes screenshot/screen-sharing
+behavior; it is not an equivalent replacement. Microsoft's documented Peek contract
+does not guarantee Task View behavior: see [DWM attributes](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute)
+and [display affinity](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity).
+
+The desktop-change event can arrive before the animation finishes. Task View can
+also close without a desktop change. Hold a previously foreground Task View host until
+it hides/cloaks; start its reveal then, without another desktop-event settling wait.
+Respect the Windows animation preference. Test the shell's animated path, actual
+thumbnails and composed pixels; an instant `winvd` switch did not reproduce the gap.
+Current trigger limits, including cancelled gestures, belong in [Status](Status-and-Roadmap.md#known-limitations-and-unmet-goals).
