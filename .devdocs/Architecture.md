@@ -43,6 +43,9 @@ snapshot. If that snapshot is already visible, it may start an external-restore
 candidate despite normal post-action suppression; committing still requires 100 ms
 of matching reachable observations. Late, timed-out, cancelled or superseded actions,
 pending work and recovery/desktop baselines cannot authorize this exception.
+Equal-timestamp snapshots do not advance or discard a pending restore candidate or
+replace its cached visibility/geometry. Context invalidation still applies even when
+the tick is unchanged, including pending actions and coalesced desktop transitions.
 
 Each record separately stores a default-empty `minimized_desktops` set. Verified
 current explicit minimization and eligible external visible-to-minimized observations

@@ -173,6 +173,14 @@ visible sample to seed a candidate; require normal stable/reachable verification
 before clearing intent. Keep the suppression guard for late, cancelled, timed-out
 and superseded work, and discard the exception on pending work or a fresh baseline.
 
+Repeated snapshots can share a `GetTickCount64` tick during refresh-event bursts.
+The strict freshness check previously fell through to candidate invalidation, losing
+an external restore after its first visible observation. Separate context validity
+from sample freshness: preserve the candidate and its original stability timestamp
+when a duplicate adds no new evidence, but still invalidate on pending work, recovery
+or a confirmed transition. Equal-tick minimized/geometry differences are not new
+observations and must not overwrite newer cached state or saved memory.
+
 Evidence limits: the event tail does not establish when the user manually minimized
 Outlook on Desktop 3 or whether foreground focus changed. Action entries do not label
 automatic versus explicit intent; their timing and saved targets support the automatic

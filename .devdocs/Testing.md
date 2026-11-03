@@ -140,6 +140,19 @@ minimization, stale frames, dragging and excluded completion/recovery contexts.
 original desktop and files byte-for-byte, removed owned fixture pins, verified
 automation visibility off and stopped only identity-verified test processes.
 
+Equal-timestamp restore candidates were checked on 2026-11-03 with dirty source based
+on `cdc536d`, release SHA-256
+`6F04526DC828A2E561830867C4837FE3EA3A6FD1413807E552F0D74EBA1BF969`.
+The new deterministic regression failed on the reviewed code. It now covers identical
+and conflicting equal-tick samples, unchanged stability timing, desktop/action
+invalidation, dragging and post-minimize restoration. `check-dev.ps1` passed with 87
+tests and locked release builds. A live real rail minimize and external activation
+restore passed on the same OS/display; screenshots and status confirmed visibility,
+cleared intent, saved layout and pending/blocked false. Exact same-tick delivery is
+covered deterministically, not established by the separate UI calls. Cleanup restored
+original files byte-for-byte, fixture pins, automation visibility and the original
+desktop; only identity-verified owned test processes were stopped.
+
 For future Snap-specific verification, use two-member groups only, with a separate
 unsnapped observer when needed. Historical larger-group evidence remains valid, but
 new larger-group tests require a change in user scope. The prioritized remaining

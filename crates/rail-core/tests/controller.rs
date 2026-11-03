@@ -156,6 +156,95 @@ fn external_restore_clears_minimized_intent_only_after_stable_reachable_geometry
 }
 
 #[test]
+fn equal_tick_samples_preserve_restore_evidence_without_learning_stale_state() {
+    for duplicate_kind in ["identical", "minimized", "geometry"] {
+        let (mut model, mut window, key) = saved_destinations();
+        window.minimized = true;
+        model.snapshot(snapshot("A", 120, vec![window.clone()]));
+        window.minimized = false;
+        model.snapshot(snapshot("A", 130, vec![window.clone()]));
+        let mut duplicate = window.clone();
+        match duplicate_kind {
+            "minimized" => duplicate.minimized = true,
+            "geometry" => duplicate.layout = layout(900),
+            _ => {}
+        }
+        model.dirty = false;
+        for _ in 0..3 {
+            model.snapshot(snapshot("A", 130, vec![duplicate.clone()]));
+        }
+        assert!(
+            model.windows[&key].external_restore.is_some(),
+            "{duplicate_kind}"
+        );
+        assert_eq!(
+            model.windows[&key].external_restore.as_ref().unwrap().since,
+            Some(130)
+        );
+        assert!(!model.windows[&key].window.minimized);
+        assert_eq!(model.windows[&key].window.layout, layout(100));
+        assert!(!model.dirty);
+        model.snapshot(snapshot("A", 229, vec![window.clone()]));
+        assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+        model.snapshot(snapshot("A", 230, vec![window.clone()]));
+        assert!(!model.saved.windows[&key].minimized_desktops.contains("A"));
+        assert_eq!(model.saved.windows[&key].layouts["A"], layout(100));
+        model.snapshot(snapshot("B", 300, vec![window.clone()]));
+        let restore_b = model.take_requests(301).remove(0);
+        model.completed(&key, restore_b.sequence, 320, true, false);
+        model.snapshot(snapshot("A", 400, vec![window]));
+        assert_eq!(
+            model.take_requests(401)[0].action,
+            Action::RestoreAutomatic(layout(100))
+        );
+    }
+}
+
+#[test]
+fn equal_tick_samples_still_invalidate_restore_evidence_when_context_changes() {
+    for invalidation in ["pending", "transition", "recovery"] {
+        let (mut model, mut window, key) = saved_destinations();
+        window.minimized = true;
+        model.snapshot(snapshot("A", 120, vec![window.clone()]));
+        window.minimized = false;
+        model.snapshot(snapshot("A", 130, vec![window.clone()]));
+        assert!(model.windows[&key].external_restore.is_some());
+        match invalidation {
+            "pending" => {
+                model.click(&key, false);
+                let raise = model.take_requests(130).remove(0);
+                model.snapshot(snapshot("A", 130, vec![window.clone()]));
+                assert!(model.windows[&key].external_restore.is_none());
+                model.completed(&key, raise.sequence, 140, false, true);
+            }
+            "transition" => {
+                model.pause(true);
+                let mut frame = snapshot("A", 130, vec![window.clone()]);
+                frame.transition_serial = 1;
+                model.snapshot(frame);
+                assert_eq!(model.transition_serial, 1);
+                assert!(model.windows[&key].external_restore.is_none());
+            }
+            _ => {
+                model.unavailable();
+                model.snapshot(snapshot("A", 130, vec![window.clone()]));
+                assert!(model.windows[&key].external_restore.is_none());
+            }
+        }
+        let serial = model.transition_serial;
+        for tick in [150, 250] {
+            let mut frame = snapshot("A", tick, vec![window.clone()]);
+            frame.transition_serial = serial;
+            model.snapshot(frame);
+        }
+        assert!(
+            model.saved.windows[&key].minimized_desktops.contains("A"),
+            "{invalidation}"
+        );
+    }
+}
+
+#[test]
 fn first_visible_sample_after_verified_minimize_preserves_external_restore_intent() {
     for automatic in [false, true] {
         let (mut model, mut window, key) = saved_destinations();
@@ -180,6 +269,7 @@ fn first_visible_sample_after_verified_minimize_preserves_external_restore_inten
         window.minimized = false;
         model.snapshot(snapshot(desktop, 219, vec![window.clone()]));
         assert!(model.windows[&key].suppress_next_state);
+        model.snapshot(snapshot(desktop, 230, vec![window.clone()]));
         model.snapshot(snapshot(desktop, 230, vec![window.clone()]));
         assert!(
             model.saved.windows[&key]
@@ -309,9 +399,11 @@ fn external_restore_followed_by_drag_clears_intent_after_post_drag_stability() {
         window.layout = layout(400);
         model.snapshot(snapshot("A", 160, vec![window.clone()]));
         model.snapshot(snapshot("A", 300, vec![window.clone()]));
+        model.snapshot(snapshot("A", 300, vec![window.clone()]));
         assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
         model.moving(window.hwnd, false, 310, None);
         model.moving(window.hwnd, false, 310, Some(window.layout.clone()));
+        model.snapshot(snapshot("A", 320, vec![window.clone()]));
         model.snapshot(snapshot("A", 320, vec![window.clone()]));
         model.snapshot(snapshot("A", 419, vec![window.clone()]));
         assert!(model.saved.windows[&key].minimized_desktops.contains("A"));

@@ -417,15 +417,16 @@ impl Model {
             });
             // Stable external restores and geometry changes are user intent.
             // Startup/recovery and our own pending/late work are not.
-            let can_observe_visibility = !baseline
+            let can_observe_context = !baseline
                 && !changed
                 && runtime.pending.is_none()
                 && !runtime.blocked
+                && snapshot.tick > runtime.ignore_geometry_through;
+            let can_observe_visibility = can_observe_context
                 && (!runtime.suppress_next_state
                     || (runtime.restore_after_minimize
                         && runtime.window.minimized
                         && !window.minimized))
-                && snapshot.tick > runtime.ignore_geometry_through
                 && snapshot.tick > runtime.state_tick;
             let can_observe_state = can_observe_visibility && !runtime.dragging;
             if can_observe_state && window.minimized && !runtime.window.minimized {
@@ -467,7 +468,12 @@ impl Model {
                     layout: window.layout.clone(),
                     since: None,
                 });
-            } else {
+            } else if !can_observe_context
+                || runtime.suppress_next_state
+                || snapshot.tick > runtime.state_tick
+            {
+                // Equal-tick samples add no new state evidence. Keep the
+                // candidate unless its desktop/action context was invalidated.
                 runtime.external_restore = None;
             }
             let user_state_change = can_observe_edit
