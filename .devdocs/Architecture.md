@@ -6,7 +6,9 @@ and release coverage are tracked in [Status and roadmap](Status-and-Roadmap.md).
 ## Product contract and boundaries
 
 The utility is a native, per-user Windows 11 x64 application. A 25-DIP AppBar reserves
-the primary display's left edge. Desktop dots precede one icon-only button per eligible
+the primary display's left edge. Users can display the rail as a full-height bar from
+top to bottom of the screen (default) or as a vertically centered, content-sized
+responsive rail with rounded right corners (`centered_rail`). Desktop dots precede one icon-only button per eligible
 shared window. Settings and pause controls occupy the bottom, with a separate Exit
 button below Settings. The current desktop uses a larger filled dot; inactive desktops
 use colored outlines. Window icons remain unchanged, with solid/outlined visibility
@@ -115,7 +117,7 @@ support archive.
 The Settings footer places the integration indicator and status above a
 10-DIP version label in the system gray text color. The label aligns with the status
 text; Done is centered beside the combined group. The compact Settings window is
-380 DIP high. Status and notices use separate controls. A measured read-only notice area
+414 DIP high. Status and notices use separate controls. A measured read-only notice area
 expands the window only while populated; oversized details remain selectable and
 vertically scrollable. Relayout preserves controls/focus, clamps to the work area,
 and redraws children. The timeout notice clears when no quarantined action remains.
@@ -196,8 +198,8 @@ requires both visible and restore bounds plus observed native state. Legacy reco
 Snap evidence, and minimized parking rectangles are omitted from visible bounds.
 Startup observations must not overwrite saved geometry changed while the rail was stopped.
 
-Schema 1 JSON under LocalAppData defaults missing `auto_restore` to false. Storage is
-bounded to 4 MiB, 512 identities and 64 distinct remembered desktop IDs per identity
+Schema 1 JSON under LocalAppData defaults missing `auto_restore` and `centered_rail`
+to false. Storage is bounded to 4 MiB, 512 identities and 64 distinct remembered desktop IDs per identity
 (the union of layouts and minimized intent). Missing minimized sets default empty;
 deleted desktops are pruned from both. At the identity cap new
 identities are omitted. Ordered debounced writes use atomic replacement, previous-state
@@ -230,30 +232,34 @@ AppBars reserve work area but do not constrain manually positioned or fullscreen
 windows. Per-Monitor V2 and display/DPI notifications govern rail geometry; fullscreen
 foreground yields z-order without activation and normal foreground restores topmost.
 
-The rail requests DWM Peek exclusion to omit it from Task View desktop thumbnails,
-while remaining capturable in screenshots/screen sharing. A 200-ms cubic ease-out
-slides artwork and native buttons in from the left after a switch. The AppBar HWND,
-bounds and work-area reservation stay fixed: a temporary region clips translated
-content and is removed at completion. One transient 16-ms timer serves waiting/reveal;
-late ticks advance to current elapsed time. Windows' client-area animation preference
-disables the effect, including when it cannot be read. Size/DPI/settings changes,
-retry/unavailability and shutdown cancel presentation. Startup/recovery do not animate.
+The rail enables DWM Peek exclusion (`DWMWA_EXCLUDED_FROM_PEEK`) only while Task View is
+open so the rail stays stationary and visible during normal desktop switches while
+omitting it from Task View desktop thumbnails. In centered responsive mode
+(`centered_rail`), the AppBar reserves a 31-DIP left work area (25-DIP pill width plus
+symmetric 3-DIP left and right floating margins) while sizing its HWND height to the
+current desktop dots, shared window icons, and compact utility controls (omitting the top
+app logo and clamped to the available bar height) and centering the floating pill
+vertically along the left edge. DWM window attributes (`DWMWA_WINDOW_CORNER_PREFERENCE = DWMWCP_ROUND` and
+`DWMWA_BORDER_COLOR`) provide anti-aliased 4-corner rounding and border framing (hidden
+while clipped for Task View), with balanced horizontal separators between active control
+groups. A 200-ms cubic ease-out slides artwork and native buttons in from the left after
+Task View dismissal. The AppBar HWND, bounds and work-area reservation stay fixed: a
+temporary region clips translated content and is cleared at completion. One transient
+16-ms timer serves reveal; late ticks advance to current elapsed time. Windows'
+client-area animation preference disables the effect, including when it cannot be read.
+Size/DPI/settings changes, retry/unavailability and shutdown cancel presentation.
+Startup/recovery and ordinary desktop switches do not hide or animate the rail. Presentation
+never delays controller actions, changes memory or requests focus.
 
-Rail/CLI requests use the adapter's instant path; a matching destination observed
-within two seconds reveals immediately. Other desktop-change observations wait
-400 ms before reveal. This is a bounded settling heuristic, not shell completion.
-New destinations replace active reveals; same-destination serial updates do not
-restart one. Presentation never delays controller actions, changes memory or requests focus.
-
-Task View return is also recognized without a desktop change. Discovery requires a
+Task View return is recognized with or without a desktop change. Discovery requires a
 foreground, visible, uncloaked fullscreen `XamlExplorerHostIslandWindow` or
-`MultitaskingViewFrame` in the `GetShellWindow` process. Only that host is tracked
-through foreground/show/hide/destroy/cloak events and existing reconciliation until
-it disappears. The shared Alt+Tab host can receive the same effect. While visible,
-it holds the rail clipped without a reveal timer; disappearance starts the reveal
-without the desktop-event wait. A snapshot within 400 ms of that return does not
-restart an active reveal. These shell classes are compatibility hints, not desktop
-identity. There is no background-host discovery, localized-title matching or extra
+`MultitaskingViewFrame` in the `GetShellWindow` process. As soon as foreground leaves the
+Task View host (or it hides/cloaks), the reveal starts immediately without waiting for
+delayed host cloaking. The shared Alt+Tab host can receive the same effect. While visible,
+it enables `DWMWA_EXCLUDED_FROM_PEEK`, hides the DWM border, and holds the rail clipped
+without a reveal timer; disappearance starts the reveal. These shell classes are
+compatibility hints, not desktop identity. There is no background-host discovery,
+localized-title matching or extra
 periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#known-limitations-and-unmet-goals).
 
 ## Decisions and rationale

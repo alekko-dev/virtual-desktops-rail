@@ -30,6 +30,7 @@ executable. Diagnostic `--status` reports the running instance's build, whereas
 ## Features
 
 - A 25-DIP rail on the primary display's left edge reserves space beside maximized apps.
+- Choose between a full-height bar from top to bottom or a responsive, vertically centered rail with rounded edges.
 - Desktop dots show the current desktop, reveal names on hover, and switch desktops on click.
 - Windows pinned through Task View appear automatically, including application-level pins.
 - Application icons use a consistent 16-DIP size with DPI-aware source selection and filtered resizing.
@@ -114,7 +115,11 @@ layout adjusted to stay on an available display.
 
 Enable **Restore saved layouts on desktop switch** in Settings to restore windows
 that have a saved destination layout, without taking focus. Windows without a layout
-there still minimize. Manual rail restores and stable external Windows restores
+there still minimize. Enable **Center rail and size to content** and click **Done**
+in Settings to display the rail as a vertically centered floating pill with rounded corners
+that sizes dynamically around its desktop dots, shared window icons, and compact utility
+controls (omitting the top app logo); the left work-area reservation remains active so
+maximized windows stay beside the rail. Manual rail restores and stable external Windows restores
 (such as taskbar restores) save the resulting layout for that desktop. Move, resize,
 and maximize normally to update it. Automatic restoration preserves saved geometry;
 minimizing does not forget layouts.

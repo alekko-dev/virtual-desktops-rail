@@ -86,6 +86,12 @@ try {
         build_label = $(if ($BuildLabel) { $BuildLabel } else { $null })
         sha256 = (Get-FileHash -LiteralPath "$package/virtual-desktop-rail.exe" -Algorithm SHA256).Hash
     } | ConvertTo-Json | Set-Content -LiteralPath "$package/BUILD.json" -Encoding utf8
-    Compress-Archive -LiteralPath $package -DestinationPath "$package.zip"
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $package,
+        "$package.zip",
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $true
+    )
     Write-Output "$package.zip"
 } finally { Pop-Location }

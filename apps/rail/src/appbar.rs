@@ -8,6 +8,20 @@ static NEGOTIATING: AtomicBool = AtomicBool::new(false);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
 static POSITION_ERROR: AtomicU32 = AtomicU32::new(0);
+static CENTERED_HEIGHT: AtomicU32 = AtomicU32::new(0);
+
+pub fn set_centered_height(height: Option<i32>) {
+    CENTERED_HEIGHT.store(
+        height.map(|h| h.max(1) as u32).unwrap_or(0),
+        Ordering::Relaxed,
+    );
+}
+
+pub fn refresh(window: Handle) {
+    if REGISTERED.load(Ordering::Relaxed) {
+        let _ = negotiate(window);
+    }
+}
 
 pub fn diagnostics(window: Handle) -> serde_json::Value {
     use windows::Win32::{Foundation::RECT, UI::WindowsAndMessaging::*};
@@ -16,9 +30,13 @@ pub fn diagnostics(window: Handle) -> serde_json::Value {
         let root = GetAncestor(foreground, GA_ROOTOWNER);
         let mut bounds = RECT::default();
         let _ = GetWindowRect(root, &mut bounds);
+        let mut rail_bounds = RECT::default();
+        let _ = GetWindowRect(windows::Win32::Foundation::HWND(window), &mut rail_bounds);
         serde_json::json!({"automation_ui":GetWindowLongPtrW(windows::Win32::Foundation::HWND(window), GWL_EXSTYLE) as u32 & WS_EX_APPWINDOW.0 != 0,
             "hwnd":window as usize,"position_error":POSITION_ERROR.load(Ordering::Relaxed),"yielding": FULLSCREEN.load(Ordering::Relaxed),
             "topmost": GetWindowLongPtrW(windows::Win32::Foundation::HWND(window), GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0,
+            "bounds":[rail_bounds.left,rail_bounds.top,rail_bounds.right,rail_bounds.bottom],
+            "centered_height_px":CENTERED_HEIGHT.load(Ordering::Relaxed),
             "foreground":foreground.0 as usize,"root":root.0 as usize,
             "root_bounds":[bounds.left,bounds.top,bounds.right,bounds.bottom]})
     }
@@ -151,12 +169,27 @@ fn negotiate(window: Handle) -> Result<(), std::io::Error> {
             }
             let dpi = GetDpiForWindow(window).max(96);
             let width = ((25 * dpi + 48) / 96) as i32;
+            let requested_height = CENTERED_HEIGHT.load(Ordering::Relaxed) as i32;
+            let margin = if requested_height > 0 {
+                ((3 * dpi + 48) / 96) as i32
+            } else {
+                0
+            };
+            let reserved_width = width + margin * 2;
             let mut bar = data(window);
             bar.rect = info.monitor;
-            bar.rect.right = bar.rect.left + width;
+            bar.rect.right = bar.rect.left + reserved_width;
             SHAppBarMessage(2, &mut bar); // ABM_QUERYPOS
-            bar.rect.right = bar.rect.left + width;
+            bar.rect.right = bar.rect.left + reserved_width;
             SHAppBarMessage(3, &mut bar); // ABM_SETPOS
+            let full_height = (bar.rect.bottom - bar.rect.top).max(1);
+            let (left, top, height) = if requested_height > 0 {
+                let height = requested_height.min(full_height);
+                let top = bar.rect.top + (full_height - height) / 2;
+                (bar.rect.left + margin, top, height)
+            } else {
+                (bar.rect.left, bar.rect.top, full_height)
+            };
             if SetWindowPos(
                 window,
                 if FULLSCREEN.load(Ordering::Relaxed) {
@@ -164,10 +197,10 @@ fn negotiate(window: Handle) -> Result<(), std::io::Error> {
                 } else {
                     -1_isize as Handle
                 },
-                bar.rect.left,
-                bar.rect.top,
-                bar.rect.right - bar.rect.left,
-                bar.rect.bottom - bar.rect.top,
+                left,
+                top,
+                width,
+                height,
                 0x10,
             ) == 0
             {

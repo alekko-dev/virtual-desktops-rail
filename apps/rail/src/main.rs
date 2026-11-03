@@ -117,7 +117,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     }
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "virtual-desktop-rail [--settings]\nBuild identity: --version [--json] (this executable; no running instance required).\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nLegacy preference: --experimental-integration on|off (persisted for compatibility; no longer affects build eligibility).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Desktop integration requires Windows 11 24H2 build 26100.2605 or newer and successful runtime checks."
+            "virtual-desktop-rail [--settings]\nBuild identity: --version [--json] (this executable; no running instance required).\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nRail display preference: --centered-rail on|off (persisted; Settings also offers this option).\nLegacy preference: --experimental-integration on|off (persisted for compatibility; no longer affects build eligibility).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Desktop integration requires Windows 11 24H2 build 26100.2605 or newer and successful runtime checks."
         );
         return Ok(0);
     }
@@ -156,6 +156,11 @@ fn run(args: Vec<String>) -> Result<i32, String> {
                 enabled: value == "on",
             })
         }
+        [arg, value] if arg == "--centered-rail" && ["on", "off"].contains(&value.as_str()) => {
+            Some(ui::Command::CenteredRail {
+                enabled: value == "on",
+            })
+        }
         [arg, value] if arg == "--automation-ui" && ["on", "off"].contains(&value.as_str()) => {
             Some(ui::Command::AutomationUi {
                 enabled: value == "on",
@@ -171,17 +176,33 @@ fn run(args: Vec<String>) -> Result<i32, String> {
         _ => None,
     };
     if let Some(command) = command {
-        if !ui::remote(&command)? {
-            return Err("The rail is not running.".into());
+        if ui::remote(&command)? {
+            return Ok(0);
         }
-        return Ok(0);
+        if matches!(
+            command,
+            ui::Command::Pause
+                | ui::Command::Resume
+                | ui::Command::AutoRestore { .. }
+                | ui::Command::CenteredRail { .. }
+                | ui::Command::AutomationUi { .. }
+                | ui::Command::ExperimentalIntegration { .. }
+        ) {
+            if let Some(_instance) = singleton::acquire()? {
+                ui::run_with(false, Some(command))?;
+            } else {
+                let _ = ui::remote(&command)?;
+            }
+            return Ok(0);
+        }
+        return Err("The rail is not running.".into());
     }
     let settings = args == ["--settings"];
     if !args.is_empty() && !settings {
         return Err("Unknown arguments; use --help.".into());
     }
     if let Some(_instance) = singleton::acquire()? {
-        ui::run(settings)?;
+        ui::run_with(settings, None)?;
     } else if settings {
         let _ = ui::remote(&ui::Command::Settings)?;
     }

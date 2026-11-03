@@ -158,6 +158,19 @@ unsnapped observer when needed. Historical larger-group evidence remains valid, 
 new larger-group tests require a change in user scope. The prioritized remaining
 Snap scenarios are maintained in [Native Snap compatibility](Snapping.md#remaining-verification-scope).
 
+### Centered responsive rail option
+
+On 2026-11-03, the centered responsive rail option (`centered_rail`, `--centered-rail on|off`,
+and Settings checkbox **Display centered responsive rail with rounded edges**) passed
+`check-dev.ps1`: formatting, warnings-denied Clippy, 88 workspace tests (including
+controller preference/schema defaults, cross-session storage merges, responsive DPI/item
+height calculation, and CLI help/validation contracts), version contracts, and locked
+release builds. The resulting release executable had SHA-256
+`B9AC61378CF084B54BB229C69C3EF3EE0C74E633B14A776FF379CBC090DB24DF`.
+No computer-use tool was installed in the session, so live desktop appearance, rounded
+region rendering, Settings checkbox pointer/keyboard interaction, and live vertical
+re-centering remain unverified.
+
 | Area | Essential scenarios |
 | --- | --- |
 | Rail rendering/input | Desktop colors and active shape, visibility indicators, settings layout, tooltips, real icon restore/focus/second-click minimize, keyboard pause/resume, unavailable warning, Done versus Exit |

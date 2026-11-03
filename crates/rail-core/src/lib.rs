@@ -147,6 +147,8 @@ pub struct Saved {
     #[serde(default)]
     pub auto_restore: bool,
     #[serde(default)]
+    pub centered_rail: bool,
+    #[serde(default)]
     pub preferences_revision: u64,
     pub windows: BTreeMap<String, Record>,
 }
@@ -159,6 +161,7 @@ impl Default for Saved {
             startup: false,
             experimental_integration: false,
             auto_restore: false,
+            centered_rail: false,
             preferences_revision: 0,
             windows: BTreeMap::new(),
         }
@@ -582,6 +585,15 @@ impl Model {
                 runtime.sequence += 1;
             }
         }
+    }
+
+    pub fn set_centered_rail(&mut self, enabled: bool) {
+        if self.saved.centered_rail == enabled {
+            return;
+        }
+        self.saved.centered_rail = enabled;
+        self.saved.preferences_revision = self.saved.preferences_revision.saturating_add(1);
+        self.dirty = true;
     }
 
     pub fn pause(&mut self, paused: bool) {

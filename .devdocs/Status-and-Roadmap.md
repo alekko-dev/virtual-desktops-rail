@@ -8,7 +8,7 @@ and decisions are in [Architecture](Architecture.md); scoped results are in [Tes
 
 | Area | Implementation | Verification boundary |
 | --- | --- | --- |
-| Native rail | 25-DIP primary-left AppBar, desktop dots/names, per-window icons, pause, settings and separate exit; app icon embedded at multiple sizes | Native fixture, real pointer/keyboard and fullscreen checks recorded; broader visual/accessibility matrix open |
+| Native rail | 25-DIP primary-left AppBar, full-height bar or centered responsive mode with rounded right edges (`centered_rail`), desktop dots/names, per-window icons, pause, settings and separate exit; app icon embedded at multiple sizes | Native fixture, real pointer/keyboard and fullscreen checks recorded for full-height bar; centered responsive mode verified by unit/store/controller tests, live desktop rendering/input unverified when desktop CUA is unavailable |
 | Shared-window discovery | Window OR app pinning, minimized windows, cached one-second checks and 30-second safety rescans | Task View origin established on 26300.9457; API exercises also passed on 26300.9711 |
 | Layout management | Independent normal/maximized desktop layouts, clamped fallback, default minimize-on-switch/restore-on-demand | Fixture A/B/A, maximized, modal and duplicate-window checks passed |
 | Optional auto-restore | Default-off preference; saved destinations restore without focus, unsaved ones minimize; per-desktop user-minimized intent overrides restoration; manual/external restores establish layouts | Historical restore checks on 9711; minimized-intent verification is recorded in Testing |

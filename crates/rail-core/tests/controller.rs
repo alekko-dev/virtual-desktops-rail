@@ -1271,3 +1271,32 @@ fn snap_bounds_and_divider_changes_are_learned_only_after_stable_observations() 
     model.snapshot(snapshot("A", 501, vec![window.clone()]));
     assert_eq!(model.saved.windows[&key].layouts["A"], window.layout);
 }
+
+#[test]
+fn centered_rail_preference_defaults_false_persists_and_does_not_issue_window_actions() {
+    let (mut model, window, _) = baseline();
+    assert!(!model.saved.centered_rail);
+    model.dirty = false;
+    let initial_revision = model.saved.preferences_revision;
+    model.set_centered_rail(false);
+    assert!(!model.dirty);
+    assert_eq!(model.saved.preferences_revision, initial_revision);
+    model.set_centered_rail(true);
+    assert!(model.saved.centered_rail);
+    assert!(model.dirty);
+    assert_eq!(model.saved.preferences_revision, initial_revision + 1);
+    assert!(model.take_requests(150).is_empty());
+
+    let mut json = serde_json::to_value(&model.saved).unwrap();
+    let decoded = Saved::decode(&serde_json::to_vec(&json).unwrap()).unwrap();
+    assert!(decoded.centered_rail);
+
+    json.as_object_mut().unwrap().remove("centered_rail");
+    let legacy = Saved::decode(&serde_json::to_vec(&json).unwrap()).unwrap();
+    assert!(!legacy.centered_rail);
+
+    let mut restarted = Model::new(decoded);
+    restarted.snapshot(snapshot("A", 200, vec![window]));
+    assert!(restarted.saved.centered_rail);
+    assert!(restarted.take_requests(201).is_empty());
+}

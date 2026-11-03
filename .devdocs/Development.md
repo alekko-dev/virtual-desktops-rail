@@ -44,6 +44,8 @@ Start-Process ./target/release/virtual-desktop-rail.exe -ArgumentList '--setting
 ./scripts/Invoke-Rail.ps1 --resume
 ./scripts/Invoke-Rail.ps1 --auto-restore on
 ./scripts/Invoke-Rail.ps1 --auto-restore off
+./scripts/Invoke-Rail.ps1 --centered-rail on
+./scripts/Invoke-Rail.ps1 --centered-rail off
 ./scripts/Invoke-Rail.ps1 --retry
 ./scripts/Invoke-Rail.ps1 --exit
 ```
