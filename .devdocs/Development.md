@@ -15,11 +15,6 @@ not app runtime requirements. Record guest entitlement and a recoverable checkpo
 Use VMConnect Basic Session as the baseline; Enhanced Session/RDP is a separate case.
 Start coverage at 1920×1080 / 100%, then add scaling and topology variants.
 
-Historical successful toolchain baseline (2026-11-01): Git 2.56.0.4, rustup 1.29.1,
-Rust/Cargo 1.99.1, Build Tools 2022 17.14.44, MSVC 14.44.35207, SDK 10.0.26100.0.
-This is a reproducibility reference, not a requirement to install those exact non-Rust
-tool versions. OS/display details and evidence belong in [Testing](Testing.md).
-
 Native shell tests require an unlocked, awake Explorer session shared by the rail,
 fixtures and desktop automation. Standard-user operation is the baseline. Keep elevated
 provisioning separate; medium-integrity tests do not establish elevated-app support.
@@ -66,17 +61,15 @@ succeed. See [Troubleshooting](Troubleshooting.md) for cache and executable-lock
 
 ## Fixtures and artifacts
 
-`tools/native-smoke` creates one to four identical native windows sharing a process.
-Closing one keeps the others alive. Windows support move/resize, minimize/maximize,
-owned modal dialogs and a deliberate UI-thread stall (`--delay-ms 0..10000`, default
-2000). `--probe` emits foreground HWND/PID, screen rectangle, DPI and primary-display
-dimensions even in release builds. Close all windows to exit.
+Fixture capabilities and exercise procedures are owned by
+[Testing](Testing.md#compatibility-tools). The source/component map is in
+[Architecture](Architecture.md#stack-and-source-map).
 
 Copy `fixtures/obsidian-vault` into `artifacts/obsidian-vault` and open that copy in
 Obsidian for disposable-vault tests. Never use the user's working vault for fixtures.
 `artifacts/` and Cargo outputs are ignored. Keep durable findings in the documentation;
-raw local artifact filenames alone are not portable evidence. The component map is in
-[Architecture](Architecture.md), and exercise commands are in [Testing](Testing.md).
+raw local artifact filenames alone are not portable evidence. Do not commit local
+run reports or machine-specific handovers.
 
 ## Packaging and CI
 

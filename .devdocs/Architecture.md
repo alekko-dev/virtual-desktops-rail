@@ -1,7 +1,8 @@
 # Architecture
 
-Current design, reconciled against the implementation on 2026-11-03. Implementation
-and release coverage are tracked in [Status and roadmap](Status-and-Roadmap.md).
+This document defines the current design. Implementation status and remaining work
+are tracked in [Status and roadmap](Status-and-Roadmap.md); completed evidence is in
+[Testing](Testing.md).
 
 ## Product contract and boundaries
 
@@ -34,6 +35,7 @@ minimize-to-visible restoration is manual intent only on a stable desktop, outsi
 drags and our pending/late operations: require matching reachable geometry observations
 at least 100 ms apart. Reject transient off-screen coordinates. Automatic restoration
 never rewrites saved geometry or the last-usable fallback. Minimization retains memory.
+
 An external restore first observed during a drag, or immediately before it, retains
 its observation through the drag. Drag snapshots cannot clear minimized intent;
 drag start/end reset the stability interval, and only subsequent reachable, matching
@@ -119,7 +121,7 @@ text; Done is centered beside the combined group. The compact Settings window is
 expands the window only while populated; oversized details remain selectable and
 vertically scrollable. Relayout preserves controls/focus, clamps to the work area,
 and redraws children. The timeout notice clears when no quarantined action remains.
-See [Native Snap compatibility](Snapping.md) for scoped verification.
+See [Testing](Testing.md#compatibility-and-completed-validation) for scoped verification.
 
 Build identity is compiled once per build and shared by Settings, local `--version`
 (and `--version --json`) and the additive `build` object in schema-1 `--status`.
@@ -155,7 +157,6 @@ does not establish successful event delivery.
 The product and probe share `OsVersion::meets_adapter_minimum`: Windows version 10.0,
 build above 26100, or build 26100 with revision at least 2605. The target is Windows 11
 x64. Both worker startup and reconnect check this boundary before initialization.
-The former exact 26300.9457 allowlist and newer-26300 experimental opt-in are superseded.
 Legacy `experimental_integration` storage/status/CLI remains accepted but has no effect
 on eligibility; its Settings checkbox is removed.
 
@@ -187,14 +188,30 @@ restarts. Application restarts get fresh records; executable/class/title/order m
 is insufficient evidence for reassociation. A token is an identity hint, not authorization.
 Normal window destruction removes properties; values must not own allocated resources.
 
-Separate layout memory from actual visibility. Store normal restore rectangle, optional visible screen bounds and arranged-state
-evidence, normal/maximized state, desktop GUID and monitor/DPI/work-area context; retain last usable geometry
-separately. Clamp to available work areas on restore. Placement/workspace coordinates
-need conversion before screen-coordinate operations. Native group membership is not stored or reconstructed. Matching live Snap arrangements
-are revealed without placement writes (visible matches receive no show command); completion
-requires both visible and restore bounds plus observed native state. Legacy records lack
-Snap evidence, and minimized parking rectangles are omitted from visible bounds.
+Separate layout memory from actual visibility. Store normal restore rectangle,
+optional visible screen bounds and arranged-state
+evidence, normal/maximized state, desktop GUID and monitor/DPI/work-area context;
+retain last usable geometry separately. Clamp to available work areas on restore.
+Placement/workspace coordinates need conversion before screen-coordinate operations.
 Startup observations must not overwrite saved geometry changed while the rail was stopped.
+
+### Native Snap preservation
+
+Native group membership is not stored or reconstructed. Arranged-state detection is
+resolved once from user32; unavailable support is unknown. Saved visible bounds are
+separate from normal restore bounds, and minimized parking rectangles are not learned.
+Legacy layouts without this evidence do not establish a Snap arrangement.
+
+For a matching saved live arrangement with compatible display context and restore
+bounds, a minimized window receives only `SW_SHOWNOACTIVATE`; a visible match receives
+no show/placement command. Saved evidence can select a reveal candidate when native
+arranged state is false while minimized. Completion still requires a visible window,
+matching visible and restore bounds and matching native state. A stale arranged flag
+or normal bounds alone do not establish success. Incompatible arrangements in the
+same display context are declined before dispatch. Changed topology discards Snap
+evidence and can use the ordinary clamped normal fallback, not exact Snap restoration.
+
+### Storage and action sequencing
 
 Schema 1 JSON under LocalAppData defaults missing `auto_restore` to false. Storage is
 bounded to 4 MiB, 512 identities and 64 distinct remembered desktop IDs per identity
@@ -222,7 +239,8 @@ For ordinary placements, automatic restoration sets placement while minimized, p
 `WPF_RESTORETOMAXIMIZED`, then reveals with `SW_SHOWNOACTIVATE`; it never requests
 foreground. Explicit restoration may request focus only while its original user intent
 remains valid. A minimized HWND wins over stale foreground reports. Active owned dialogs
-are revealed/focused with the owner, never given separate layouts or buttons.
+are revealed/focused with the owner, never given separate layouts or buttons. Never
+bypass focus restrictions with synthetic Alt or thread-input attachment.
 
 ## Rail presentation
 
@@ -254,13 +272,14 @@ it holds the rail clipped without a reveal timer; disappearance starts the revea
 without the desktop-event wait. A snapshot within 400 ms of that return does not
 restart an active reveal. These shell classes are compatibility hints, not desktop
 identity. There is no background-host discovery, localized-title matching or extra
-periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#known-limitations-and-unmet-goals).
+periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#known-defects-and-unmet-behavior).
 
 ## Decisions and rationale
 
 | Decision | Rationale and rejected approach |
 | --- | --- |
-| Native controls, invalidation-driven paint, cached icons | Keep idle cost small; no browser runtime or permanent frame timer. A bounded timer runs only during switch settling/reveal. Existing reconciliation is the measured polling exception. |
+| Native controls, invalidation-driven paint, cached icons | Keep idle cost small; no browser runtime or permanent frame timer. A bounded slide-in timer runs after desktop switches or shell-switcher dismissal; existing reconciliation is the measured polling exception. |
+| Peek exclusion with a bounded slide-in | Preserve Task View thumbnail exclusion and capture behavior; presentation is independent of layout/focus policy and inherits shell timing limits. |
 | AppBar protocol with passive tool-window style | Negotiate work area instead of globally writing it. Presence across desktops must be tested; being an AppBar alone does not guarantee it. |
 | Process-isolated shell adapter | A deadline cannot cancel COM; unlimited replacement threads would leak blocked work. |
 | Generation/sequence and completion tracking | A Boolean around native calls cannot distinguish delayed work, rapid switches and user edits. |
@@ -268,11 +287,6 @@ periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#know
 | Stable external-restore observations | Manual Windows restores should establish memory without learning minimized/off-screen intermediate coordinates. |
 | Minimum-build eligibility plus runtime failure handling | Replace restrictive revision opt-ins without claiming every eligible revision is validated. |
 | Per-user portable distribution and Startup shortcut | No service, driver or installation elevation required; signing/installer work is undecided. |
-
-AppBars do not force manually positioned or fullscreen windows to respect work area.
-Use Per-Monitor V2 and display/DPI notifications for rail geometry. Explicit clicks need
-guarded activation; never bypass focus restrictions with synthetic Alt or thread-input
-attachment. Fullscreen and real-click pitfalls are documented in [Troubleshooting](Troubleshooting.md).
 
 ## API references
 
@@ -286,6 +300,7 @@ These references explain the API choices; they do not certify product behavior.
 - [SetWinEventHook](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwineventhook) and [callback reentrancy](https://learn.microsoft.com/en-us/windows/win32/winauto/guarding-against-reentrancy-in-hook-functions)
 - [WINDOWPLACEMENT coordinate rules](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-windowplacement)
 - [High DPI desktop development](https://learn.microsoft.com/en-us/windows/win32/hidpi/high-dpi-desktop-application-development-on-windows)
+- [IsWindowArranged](https://learn.microsoft.com/en-us/windows/win32/winmsg/winuser/nf-winuser-iswindowarranged) and [ShowWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow)
 - [Window-property cleanup](https://devblogs.microsoft.com/oldnewthing/20231030-00/?p=108939)
 
 ## Design references

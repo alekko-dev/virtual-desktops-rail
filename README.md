@@ -150,7 +150,8 @@ which old layout belongs to which window.
 
 Configuration, previous-state backup, and bounded diagnostics live under
 `%LOCALAPPDATA%\VirtualDesktopRail`. Layout history is limited to 512 window identities
-and 64 desktop layouts per identity; new identities are omitted at the identity limit.
+and 64 remembered desktops per identity (layouts and minimized preferences combined);
+new identities are omitted at the identity limit.
 There is no history-management UI yet.
 
 The support report includes a bounded event history of desktop transitions, accepted and
