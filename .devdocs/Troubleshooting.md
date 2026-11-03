@@ -134,6 +134,34 @@ automate lock/security screens or classify that interval as a passing run.
 
 ## Misleading layout or performance observations
 
+### Outlook reappears after returning to a saved desktop
+
+The user-supplied `VirtualDesktopRail_diagnostic_1793701509_Outlook_popedup_on_desktop.zip`
+provides direct action evidence on 2026-11-03: report version 0.1.0, clean commit
+`0b593b1131a8fa297b06cfc150271c4495bf1a18`, Windows 26300.9711. Auto-restore was enabled,
+pause was off, and Outlook had a saved Desktop 3 layout. At 11:24:53.248 CET an Outlook
+action completed verified with `minimized: true` on Desktop 4. Returning to Desktop 3
+was observed at 11:24:55.299; Rail accepted sequence 34 with the saved Desktop 3
+geometry at 11:24:55.428 and verified it unminimized at 11:24:55.438. The report's
+fresh native observation also found Outlook visible and unminimized, without pending
+or blocked work. Earlier returns to Desktop 3 show the same restoration pattern.
+
+This identifies Rail restoration on desktop return, consistent with that build's
+auto-restore policy. Source at the reported commit confirms that its controller
+chooses `RestoreAutomatic` whenever auto-restore is enabled and the destination has
+a layout, even for a minimized window. That record had no independent minimized intent.
+The fix adds `minimized_desktops` separately from geometry: current verified manual
+minimization or trusted external minimize evidence sets it; manual restoration clears
+it. Automatic minimization/restoration does neither. Destination intent overrides a
+saved layout, including after a late restore completes. The timeout path preserves
+the single latest desired action while quarantined so late work can reconcile.
+
+Evidence limits: the event tail does not establish when the user manually minimized
+Outlook on Desktop 3 or whether foreground focus changed. Action entries do not label
+automatic versus explicit intent; their timing and saved targets support the automatic
+path. This was archive/source analysis, not a live Outlook reproduction or Snap-group
+diagnosis.
+
 External restoration can briefly report minimized/off-screen geometry. Require stable,
 reachable observations at least 100 ms apart; exclude drags and pending/late own actions.
 Automatic restoration must not learn geometry. Preserve outstanding operation slots after

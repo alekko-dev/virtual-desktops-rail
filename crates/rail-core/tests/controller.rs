@@ -55,6 +55,324 @@ fn baseline() -> (Model, Window, String) {
     (model, window, key)
 }
 
+fn saved_destinations() -> (Model, Window, String) {
+    let (mut model, window, key) = baseline();
+    let record = model.saved.windows.get_mut(&key).unwrap();
+    record.layouts.insert("A".into(), layout(100));
+    record.layouts.insert("B".into(), layout(700));
+    model.set_auto_restore(true);
+    (model, window, key)
+}
+
+fn minimize_observation(
+    model: &Model,
+    window: &Window,
+    event_tick: u64,
+    tick: u64,
+) -> MinimizeObservation {
+    let mut window = window.clone();
+    window.minimized = true;
+    MinimizeObservation {
+        sequence: model.windows[&window.identity.key()].sequence,
+        window,
+        desktop: model.current.clone().unwrap(),
+        generation: model.generation,
+        event_tick,
+        tick,
+        transition_serial: model.transition_serial,
+    }
+}
+
+#[test]
+fn explicit_minimize_is_remembered_per_desktop_and_restore_clears_only_that_desktop() {
+    let (mut model, mut window, key) = saved_destinations();
+    model.click(&key, true);
+    let minimize = model.take_requests(110).remove(0);
+    assert!(model.saved.windows[&key].minimized_desktops.is_empty());
+    model.completed(&key, minimize.sequence, 120, true, false);
+    assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+    assert_eq!(model.saved.windows[&key].layouts["A"], layout(100));
+    window.minimized = true;
+    model.snapshot(snapshot("B", 200, vec![window.clone()]));
+    let restore_b = model.take_requests(201).remove(0);
+    assert_eq!(restore_b.action, Action::RestoreAutomatic(layout(700)));
+    model.completed(&key, restore_b.sequence, 220, true, false);
+    window.minimized = false;
+    model.snapshot(snapshot("A", 300, vec![window.clone()]));
+    let minimize_a = model.take_requests(301).remove(0);
+    assert_eq!(minimize_a.action, Action::Minimize { automatic: true });
+    model.completed(&key, minimize_a.sequence, 320, true, false);
+    model
+        .saved
+        .windows
+        .get_mut(&key)
+        .unwrap()
+        .minimized_desktops
+        .insert("B".into());
+    model.click(&key, false);
+    let restore_a = model.take_requests(330).remove(0);
+    assert_eq!(restore_a.action, Action::Restore(layout(100)));
+    model.completed(&key, restore_a.sequence, 350, true, false);
+    assert_eq!(
+        model.saved.windows[&key].minimized_desktops,
+        ["B".into()].into()
+    );
+}
+
+#[test]
+fn external_minimize_without_geometry_survives_round_trip_and_does_not_learn_parking_bounds() {
+    let (mut model, mut window, key) = baseline();
+    model.set_auto_restore(true);
+    let fallback = model.saved.windows[&key].last_usable.clone();
+    window.minimized = true;
+    window.layout.normal = [-32000, -32000, -31400, -31580];
+    model.snapshot(snapshot("A", 120, vec![window.clone()]));
+    assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+    assert!(model.saved.windows[&key].layouts.is_empty());
+    assert_eq!(model.saved.windows[&key].last_usable, fallback);
+    model.snapshot(snapshot("B", 200, vec![window.clone()]));
+    assert!(model.take_requests(201).is_empty());
+    model.snapshot(snapshot("A", 300, vec![window]));
+    assert!(model.take_requests(301).is_empty());
+}
+
+#[test]
+fn external_restore_clears_minimized_intent_only_after_stable_reachable_geometry() {
+    let (mut model, mut window, key) = saved_destinations();
+    window.minimized = true;
+    model.snapshot(snapshot("A", 120, vec![window.clone()]));
+    window.minimized = false;
+    window.layout.normal = [-32000, -32000, -31400, -31580];
+    model.snapshot(snapshot("A", 140, vec![window.clone()]));
+    model.snapshot(snapshot("A", 250, vec![window.clone()]));
+    assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+    window.layout = layout(450);
+    model.snapshot(snapshot("A", 270, vec![window.clone()]));
+    model.snapshot(snapshot("A", 369, vec![window.clone()]));
+    assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+    model.snapshot(snapshot("A", 370, vec![window]));
+    assert!(!model.saved.windows[&key].minimized_desktops.contains("A"));
+    assert_eq!(model.saved.windows[&key].layouts["A"], layout(450));
+}
+
+#[test]
+fn automatic_actions_and_their_native_events_do_not_change_user_intent() {
+    let (mut model, mut window, key) = saved_destinations();
+    model.set_auto_restore(false);
+    model.snapshot(snapshot("B", 200, vec![window.clone()]));
+    let request = model.take_requests(201).remove(0);
+    let event = minimize_observation(&model, &window, 210, 211);
+    assert!(!model.observe_minimized(event.clone()));
+    window.minimized = true;
+    model.snapshot(snapshot("B", 215, vec![window.clone()]));
+    model.completed(&key, request.sequence, 220, true, false);
+    assert!(!model.observe_minimized(event));
+    model.snapshot(snapshot("B", 230, vec![window.clone()]));
+    model.snapshot(snapshot("B", 240, vec![window]));
+    assert!(model.saved.windows[&key].minimized_desktops.is_empty());
+}
+
+#[test]
+fn stale_cancelled_failed_and_late_explicit_completions_do_not_commit_intent() {
+    for outcome in ["cancel", "timeout", "supersede", "switch"] {
+        let (mut model, window, key) = saved_destinations();
+        model.click(&key, true);
+        let request = model.take_requests(110).remove(0);
+        match outcome {
+            "cancel" => model.completed(&key, request.sequence, 120, false, true),
+            "timeout" => {
+                model.completed(&key, request.sequence, 120, false, false);
+                model.completed(&key, request.sequence, 130, true, false);
+            }
+            "supersede" => {
+                model.click(&key, false);
+                model.completed(&key, request.sequence, 130, true, false);
+            }
+            _ => {
+                model.snapshot(snapshot("B", 120, vec![window]));
+                model.completed(&key, request.sequence, 130, true, false);
+            }
+        }
+        assert!(
+            model.saved.windows[&key].minimized_desktops.is_empty(),
+            "{outcome}"
+        );
+    }
+}
+
+#[test]
+fn native_minimize_before_immediate_switch_preserves_outgoing_intent() {
+    let (mut model, window, key) = saved_destinations();
+    assert!(model.observe_minimized(minimize_observation(&model, &window, 110, 115)));
+    // An already-queued older frame must not undo the newer native state.
+    model.snapshot(snapshot("A", 112, vec![window.clone()]));
+    assert!(model.windows[&key].window.minimized);
+    model.snapshot(snapshot("B", 113, vec![window.clone()]));
+    assert_eq!(model.current.as_deref(), Some("A"));
+    model.snapshot(snapshot("A", 115, vec![window.clone()]));
+    assert!(model.windows[&key].window.minimized);
+    model.snapshot(snapshot("B", 120, vec![window.clone()]));
+    let request = model.take_requests(121).remove(0);
+    assert_eq!(request.action, Action::RestoreAutomatic(layout(700)));
+    model.completed(&key, request.sequence, 140, true, false);
+    model.snapshot(snapshot("A", 150, vec![window]));
+    assert_eq!(
+        model.take_requests(151)[0].action,
+        Action::Minimize { automatic: true }
+    );
+    assert_eq!(
+        model.saved.windows[&key].minimized_desktops,
+        ["A".into()].into()
+    );
+}
+
+#[test]
+fn native_minimize_rejects_duplicates_wrong_context_and_recycled_identity() {
+    for invalid in [
+        "duplicate",
+        "generation",
+        "desktop",
+        "serial",
+        "sequence",
+        "identity",
+        "hwnd",
+        "drag",
+        "unavailable",
+    ] {
+        let (mut model, window, key) = baseline();
+        let mut event = minimize_observation(&model, &window, 110, 120);
+        match invalid {
+            "duplicate" => {
+                assert!(model.observe_minimized(event.clone()));
+            }
+            "generation" => event.generation += 1,
+            "desktop" => event.desktop = "B".into(),
+            "serial" => event.transition_serial += 1,
+            "sequence" => event.sequence += 1,
+            "identity" => event.window.identity.process_created += 1,
+            "hwnd" => event.window.hwnd += 1,
+            "drag" => model.moving(window.hwnd, true, 105, None),
+            _ => model.unavailable(),
+        }
+        model.dirty = false;
+        assert!(!model.observe_minimized(event), "{invalid}");
+        assert!(!model.dirty, "{invalid}");
+        if invalid != "duplicate" {
+            assert!(model.saved.windows[&key].minimized_desktops.is_empty());
+        }
+    }
+}
+
+#[test]
+fn late_restore_reconciles_to_minimized_saved_destination_without_clearing_intent() {
+    let (mut model, mut window, key) = saved_destinations();
+    model
+        .saved
+        .windows
+        .get_mut(&key)
+        .unwrap()
+        .minimized_desktops
+        .insert("A".into());
+    window.minimized = true;
+    model.snapshot(snapshot("B", 200, vec![window.clone()]));
+    let restore = model.take_requests(201).remove(0);
+    model.dispatched(&key, restore.sequence);
+    model.snapshot(snapshot("A", 210, vec![window]));
+    assert!(model.take_requests(211).is_empty());
+    model.completed(&key, restore.sequence, 220, false, false);
+    model.completed(&key, restore.sequence, 300, true, false);
+    assert_eq!(
+        model.take_requests(301)[0].action,
+        Action::Minimize { automatic: true }
+    );
+    assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+}
+
+#[test]
+fn minimized_intent_persists_but_baselines_do_not_infer_it_and_deleted_desktops_are_pruned() {
+    let (mut model, mut window, key) = saved_destinations();
+    model.pause(true);
+    window.minimized = true;
+    model.snapshot(snapshot("A", 120, vec![window.clone()]));
+    assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+    let saved = Saved::decode(&serde_json::to_vec(&model.saved).unwrap()).unwrap();
+    let mut restarted = Model::new(saved);
+    window.minimized = false;
+    restarted.snapshot(snapshot("A", 200, vec![window.clone()]));
+    restarted.pause(false);
+    restarted.set_auto_restore(false);
+    restarted.set_auto_restore(true);
+    restarted.unavailable();
+    restarted.snapshot(snapshot("A", 220, vec![window.clone()]));
+    assert!(restarted.take_requests(221).is_empty());
+    assert!(
+        restarted.saved.windows[&key]
+            .minimized_desktops
+            .contains("A")
+    );
+    let mut frame = snapshot("B", 300, vec![window]);
+    frame.desktops.retain(|d| d.id == "B");
+    restarted.snapshot(frame);
+    assert!(restarted.saved.windows[&key].minimized_desktops.is_empty());
+    assert!(!restarted.saved.windows[&key].layouts.contains_key("A"));
+}
+
+#[test]
+fn minimized_intent_legacy_default_and_union_limit_are_validated() {
+    let (model, _, key) = baseline();
+    let mut json = serde_json::to_value(&model.saved).unwrap();
+    json["windows"][&key]
+        .as_object_mut()
+        .unwrap()
+        .remove("minimized_desktops");
+    let mut saved = Saved::decode(&serde_json::to_vec(&json).unwrap()).unwrap();
+    assert!(saved.windows[&key].minimized_desktops.is_empty());
+    let record = saved.windows.get_mut(&key).unwrap();
+    record.layouts = (0..64).map(|i| (i.to_string(), layout(100))).collect();
+    record.minimized_desktops = ["0".into()].into();
+    assert!(Saved::decode(&serde_json::to_vec(&saved).unwrap()).is_ok());
+    saved
+        .windows
+        .get_mut(&key)
+        .unwrap()
+        .minimized_desktops
+        .insert("65".into());
+    assert!(Saved::decode(&serde_json::to_vec(&saved).unwrap()).is_err());
+}
+
+#[test]
+fn unsuccessful_manual_restore_retains_the_minimized_preference() {
+    for cancelled in [false, true] {
+        let (mut model, mut window, key) = saved_destinations();
+        window.minimized = true;
+        model.snapshot(snapshot("A", 120, vec![window.clone()]));
+        model.click(&key, false);
+        let restore = model.take_requests(121).remove(0);
+        model.completed(&key, restore.sequence, 140, false, cancelled);
+        if !cancelled {
+            model.completed(&key, restore.sequence, 300, true, false);
+            window.minimized = false;
+            model.snapshot(snapshot("A", 310, vec![window.clone()]));
+            model.snapshot(snapshot("A", 420, vec![window]));
+        }
+        assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+    }
+}
+
+#[test]
+fn native_manual_minimize_immediately_after_verified_restore_is_not_suppressed() {
+    let (mut model, mut window, key) = saved_destinations();
+    window.minimized = true;
+    model.snapshot(snapshot("A", 120, vec![window.clone()]));
+    model.click(&key, false);
+    let restore = model.take_requests(121).remove(0);
+    model.completed(&key, restore.sequence, 140, true, false);
+    assert!(model.windows[&key].suppress_next_state);
+    assert!(!model.observe_minimized(minimize_observation(&model, &window, 130, 141)));
+    assert!(model.observe_minimized(minimize_observation(&model, &window, 150, 151)));
+    assert!(model.saved.windows[&key].minimized_desktops.contains("A"));
+}
+
 #[test]
 fn baseline_pin_discovery_recovery_and_resume_do_not_minimize() {
     let (mut model, window, _) = baseline();
@@ -164,6 +482,7 @@ fn recycled_hwnd_and_ambiguous_restart_never_receive_old_layouts_or_results() {
     assert!(model.windows[&new_key].pending.is_none());
     assert!(model.saved.windows[&new_key].layouts.is_empty());
     assert!(model.saved.windows.contains_key(&old_key));
+    assert!(model.saved.windows[&old_key].minimized_desktops.is_empty());
 }
 
 #[test]

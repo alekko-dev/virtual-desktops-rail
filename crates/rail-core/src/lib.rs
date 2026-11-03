@@ -132,6 +132,9 @@ pub struct Record {
     pub identity: Identity,
     pub last_usable: Layout,
     pub layouts: BTreeMap<String, Layout>,
+    /// User intent, independent of Rail's automatic switch minimization.
+    #[serde(default)]
+    pub minimized_desktops: BTreeSet<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -172,7 +175,13 @@ impl Saved {
             || saved.windows.len() > 512
             || saved.windows.iter().any(|(key, record)| {
                 *key != record.identity.key()
-                    || record.layouts.len() > 64
+                    || record
+                        .layouts
+                        .keys()
+                        .chain(record.minimized_desktops.iter())
+                        .collect::<BTreeSet<_>>()
+                        .len()
+                        > 64
                     || !valid_layout(&record.last_usable)
                     || record.layouts.values().any(|layout| !valid_layout(layout))
             })
@@ -204,6 +213,22 @@ pub enum Action {
 }
 
 impl Action {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Minimize { .. } => "minimize",
+            Self::Restore(_) | Self::RestoreAutomatic(_) => "restore",
+            Self::Raise => "raise",
+        }
+    }
+
+    pub fn source(&self) -> &'static str {
+        if self.automatic() {
+            "automatic"
+        } else {
+            "explicit"
+        }
+    }
+
     pub fn automatic(&self) -> bool {
         matches!(
             self,
@@ -241,6 +266,19 @@ pub struct Runtime {
     pub suppress_next_state: bool,
     pub present: bool,
     pub external_restore: Option<(Layout, u64)>,
+    pub state_tick: u64,
+}
+
+/// Identity- and desktop-validated native minimize evidence from the shell worker.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MinimizeObservation {
+    pub window: Window,
+    pub desktop: String,
+    pub generation: u64,
+    pub sequence: u64,
+    pub event_tick: u64,
+    pub tick: u64,
+    pub transition_serial: u64,
 }
 
 pub struct Model {
@@ -252,6 +290,7 @@ pub struct Model {
     pub windows: BTreeMap<String, Runtime>,
     pub dirty: bool,
     pub transition_serial: u64,
+    last_snapshot_tick: u64,
 }
 
 impl Model {
@@ -265,6 +304,7 @@ impl Model {
             windows: BTreeMap::new(),
             dirty: false,
             transition_serial: 0,
+            last_snapshot_tick: 0,
         }
     }
 
@@ -279,6 +319,10 @@ impl Model {
     }
 
     pub fn snapshot(&mut self, snapshot: Snapshot) {
+        if snapshot.tick < self.last_snapshot_tick {
+            return;
+        }
+        self.last_snapshot_tick = snapshot.tick;
         let baseline = self.current.is_none();
         let changed = self.current.as_ref().is_some_and(|old| {
             *old != snapshot.current || self.transition_serial != snapshot.transition_serial
@@ -310,7 +354,12 @@ impl Model {
             record
                 .layouts
                 .retain(|id, _| known_desktops.contains(id.as_str()));
-            if before != record.layouts.len() {
+            let minimized_before = record.minimized_desktops.len();
+            record
+                .minimized_desktops
+                .retain(|id| known_desktops.contains(id.as_str()));
+            if before != record.layouts.len() || minimized_before != record.minimized_desktops.len()
+            {
                 self.dirty = true;
             }
         }
@@ -336,6 +385,7 @@ impl Model {
                         identity: window.identity.clone(),
                         last_usable: window.layout.clone(),
                         layouts: BTreeMap::new(),
+                        minimized_desktops: BTreeSet::new(),
                     },
                 );
                 self.dirty = true;
@@ -351,17 +401,23 @@ impl Model {
                 suppress_next_state: false,
                 present: true,
                 external_restore: None,
+                state_tick: snapshot.tick,
             });
             // Stable external restores and geometry changes are user intent.
             // Startup/recovery and our own pending/late work are not.
-            let can_observe_edit = !baseline
+            let can_observe_state = !baseline
                 && !changed
-                && !window.minimized
                 && runtime.pending.is_none()
                 && !runtime.blocked
                 && !runtime.dragging
                 && !runtime.suppress_next_state
-                && snapshot.tick > runtime.ignore_geometry_through;
+                && snapshot.tick > runtime.ignore_geometry_through
+                && snapshot.tick > runtime.state_tick;
+            if can_observe_state && window.minimized && !runtime.window.minimized {
+                let record = self.saved.windows.get_mut(&key).unwrap();
+                self.dirty |= record.minimized_desktops.insert(snapshot.current.clone());
+            }
+            let can_observe_edit = can_observe_state && !window.minimized;
             let mut external_restored = false;
             if can_observe_edit {
                 if runtime.window.minimized
@@ -389,13 +445,19 @@ impl Model {
                     || (!runtime.window.minimized
                         && window.layout.maximized != runtime.window.layout.maximized));
             if user_state_change && let Some(record) = self.saved.windows.get_mut(&key) {
+                if external_restored {
+                    record.minimized_desktops.remove(&snapshot.current);
+                }
                 record
                     .layouts
                     .insert(snapshot.current.clone(), window.layout.clone());
                 record.last_usable = window.layout.clone();
                 self.dirty = true;
             }
-            runtime.window = window;
+            if snapshot.tick > runtime.state_tick {
+                runtime.window = window;
+                runtime.state_tick = snapshot.tick;
+            }
             runtime.present = true;
             if runtime.pending.is_none() && snapshot.tick > runtime.ignore_geometry_through {
                 runtime.suppress_next_state = false;
@@ -406,6 +468,9 @@ impl Model {
                 runtime.ignore_geometry_through = snapshot.tick;
                 if !self.saved.paused && !runtime.dragging {
                     if self.saved.auto_restore
+                        && !self.saved.windows[&key]
+                            .minimized_desktops
+                            .contains(&snapshot.current)
                         && let Some(layout) =
                             self.saved.windows[&key].layouts.get(&snapshot.current)
                     {
@@ -425,6 +490,37 @@ impl Model {
                 }
             }
         }
+    }
+
+    pub fn observe_minimized(&mut self, observation: MinimizeObservation) -> bool {
+        let key = observation.window.identity.key();
+        let Some(runtime) = self.windows.get_mut(&key) else {
+            return false;
+        };
+        if self.current.as_ref() != Some(&observation.desktop)
+            || self.generation != observation.generation
+            || self.transition_serial != observation.transition_serial
+            || runtime.sequence != observation.sequence
+            || runtime.window.hwnd != observation.window.hwnd
+            || !runtime.present
+            || runtime.pending.is_some()
+            || runtime.blocked
+            || runtime.dragging
+            || runtime.window.minimized
+            || !observation.window.minimized
+            || observation.event_tick <= runtime.ignore_geometry_through
+            || observation.event_tick <= runtime.state_tick
+            || observation.tick < observation.event_tick
+        {
+            return false;
+        }
+        runtime.window.minimized = true;
+        runtime.state_tick = observation.tick;
+        self.last_snapshot_tick = self.last_snapshot_tick.max(observation.tick);
+        runtime.external_restore = None;
+        let record = self.saved.windows.get_mut(&key).unwrap();
+        self.dirty |= record.minimized_desktops.insert(observation.desktop);
+        true
     }
 
     pub fn set_auto_restore(&mut self, enabled: bool) {
@@ -597,18 +693,27 @@ impl Model {
         }
         runtime.ignore_geometry_through = runtime.ignore_geometry_through.max(tick);
         if verified
+            && !cancelled
+            && runtime.present
             && runtime.sequence == sequence
             && let Some(pending) = &runtime.pending
             && !pending.timed_out
             && pending.request.generation == self.generation
-            && let Action::Restore(layout) = &pending.request.action
             && let Some(record) = self.saved.windows.get_mut(key)
         {
-            record.last_usable = layout.clone();
-            record
-                .layouts
-                .insert(self.current.clone().unwrap(), layout.clone());
-            self.dirty = true;
+            let desktop = self.current.as_ref().unwrap();
+            match &pending.request.action {
+                Action::Restore(layout) => {
+                    record.last_usable = layout.clone();
+                    record.layouts.insert(desktop.clone(), layout.clone());
+                    record.minimized_desktops.remove(desktop);
+                    self.dirty = true;
+                }
+                Action::Minimize { automatic: false } => {
+                    self.dirty |= record.minimized_desktops.insert(desktop.clone());
+                }
+                _ => {}
+            }
         }
         if verified || cancelled {
             if verified && let Some(pending) = &runtime.pending {
@@ -623,9 +728,11 @@ impl Model {
             runtime.pending = None;
             runtime.blocked = false;
             runtime.suppress_next_state = verified;
+            runtime.state_tick = runtime.state_tick.max(tick);
         } else {
             runtime.blocked = true;
-            runtime.desired = None;
+            // Keep the single latest intent while quarantined. A late restore
+            // still has to reconcile to a user-minimized destination afterward.
             if let Some(pending) = &mut runtime.pending {
                 pending.timed_out = true;
             }

@@ -28,6 +28,7 @@ pub struct ReportWindow {
     pub cached_layout: rail_core::Layout,
     pub last_usable_layout: Option<rail_core::Layout>,
     pub saved_layouts: serde_json::Value,
+    pub minimized_desktops: Vec<String>,
     pub pending: bool,
     pub blocked: bool,
 }
@@ -334,7 +335,8 @@ fn create_report(request: ReportRequest, state_path: Option<&Path>) -> Result<Pa
                 "pending":item.pending,
                 "blocked":item.blocked,
                 "fresh_native_observation":native,
-                "saved_layouts":item.saved_layouts
+                "saved_layouts":item.saved_layouts,
+                "minimized_desktops":item.minimized_desktops
             })
         })
         .collect::<Vec<_>>();
@@ -571,6 +573,7 @@ mod tests {
                 work_area: [25, 0, 1920, 1040],
             },
             layouts: BTreeMap::new(),
+            minimized_desktops: Default::default(),
         }
     }
     #[test]
@@ -597,6 +600,16 @@ mod tests {
         a.auto_restore = true;
         a.preferences_revision += 1;
         a.windows.get_mut(&first_key).unwrap().last_usable.normal = [250, 100, 750, 500];
+        a.windows
+            .get_mut(&first_key)
+            .unwrap()
+            .minimized_desktops
+            .insert("desktop-a".into());
+        b.windows
+            .get_mut(&second_key)
+            .unwrap()
+            .minimized_desktops
+            .insert("desktop-b".into());
         write(&path, &a, 7, &mut seen_a).unwrap();
         write(&path, &b, 8, &mut seen_b).unwrap();
         let merged = read(&path).unwrap();
@@ -605,6 +618,16 @@ mod tests {
         assert!(merged.auto_restore);
         assert_eq!(merged.windows[&first_key].last_usable.normal[0], 250);
         assert!(merged.windows.contains_key(&second_key));
+        assert!(
+            merged.windows[&first_key]
+                .minimized_desktops
+                .contains("desktop-a")
+        );
+        assert!(
+            merged.windows[&second_key]
+                .minimized_desktops
+                .contains("desktop-b")
+        );
         b.paused = true;
         b.experimental_integration = false;
         b.auto_restore = false;
@@ -701,11 +724,30 @@ mod tests {
         )
         .unwrap();
         let destination = directory.0.join("support.zip");
+        let mut fixture = record("private-path-marker", 7);
+        fixture.identity.executable = "C:\\private-path-marker\\fixture.exe".into();
         create_report(
             ReportRequest {
                 destination: destination.clone(),
                 context: serde_json::json!({"diagnostic_run":"run-test","desktops":[]}),
-                windows: vec![],
+                windows: vec![ReportWindow {
+                    label: "window-001".into(),
+                    window: rail_core::Window {
+                        identity: fixture.identity,
+                        hwnd: 0,
+                        pid: 0,
+                        minimized: true,
+                        responsive: true,
+                        layout: fixture.last_usable.clone(),
+                        popup: None,
+                    },
+                    cached_layout: fixture.last_usable,
+                    last_usable_layout: None,
+                    saved_layouts: serde_json::json!({}),
+                    minimized_desktops: vec!["desktop-001".into()],
+                    pending: false,
+                    blocked: false,
+                }],
             },
             Some(&state_path),
         )
@@ -716,6 +758,16 @@ mod tests {
         }
         assert!(archive.windows(8).any(|bytes| bytes == b"run-test"));
         assert!(archive.windows(9).any(|bytes| bytes == b"time_unix"));
+        assert!(
+            archive
+                .windows(b"minimized_desktops".len())
+                .any(|bytes| bytes == b"minimized_desktops")
+        );
+        assert!(
+            archive
+                .windows(b"fresh_native_observation".len())
+                .any(|bytes| bytes == b"fresh_native_observation")
+        );
         assert!(
             !archive
                 .windows(b"private-path-marker".len())

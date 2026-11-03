@@ -65,6 +65,52 @@ and continue independent checks; a locked/RDP-disconnected run is not a UI pass.
 
 ## Interactive regression matrix
 
+### Per-desktop minimized intent
+
+2026-11-03 verification used Windows 26300.9711 in the unlocked Explorer session,
+144 DPI, primary display 2048 by 1152, with two owned native-smoke windows, application
+pinning and auto-restore enabled. The tested dirty `0b593b1` release executable had
+SHA-256 `06EDCCA22C67514A4ED2AE4453676133CA7DFA55CE69C07C02D65234FCAE42B5`.
+Computer Use inspected actual rail/fixture screenshots and used real title-bar and
+rail pointer input plus Space on a focused rail button. CLI status independently
+checked minimized preferences, geometry, pending/blocked work and foreground context.
+
+| Scenario | Result |
+| --- | --- |
+| Title-bar minimize before any saved layout, then rail restore | Minimized intent recorded without geometry; restore cleared it and established a layout. |
+| Switch to an unsaved destination | Both fixtures minimized, without recording automatic minimization as user intent. |
+| Both destinations saved; minimize one fixture on B, real-dot B/A/B | Both restored on A; on return to B the manually minimized fixture stayed minimized while the other remained visible. No pending/blocked operations. The two UI actions were separate tool calls, so this is not a sub-poll-interval race certification. |
+| Rail restart with the same live fixtures | B's minimized preference and both layouts survived; baseline on A left both visible. |
+| Real foreground rail minimize, then Space restore | Minimize recorded A while retaining B; keyboard restore cleared A only, preserving B. |
+
+Automation visibility was temporarily on. Some switches made the rail untargetable
+despite toggling visibility; fresh selection/restart was needed. This does not certify
+normal-style cross-desktop presence. The original desktop was restored, owned fixture
+pins removed, processes identity-checked before stopping, automation visibility verified
+off and original state/backup/log files restored byte-for-byte. No desktops were created.
+
+Live two-window Snap regression remains unverified: Computer Use rejected the
+edge-directed drag because its endpoint was outside the fixture's window bounds.
+Windows-key switching was not attempted: the installed computer-use skill prohibits
+Windows-key shortcuts. External taskbar restore, focus preservation with an independent
+foreground anchor, and native minimize/switch delivery races remain live verification
+gaps. Controller regressions cover stable external restore, stale frames/events,
+duplicate/recycled identity, immediate-switch ordering and late/quarantined completion.
+Final `check-dev.ps1` verification passed formatting, warnings-denied Clippy, 78 tests,
+version contracts and locked release builds using a workspace-owned temporary folder
+(the default temporary folder denied report replacement). The final dirty `0b593b1`
+release executable, SHA-256
+`C3E13F2F4DCA9797273EB8648C4DDAF1EED6F76C14008A076CA16D577FB96AB6`,
+also passed fresh-fixture title-bar minimization, real rail restoration/intent clearing,
+and a saved-layout minimized A/B/A round trip. Departure used the real rail dot; the
+return was observed after an interruption, so this is not controlled rapid-switch
+timing evidence. Diagnostics recorded no restore request for the user-minimized
+fixture on return; status showed its saved A layout and minimized preference intact,
+with no pending/blocked work. Cleanup again verified the original desktop, unpinned
+owned fixtures, automation visibility off and byte-identical restoration of original
+state/backup/log files. Timestamp guards, immediate post-restore minimize, and
+nonempty-report privacy assertions are covered by the automated regressions.
+
 For future Snap-specific verification, use two-member groups only, with a separate
 unsnapped observer when needed. Historical larger-group evidence remains valid, but
 new larger-group tests require a change in user scope. The prioritized remaining

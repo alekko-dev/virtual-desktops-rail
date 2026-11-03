@@ -122,6 +122,14 @@ there still minimize. Manual rail restores and stable external Windows restores
 and maximize normally to update it. Automatic restoration preserves saved geometry;
 minimizing does not forget layouts.
 
+Minimizing a shared window yourself, using its normal controls or the rail, remembers
+it as minimized on that desktop. It stays minimized when you return, including with
+automatic restoration enabled. Other desktops keep their own state. Restore it
+manually to allow automatic restoration there again. Rail's automatic minimization
+on switching desktops does not change this preference. These preferences survive rail
+restarts for the same live windows. Changes while Rail is stopped or desktop integration
+is unavailable cannot be reliably attributed to a desktop and are not inferred on recovery.
+
 Pause suspends both automatic minimization and restoration. Starting the app,
 resuming, recovering integration, or changing the restoration setting does not
 immediately move windows; the next desktop switch applies the policy.

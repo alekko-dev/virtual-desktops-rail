@@ -11,7 +11,7 @@ and decisions are in [Architecture](Architecture.md); scoped results are in [Tes
 | Native rail | 25-DIP primary-left AppBar, desktop dots/names, per-window icons, pause, settings and separate exit; app icon embedded at multiple sizes | Native fixture, real pointer/keyboard and fullscreen checks recorded; broader visual/accessibility matrix open |
 | Shared-window discovery | Window OR app pinning, minimized windows, cached one-second checks and 30-second safety rescans | Task View origin established on 26300.9457; API exercises also passed on 26300.9711 |
 | Layout management | Independent normal/maximized desktop layouts, clamped fallback, default minimize-on-switch/restore-on-demand | Fixture A/B/A, maximized, modal and duplicate-window checks passed |
-| Optional auto-restore | Default-off preference; saved destinations restore without focus, unsaved ones minimize; manual/external restores establish layouts | Owned-window and actual packaged-executable checks on 9711; external fixture restore was not a literal taskbar click |
+| Optional auto-restore | Default-off preference; saved destinations restore without focus, unsaved ones minimize; per-desktop user-minimized intent overrides restoration; manual/external restores establish layouts | Historical restore checks on 9711; minimized-intent verification is recorded in Testing |
 | Controller ordering | Generations/sequences, one outstanding operation per identity, deadlines/quarantine, late-result guards | Pure regression scenarios and stalled-target checks; accepted native work cannot be retracted |
 | Identity and persistence | Non-pointer token plus process lifetime/executable/session; atomic schema-1 state, backup/corrupt recovery, bounds and cross-session merges | Duplicate live windows survive rail restart; app restarts intentionally get fresh identities; real concurrent sessions remain open |
 | Recovery and eligibility | Owned COM worker, bounded IPC/watchdog/JobObject, backoff, TaskbarCreated handling, retry and unavailable controls; shared minimum-build policy | Explicit retry passed; actual Explorer restart remains open. Eligibility is broader than tested revisions. |
@@ -35,14 +35,14 @@ change. This is dated evidence, not a permanent expected test count or a fresh t
   path and visible-result verification. Native group membership is not stored or recreated.
   Actual two-fixture saved/unsaved and both-saved automatic round trips now pass locally;
   different/lost arrangements, explicit normal/Snap transitions, changed topology,
-  constrained-size completion and minimized-at-departure intent remain unfinished.
+  constrained-size completion and broader minimized-at-departure verification remain unfinished.
   Calculator duplicate frame/content eligibility and the user's exact intermittent conflict
   remain undiagnosed. Settings notices now expand conditionally and timeout notices clear
   after observed late completion. See [implementation and evidence](Snapping.md).
-- The requested destination behavior is exact last-visit restoration, including
-  minimized intent and snapped visible geometry. Current auto-restore reveals saved
-  windows even when previously minimized; minimized intent is not independently saved.
-  Treat exact restoration as the target, not an already-supported capability.
+- Per-desktop user-minimized intent is now independently saved. External changes
+  while stopped/unavailable and events that cannot be safely attributed across a
+  desktop transition are not inferred. Exact last-visit restoration across all Snap,
+  topology and concurrent-action cases remains a broader acceptance target.
 - First observed desktop-event-to-automatic-minimize dispatch: **72.635 ms**, above the
   provisional 50 ms target. Representative distributions and optimization remain open.
 - Transient `0x80070490` pin failures lack an established root cause; current behavior
@@ -60,7 +60,7 @@ change. This is dated evidence, not a permanent expected test count or a fresh t
 
 | Work | Completion evidence / prerequisites |
 | --- | --- |
-| Exact destination restoration and Snap verification | Finish explicit normal/Snap transitions and minimized intent; cover mixed unsaved destinations, constrained-size completion, and Calculator duplicate eligibility. Preserve the verified same-arrangement visible-bounds/drag-away and notice-recovery fixes. See [Snapping](Snapping.md). |
+| Exact destination restoration and Snap verification | Finish explicit normal/Snap transitions and broader minimized-intent verification; cover mixed unsaved destinations, constrained-size completion, and Calculator duplicate eligibility. Preserve the verified same-arrangement visible-bounds/drag-away and notice-recovery fixes. See [Snapping](Snapping.md). |
 | Diagnose transient pin errors | Reproducible candidate-attributed evidence without window titles; preserve strict query classification |
 | Latency and realistic resource coverage | Stable populated-workload distributions, both processes, clear event boundary and counter definitions; larger inventories and physical hardware |
 | Shell/session recovery | Record a recoverable checkpoint first; actual Explorer restart, sleep/resume, lock/unlock and reconnect without layout corruption or unsolicited actions |
