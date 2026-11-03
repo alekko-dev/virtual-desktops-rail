@@ -43,6 +43,19 @@ This nonpersistent mode changes discoverability while retaining no-activation be
 and the same controls/controller. Restore it off even after failed tests. Check normal
 passive style separately for cross-desktop presence, Task View exclusion and fullscreen.
 Never construct an automation target from a diagnostic HWND when the tool cannot select it.
+
+The Settings **Save diagnostic report…** workflow is local and user-directed. For a report
+change, inspect the actual Settings control and save-picker appearance, then verify one
+archive contains `README.txt`, `report.json`, and bounded `events.jsonl`. Check that fresh
+native observations are explicitly unavailable when identity revalidation fails, and that
+the ZIP excludes window titles, content, HWNDs, PIDs, full executable paths and desktop
+names/IDs. It does not prove native group membership or any unexposed shell state. Do not
+attach/upload the archive during testing; preserve the user's chosen location and settings.
+For this implementation, `check-dev.ps1` passed; live verification was attempted through
+Computer Use but the passive rail had no targetable window. A subsequent status command
+timed out, so Settings appearance, picker interaction and an actual archive remain
+unverified. The test-launched processes were closed and the existing state/backup/log
+files were restored byte-for-byte.
 If the desktop locks or observation fails, stop input, report what remains unverified
 and continue independent checks; a locked/RDP-disconnected run is not a UI pass.
 
