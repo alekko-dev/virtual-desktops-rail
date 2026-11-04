@@ -89,11 +89,14 @@ fn visible_shell_switcher(window: HWND) -> Option<usize> {
     }
 }
 
-/// Discover a switcher while it holds foreground. As soon as foreground leaves
-/// Task View, return None so the rail restores immediately without lag.
-pub fn shell_switcher_visible(_tracked: Option<usize>) -> Option<usize> {
+/// Discover a switcher only after it takes foreground. Retain that same host
+/// until hidden/cloaked so Task View's exit animation can finish before reveal.
+pub fn shell_switcher_visible(tracked: Option<usize>) -> Option<usize> {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-    visible_shell_switcher(unsafe { GetForegroundWindow() })
+    if let Some(window) = visible_shell_switcher(unsafe { GetForegroundWindow() }) {
+        return Some(window);
+    }
+    tracked.and_then(|window| visible_shell_switcher(hwnd(window)))
 }
 pub fn supported(experimental: bool) -> Result<(), String> {
     let os = diagnostic::os_version()?;
