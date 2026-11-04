@@ -42,9 +42,6 @@ const SAVE_REPORT: usize = 6105;
 const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
 const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
 const REVEAL_TIMER: usize = 0x524c;
-// The adapter reports desktop identity before the shell finishes composing its
-// animated switch. This is a bounded presentation delay, not a completion signal.
-const EXTERNAL_SWITCH_SETTLE_MS: u64 = 400;
 const REVEAL_DURATION_MS: u64 = 200;
 
 #[derive(Default)]
@@ -94,7 +91,42 @@ struct Button {
     hwnd: Handle,
     id: usize,
     kind: ButtonKind,
+    caption: String,
+    enabled: bool,
     y: i32,
+    cell: i32,
+    width: i32,
+}
+
+unsafe extern "system" fn button_procedure(
+    window: Handle,
+    message: u32,
+    wparam: usize,
+    lparam: isize,
+) -> isize {
+    if message == 0x0014 {
+        return 1;
+    }
+    let orig = unsafe { GetWindowLongPtrW(window, -21) };
+    if orig != 0 {
+        let proc: unsafe extern "system" fn(
+            windows::Win32::Foundation::HWND,
+            u32,
+            windows::Win32::Foundation::WPARAM,
+            windows::Win32::Foundation::LPARAM,
+        ) -> windows::Win32::Foundation::LRESULT = unsafe { std::mem::transmute(orig) };
+        return unsafe {
+            windows::Win32::UI::WindowsAndMessaging::CallWindowProcW(
+                Some(proc),
+                windows::Win32::Foundation::HWND(window),
+                message,
+                windows::Win32::Foundation::WPARAM(wparam),
+                windows::Win32::Foundation::LPARAM(lparam),
+            )
+            .0
+        };
+    }
+    unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -156,9 +188,7 @@ struct App {
     stopped: bool,
     reveal: SlideIn,
     reveal_offset: i32,
-    requested_switch: Option<(String, u64)>,
     shell_switcher: Option<usize>,
-    shell_returned: Option<u64>,
 }
 
 struct ReportDraft {
@@ -179,14 +209,13 @@ impl App {
             serde_json::json!({"event":"shell_switcher_visibility","visible":switcher.is_some()}),
         ));
         if switcher.is_some() {
-            self.shell_returned = None;
-            // Hold an empty region without a frame timer while Task View is
-            // open, so its dismissal cannot flash a fully drawn rail first.
+            // Exclude from Task View previews and hold an empty region without a
+            // frame timer while Task View is open.
             self.finish_reveal();
         } else if was_open {
-            self.shell_returned = Some(platform::tick());
             self.begin_reveal(0);
         }
+        self.update_window_frame();
     }
 
     fn begin_reveal(&mut self, delay_ms: u64) {
@@ -215,34 +244,15 @@ impl App {
         unsafe {
             crate::native::GetClientRect(self.window, &mut client);
         }
-        let mut offset = if self.shell_switcher.is_some() && animations_enabled() {
+        let mut offset = if self.shell_switcher.is_some() {
             -client.right
         } else {
             self.reveal.offset(platform::tick(), client.right)
         };
         if offset != self.reveal_offset {
-            // The AppBar HWND/bounds/reservation never move. Its visible region
-            // grows as its artwork and native hit targets slide in together.
-            let region = if offset == 0 {
-                HRGN::default()
-            } else {
-                unsafe { CreateRectRgn(0, 0, (client.right + offset).max(0), client.bottom) }
-            };
-            if (offset != 0 && region.is_invalid())
-                || unsafe { SetWindowRgn(window, region, false) } == 0
-            {
-                if !region.is_invalid() {
-                    unsafe {
-                        let _ = DeleteObject(region);
-                    }
-                }
-                self.reveal.started = None;
-                offset = 0;
-                unsafe {
-                    SetWindowRgn(window, HRGN::default(), true);
-                }
-            }
+            offset = self.apply_window_region(offset, client.right, client.bottom);
             self.reveal_offset = offset;
+            self.update_window_frame();
             for button in &self.buttons {
                 unsafe {
                     let _ = SetWindowPos(
@@ -265,6 +275,55 @@ impl App {
                 let _ = KillTimer(window, REVEAL_TIMER);
             }
         }
+    }
+
+    fn update_window_frame(&self) {
+        use windows::Win32::Foundation::{BOOL, HWND};
+        use windows::Win32::Graphics::Dwm::{
+            DWMWA_EXCLUDED_FROM_PEEK, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmSetWindowAttribute,
+        };
+        let hwnd = HWND(self.window);
+        let dark_mode = BOOL(i32::from(dark()));
+        let excluded = BOOL(i32::from(self.shell_switcher.is_some()));
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &dark_mode as *const _ as *const std::ffi::c_void,
+                size_of::<BOOL>() as u32,
+            );
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_EXCLUDED_FROM_PEEK,
+                &excluded as *const _ as *const std::ffi::c_void,
+                size_of::<BOOL>() as u32,
+            );
+        }
+    }
+
+    fn apply_window_region(&mut self, mut offset: i32, width: i32, height: i32) -> i32 {
+        use windows::Win32::Graphics::Gdi::*;
+        let window = platform::hwnd(self.window as usize);
+        let region = if offset == 0 {
+            HRGN::default()
+        } else {
+            unsafe { CreateRectRgn(0, 0, (width + offset).max(0), height) }
+        };
+        if (offset != 0 && region.is_invalid())
+            || unsafe { SetWindowRgn(window, region, false) } == 0
+        {
+            if !region.is_invalid() {
+                unsafe {
+                    let _ = DeleteObject(region);
+                }
+            }
+            self.reveal.started = None;
+            offset = 0;
+            unsafe {
+                SetWindowRgn(window, HRGN::default(), true);
+            }
+        }
+        offset
     }
 
     fn command(&mut self, command: Command) {
@@ -326,9 +385,8 @@ impl App {
             }
             Command::Retry => {
                 self.shell_switcher = None;
-                self.shell_returned = None;
                 self.finish_reveal();
-                self.requested_switch = None;
+                self.update_window_frame();
                 let _ = self.storage.sender.try_send(store::Work::Trace(
                     serde_json::json!({"event":"integration_retry_requested"}),
                 ));
@@ -384,15 +442,12 @@ impl App {
                     (self.ready, &self.integration, &self.model.current)
                     && self.model.desktops.iter().any(|d| d.id == guid)
                     && *current != guid
-                    && integration
-                        .try_send(bridge::CommandMessage::Switch {
-                            guid: guid.clone(),
-                            expected_current: current.clone(),
-                            expected_serial: self.model.transition_serial,
-                        })
-                        .is_ok()
                 {
-                    self.requested_switch = Some((guid, platform::tick().saturating_add(2000)));
+                    let _ = integration.try_send(bridge::CommandMessage::Switch {
+                        guid,
+                        expected_current: current.clone(),
+                        expected_serial: self.model.transition_serial,
+                    });
                 }
             }
             Command::Click { key } => {
@@ -554,29 +609,6 @@ impl App {
                             serde_json::json!({"event":"desktop_transition_observed","from":from,"to":to,"serial":frame.transition_serial}),
                         ));
                         self.transition_received_us = received;
-                        // A polling observation may precede the notification for
-                        // the very same switch. Do not reset its active reveal.
-                        let returning = self.reveal.started.is_some()
-                            && self.shell_returned.is_some_and(|returned| {
-                                platform::tick().saturating_sub(returned)
-                                    < EXTERNAL_SWITCH_SETTLE_MS
-                            });
-                        if !returning
-                            && (self.model.current.as_ref() != Some(&frame.current)
-                                || self.reveal.started.is_none())
-                        {
-                            let instant =
-                                self.requested_switch
-                                    .take()
-                                    .is_some_and(|(target, deadline)| {
-                                        target == frame.current && platform::tick() <= deadline
-                                    });
-                            self.begin_reveal(if instant {
-                                0
-                            } else {
-                                EXTERNAL_SWITCH_SETTLE_MS
-                            });
-                        }
                     } else if self.model.current.is_none() {
                         self.transition_received_us = None;
                     }
@@ -623,9 +655,8 @@ impl App {
                     ));
                     if !ready {
                         self.shell_switcher = None;
-                        self.shell_returned = None;
                         self.finish_reveal();
-                        self.requested_switch = None;
+                        self.update_window_frame();
                         self.transition_received_us = None;
                         self.model.unavailable();
                     }
@@ -824,7 +855,7 @@ impl App {
                     }
                     _ => {
                         if matches!(event, 0x8001..=0x8003 | 0x8017 | 0x8018)
-                            && self.shell_switcher == Some(hwnd)
+                            && self.shell_switcher.is_some()
                         {
                             self.reconcile_shell_switcher();
                         }
@@ -864,24 +895,6 @@ impl App {
         );
         if force || signature != self.signature {
             self.signature = signature;
-            let focused = if unsafe { GetForegroundWindow() } == self.window {
-                self.buttons
-                    .iter()
-                    .find(|button| button.hwnd == unsafe { GetFocus() })
-                    .map(|button| button.kind.clone())
-            } else {
-                None
-            };
-            unsafe {
-                if !self.tooltip.is_null() {
-                    DestroyWindow(self.tooltip);
-                }
-                for button in self.buttons.drain(..) {
-                    DestroyWindow(button.hwnd);
-                }
-            }
-            self.tooltip = null_mut();
-            self.tips.clear();
             if self.font.is_null() || self.font_dpi != dpi {
                 let old_font = self.font;
                 self.font = unsafe {
@@ -909,25 +922,24 @@ impl App {
                     }
                 }
             }
-            self.tooltip = unsafe {
-                CreateWindowExW(
-                    8,
-                    wide("tooltips_class32").as_ptr(),
-                    wide("").as_ptr(),
-                    0x80000003,
-                    0,
-                    0,
-                    0,
-                    0,
-                    self.window,
-                    null_mut(),
-                    GetModuleHandleW(null()),
-                    null_mut(),
-                )
-            };
+            let windows = self
+                .model
+                .windows
+                .iter()
+                .filter(|(_, r)| r.present)
+                .map(|(k, r)| (k.clone(), r.window.clone(), r.blocked))
+                .collect::<Vec<_>>();
+            self.update_window_frame();
+            let mut bounds = Rect::default();
+            unsafe {
+                GetClientRect(self.window, &mut bounds);
+            }
+            self.reveal_offset =
+                self.apply_window_region(self.reveal_offset, bounds.right, bounds.bottom);
+            let button_width = scale(25) - 1;
+            let mut specs = Vec::new();
             let mut y = scale(42);
-            let desktops = self.model.desktops.clone();
-            for (index, desktop) in desktops.iter().enumerate() {
+            for (index, desktop) in self.model.desktops.iter().enumerate() {
                 let name = if desktop.name.is_empty() {
                     format!("Desktop {}", index + 1)
                 } else {
@@ -936,43 +948,32 @@ impl App {
                 let caption = if self.model.current.as_ref() == Some(&desktop.id) {
                     format!("{name} (current)")
                 } else {
-                    name.clone()
+                    name
                 };
-                let button = self.button(
+                specs.push((
                     100 + index,
-                    &caption,
+                    caption,
                     y,
                     scale(30),
                     ButtonKind::Desktop(desktop.id.clone()),
-                );
-                unsafe {
-                    EnableWindow(button, self.ready as i32);
-                }
+                    self.ready,
+                ));
                 y += scale(33);
             }
             y += scale(15);
-            let windows = self
-                .model
-                .windows
-                .iter()
-                .filter(|(_, r)| r.present)
-                .map(|(k, r)| (k.clone(), r.window.clone(), r.blocked))
-                .collect::<Vec<_>>();
             for (index, (key, window, blocked)) in windows.iter().enumerate() {
                 let name = std::path::Path::new(&window.identity.executable)
                     .file_stem()
                     .unwrap_or_default()
                     .to_string_lossy();
-                let button = self.button(
+                specs.push((
                     1000 + index,
-                    &format!("Shared {name} window {}", index + 1),
+                    format!("Shared {name} window {}", index + 1),
                     y,
                     scale(39),
                     ButtonKind::Window(key.clone()),
-                );
-                unsafe {
-                    EnableWindow(button, (self.ready && !blocked && window.responsive) as i32);
-                }
+                    self.ready && !blocked && window.responsive,
+                ));
                 let icon_key = (key.clone(), dpi);
                 if !self.icon_cache.contains_key(&icon_key)
                     && !self.icon_pending.contains(&icon_key)
@@ -982,13 +983,9 @@ impl App {
                 }
                 y += scale(45);
             }
-            let mut bounds = Rect::default();
-            unsafe {
-                GetClientRect(self.window, &mut bounds);
-            }
-            self.button(
+            specs.push((
                 PAUSE,
-                &format!(
+                format!(
                     "{}. {}",
                     if self.model.saved.paused {
                         "Resume automatic window actions"
@@ -1000,21 +997,115 @@ impl App {
                 bounds.bottom - scale(122),
                 scale(34),
                 ButtonKind::Pause,
-            );
-            self.button(
+                true,
+            ));
+            specs.push((
                 SETTINGS,
-                &format!("Settings. {}", self.status),
+                format!("Settings. {}", self.status),
                 bounds.bottom - scale(82),
                 scale(34),
                 ButtonKind::Settings,
-            );
-            self.button(
+                true,
+            ));
+            specs.push((
                 EXIT,
-                "Exit application",
+                "Exit application".into(),
                 bounds.bottom - scale(42),
                 scale(34),
                 ButtonKind::Exit,
-            );
+                true,
+            ));
+            let can_reuse = !force
+                && !self.tooltip.is_null()
+                && self.buttons.len() == specs.len()
+                && self
+                    .buttons
+                    .iter()
+                    .zip(&specs)
+                    .all(|(b, (id, _, y, cell, kind, _))| {
+                        b.id == *id
+                            && b.kind == *kind
+                            && b.y == *y
+                            && b.cell == *cell
+                            && b.width == button_width
+                    });
+            if can_reuse {
+                self.tips.clear();
+                for (button, (_, caption, _, _, _, enabled)) in self.buttons.iter_mut().zip(&specs)
+                {
+                    self.tips.push(wide(caption));
+                    let mut info = ToolInfo {
+                        size: size_of::<ToolInfo>() as u32,
+                        flags: 0x01,
+                        window: self.window,
+                        id: button.hwnd as usize,
+                        rect: Rect::default(),
+                        instance: null_mut(),
+                        text: self.tips.last_mut().unwrap().as_mut_ptr(),
+                        parameter: 0,
+                        reserved: null_mut(),
+                    };
+                    unsafe {
+                        if button.caption != *caption {
+                            button.caption = caption.clone();
+                            SendMessageW(self.tooltip, 0x0439, 0, &mut info as *mut _ as isize);
+                        }
+                        if button.enabled != *enabled {
+                            button.enabled = *enabled;
+                            EnableWindow(button.hwnd, *enabled as i32);
+                        }
+                        InvalidateRect(button.hwnd, null(), 0);
+                    }
+                }
+            } else {
+                let focused = if unsafe { GetForegroundWindow() } == self.window {
+                    self.buttons
+                        .iter()
+                        .find(|button| button.hwnd == unsafe { GetFocus() })
+                        .map(|button| button.kind.clone())
+                } else {
+                    None
+                };
+                unsafe {
+                    if !self.tooltip.is_null() {
+                        DestroyWindow(self.tooltip);
+                    }
+                    for button in self.buttons.drain(..) {
+                        DestroyWindow(button.hwnd);
+                    }
+                }
+                self.tooltip = unsafe {
+                    CreateWindowExW(
+                        8,
+                        wide("tooltips_class32").as_ptr(),
+                        wide("").as_ptr(),
+                        0x80000003,
+                        0,
+                        0,
+                        0,
+                        0,
+                        self.window,
+                        null_mut(),
+                        GetModuleHandleW(null()),
+                        null_mut(),
+                    )
+                };
+                self.tips.clear();
+                for (id, caption, y, cell, kind, enabled) in specs {
+                    let button = self.button(id, &caption, y, cell, kind, enabled);
+                    unsafe {
+                        EnableWindow(button, enabled as i32);
+                    }
+                }
+                if unsafe { GetForegroundWindow() } == self.window
+                    && let Some(focused) = focused
+                    && let Some(button) = self.buttons.iter().find(|button| button.kind == focused)
+                {
+                    unsafe {
+                        SetFocus(button.hwnd);
+                    }
+                }
+            }
             let live = self
                 .model
                 .windows
@@ -1034,22 +1125,24 @@ impl App {
                     false
                 }
             });
-            if unsafe { GetForegroundWindow() } == self.window
-                && let Some(focused) = focused
-                && let Some(button) = self.buttons.iter().find(|button| button.kind == focused)
-            {
-                unsafe {
-                    SetFocus(button.hwnd);
-                }
-            }
             unsafe {
-                InvalidateRect(self.window, null(), 1);
+                InvalidateRect(self.window, null(), 0);
             }
         }
         self.update_settings();
     }
 
-    fn button(&mut self, id: usize, name: &str, y: i32, cell: i32, kind: ButtonKind) -> Handle {
+    fn button(
+        &mut self,
+        id: usize,
+        name: &str,
+        y: i32,
+        cell: i32,
+        kind: ButtonKind,
+        enabled: bool,
+    ) -> Handle {
+        let button_width =
+            unsafe { ((25 * GetDpiForWindow(self.window).max(96) + 48) / 96) as i32 - 1 };
         let button = unsafe {
             CreateWindowExW(
                 0,
@@ -1058,7 +1151,7 @@ impl App {
                 0x5001000b,
                 self.reveal_offset,
                 y,
-                ((25 * GetDpiForWindow(self.window).max(96) + 48) / 96) as i32 - 1,
+                button_width,
                 cell,
                 self.window,
                 id as Handle,
@@ -1066,6 +1159,11 @@ impl App {
                 null_mut(),
             )
         };
+        unsafe {
+            let orig = GetWindowLongPtrW(button, -4);
+            SetWindowLongPtrW(button, -21, orig);
+            SetWindowLongPtrW(button, -4, button_procedure as *const () as isize);
+        }
         self.tips.push(wide(name));
         let mut info = ToolInfo {
             size: size_of::<ToolInfo>() as u32,
@@ -1085,7 +1183,11 @@ impl App {
             hwnd: button,
             id,
             kind,
+            caption: name.into(),
+            enabled,
             y,
+            cell,
+            width: button_width,
         });
         button
     }
@@ -1608,8 +1710,8 @@ impl App {
         }
         self.stopped = true;
         self.shell_switcher = None;
-        self.shell_returned = None;
         self.finish_reveal();
+        self.update_window_frame();
         if let Some(integration) = &self.integration {
             let _ = integration.try_send(bridge::CommandMessage::Stop);
         }
@@ -2106,8 +2208,19 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         }
         return 0;
     }
-    // Color/erase messages can reenter while ShowWindow holds the model borrow.
-    if !main {
+    // Color/erase messages can reenter while ShowWindow/SetWindowPos/EnableWindow hold the model borrow.
+    if main {
+        match message {
+            0x0014 => return 1,
+            0x0135 => unsafe {
+                return windows::Win32::Graphics::Gdi::GetStockObject(
+                    windows::Win32::Graphics::Gdi::NULL_BRUSH,
+                )
+                .0 as isize;
+            },
+            _ => {}
+        }
+    } else {
         match message {
             0x0135 | 0x0138 => unsafe {
                 let control = windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
@@ -2215,7 +2328,6 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             app.render(true);
             0
         }
-        0x0014 if main => 1,
         0x0113 if main && wparam == REVEAL_TIMER => {
             app.step_reveal();
             0
@@ -2223,8 +2335,15 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         0x000f if main => {
             let mut paint: Paint = unsafe { zeroed() };
             unsafe {
-                let dc = BeginPaint(window, &mut paint);
-                fill(dc, &paint.rect, palette().0);
+                let screen_dc = BeginPaint(window, &mut paint);
+                let mut client = Rect::default();
+                GetClientRect(window, &mut client);
+                let width = client.right.max(1);
+                let height = client.bottom.max(1);
+                let dc = CreateCompatibleDC(screen_dc);
+                let bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+                let previous = SelectObject(dc, bitmap);
+                fill(dc, &client, palette().0);
                 let _ = windows::Win32::Graphics::Gdi::SetViewportOrgEx(
                     windows::Win32::Graphics::Gdi::HDC(dc),
                     app.reveal_offset,
@@ -2233,8 +2352,6 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                 );
                 let dpi = GetDpiForWindow(window).max(96) as i32;
                 let scale = |dip: i32| (dip * dpi + 48) / 96;
-                let mut client = Rect::default();
-                GetClientRect(window, &mut client);
                 let size = scale(18);
                 DrawIconEx(
                     dc,
@@ -2269,6 +2386,16 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     },
                     border,
                 );
+                let _ = windows::Win32::Graphics::Gdi::SetViewportOrgEx(
+                    windows::Win32::Graphics::Gdi::HDC(dc),
+                    0,
+                    0,
+                    None,
+                );
+                BitBlt(screen_dc, 0, 0, width, height, dc, 0, 0, 0x00cc0020);
+                SelectObject(dc, previous);
+                DeleteObject(bitmap);
+                DeleteDC(dc);
                 EndPaint(window, &paint);
             }
             0
@@ -2456,9 +2583,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         stopped: false,
         reveal: SlideIn::default(),
         reveal_offset: 0,
-        requested_switch: None,
         shell_switcher: None,
-        shell_returned: None,
     }));
     unsafe {
         let instance = GetModuleHandleW(null());
@@ -2498,23 +2623,7 @@ pub fn run(settings: bool) -> Result<(), String> {
             return Err(std::io::Error::last_os_error().to_string());
         }
         app.borrow_mut().window = window;
-        // Keep the rail out of Task View desktop thumbnails. Windows also omits
-        // it during desktop transitions; a slide-in reveal follows observed switches.
-        let excluded = windows::Win32::Foundation::BOOL(1);
-        if let Err(error) = windows::Win32::Graphics::Dwm::DwmSetWindowAttribute(
-            windows::Win32::Foundation::HWND(window),
-            windows::Win32::Graphics::Dwm::DWMWA_EXCLUDED_FROM_PEEK,
-            &excluded as *const _ as *const std::ffi::c_void,
-            size_of::<windows::Win32::Foundation::BOOL>() as u32,
-        ) {
-            let _ = app
-                .borrow()
-                .storage
-                .sender
-                .try_send(store::Work::Log(format!(
-                    "Could not exclude the rail from desktop previews: {error}"
-                )));
-        }
+        app.borrow().update_window_frame();
         SetWindowLongPtrW(window, -21, &*app as *const RefCell<App> as isize);
         MAIN_WINDOW.store(window as usize, Ordering::Release);
         crate::appbar::register(window).map_err(|e| e.to_string())?;

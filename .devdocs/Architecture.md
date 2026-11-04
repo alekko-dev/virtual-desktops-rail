@@ -248,29 +248,25 @@ AppBars reserve work area but do not constrain manually positioned or fullscreen
 windows. Per-Monitor V2 and display/DPI notifications govern rail geometry; fullscreen
 foreground yields z-order without activation and normal foreground restores topmost.
 
-The rail requests DWM Peek exclusion to omit it from Task View desktop thumbnails,
-while remaining capturable in screenshots/screen sharing. A 200-ms cubic ease-out
-slides artwork and native buttons in from the left after a switch. The AppBar HWND,
-bounds and work-area reservation stay fixed: a temporary region clips translated
-content and is removed at completion. One transient 16-ms timer serves waiting/reveal;
-late ticks advance to current elapsed time. Windows' client-area animation preference
-disables the effect, including when it cannot be read. Size/DPI/settings changes,
-retry/unavailability and shutdown cancel presentation. Startup/recovery do not animate.
+The rail enables DWM Peek exclusion (`DWMWA_EXCLUDED_FROM_PEEK`) only while Task View is
+open so the rail stays stationary and visible during normal desktop switches while
+omitting it from Task View desktop thumbnails, remaining capturable in screenshots/screen
+sharing. A 200-ms cubic ease-out slides artwork and native buttons in from the left after
+Task View dismissal. The AppBar HWND, bounds and work-area reservation stay fixed: a
+temporary region clips translated content and is removed at completion. One transient
+16-ms timer serves reveal; late ticks advance to current elapsed time. Windows'
+client-area animation preference disables the effect, including when it cannot be read.
+Size/DPI/settings changes, retry/unavailability and shutdown cancel presentation.
+Startup/recovery and ordinary desktop switches do not hide or animate the rail.
+Presentation never delays controller actions, changes memory or requests focus.
 
-Rail/CLI requests use the adapter's instant path; a matching destination observed
-within two seconds reveals immediately. Other desktop-change observations wait
-400 ms before reveal. This is a bounded settling heuristic, not shell completion.
-New destinations replace active reveals; same-destination serial updates do not
-restart one. Presentation never delays controller actions, changes memory or requests focus.
-
-Task View return is also recognized without a desktop change. Discovery requires a
+Task View return is recognized with or without a desktop change. Discovery requires a
 foreground, visible, uncloaked fullscreen `XamlExplorerHostIslandWindow` or
-`MultitaskingViewFrame` in the `GetShellWindow` process. Only that host is tracked
-through foreground/show/hide/destroy/cloak events and existing reconciliation until
-it disappears. The shared Alt+Tab host can receive the same effect. While visible,
-it holds the rail clipped without a reveal timer; disappearance starts the reveal
-without the desktop-event wait. A snapshot within 400 ms of that return does not
-restart an active reveal. These shell classes are compatibility hints, not desktop
+`MultitaskingViewFrame` in the `GetShellWindow` process. As soon as foreground leaves the
+Task View host (or it hides/cloaks), the reveal starts immediately without waiting for
+delayed host cloaking. The shared Alt+Tab host can receive the same effect. While visible,
+it enables `DWMWA_EXCLUDED_FROM_PEEK` and holds the rail clipped without a reveal timer;
+disappearance starts the reveal. These shell classes are compatibility hints, not desktop
 identity. There is no background-host discovery, localized-title matching or extra
 periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#known-defects-and-unmet-behavior).
 
