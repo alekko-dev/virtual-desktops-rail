@@ -244,33 +244,33 @@ bypass focus restrictions with synthetic Alt or thread-input attachment.
 
 ## Rail presentation
 
+When button geometry is unchanged, reuse native button HWNDs and synchronize their
+Win32 captions as well as tooltips when labels change, keeping accessibility names
+current across desktop, name and pause/status updates.
+
 AppBars reserve work area but do not constrain manually positioned or fullscreen
 windows. Per-Monitor V2 and display/DPI notifications govern rail geometry; fullscreen
 foreground yields z-order without activation and normal foreground restores topmost.
 
-The rail requests DWM Peek exclusion to omit it from Task View desktop thumbnails,
-while remaining capturable in screenshots/screen sharing. A 200-ms cubic ease-out
-slides artwork and native buttons in from the left after a switch. The AppBar HWND,
-bounds and work-area reservation stay fixed: a temporary region clips translated
-content and is removed at completion. One transient 16-ms timer serves waiting/reveal;
-late ticks advance to current elapsed time. Windows' client-area animation preference
-disables the effect, including when it cannot be read. Size/DPI/settings changes,
-retry/unavailability and shutdown cancel presentation. Startup/recovery do not animate.
+The rail enables DWM Peek exclusion (`DWMWA_EXCLUDED_FROM_PEEK`) only while Task View is
+open so the rail stays stationary and visible during normal desktop switches while
+omitting it from Task View desktop thumbnails, remaining capturable in screenshots/screen
+sharing. A 200-ms cubic ease-out slides artwork and native buttons in from the left after
+Task View dismissal. The AppBar HWND, bounds and work-area reservation stay fixed: a
+temporary region clips translated content and is removed at completion. One transient
+16-ms timer serves reveal; late ticks advance to current elapsed time. Windows'
+client-area animation preference disables the effect, including when it cannot be read.
+Size/DPI/settings changes, retry/unavailability and shutdown cancel presentation.
+Startup/recovery and ordinary desktop switches do not hide or animate the rail.
+Presentation never delays controller actions, changes memory or requests focus.
 
-Rail/CLI requests use the adapter's instant path; a matching destination observed
-within two seconds reveals immediately. Other desktop-change observations wait
-400 ms before reveal. This is a bounded settling heuristic, not shell completion.
-New destinations replace active reveals; same-destination serial updates do not
-restart one. Presentation never delays controller actions, changes memory or requests focus.
-
-Task View return is also recognized without a desktop change. Discovery requires a
+Task View return is recognized with or without a desktop change. Discovery requires a
 foreground, visible, uncloaked fullscreen `XamlExplorerHostIslandWindow` or
-`MultitaskingViewFrame` in the `GetShellWindow` process. Only that host is tracked
-through foreground/show/hide/destroy/cloak events and existing reconciliation until
-it disappears. The shared Alt+Tab host can receive the same effect. While visible,
-it holds the rail clipped without a reveal timer; disappearance starts the reveal
-without the desktop-event wait. A snapshot within 400 ms of that return does not
-restart an active reveal. These shell classes are compatibility hints, not desktop
+`MultitaskingViewFrame` in the `GetShellWindow` process. As soon as foreground leaves the
+Task View host (or it hides/cloaks), the reveal starts immediately without waiting for
+delayed host cloaking. The shared Alt+Tab host can receive the same effect. While visible,
+it enables `DWMWA_EXCLUDED_FROM_PEEK` and holds the rail clipped without a reveal timer;
+disappearance starts the reveal. These shell classes are compatibility hints, not desktop
 identity. There is no background-host discovery, localized-title matching or extra
 periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#known-defects-and-unmet-behavior).
 
@@ -278,7 +278,7 @@ periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#know
 
 | Decision | Rationale and rejected approach |
 | --- | --- |
-| Native controls, invalidation-driven paint, cached icons | Keep idle cost small; no browser runtime or permanent frame timer. A bounded slide-in timer runs after desktop switches or shell-switcher dismissal; existing reconciliation is the measured polling exception. |
+| Native controls, invalidation-driven paint, cached icons | Keep idle cost small; no browser runtime, animation loop or permanent frame timer. A bounded slide-in timer runs only after shell-switcher dismissal. Existing reconciliation is the measured polling exception. |
 | Peek exclusion with a bounded slide-in | Preserve Task View thumbnail exclusion and capture behavior; presentation is independent of layout/focus policy and inherits shell timing limits. |
 | AppBar protocol with passive tool-window style | Negotiate work area instead of globally writing it. Presence across desktops must be tested; being an AppBar alone does not guarantee it. |
 | Process-isolated shell adapter | A deadline cannot cancel COM; unlimited replacement threads would leak blocked work. |
