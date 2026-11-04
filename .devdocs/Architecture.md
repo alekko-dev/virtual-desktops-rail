@@ -278,7 +278,7 @@ periodic poll. Current trigger limits are in [Status](Status-and-Roadmap.md#know
 
 | Decision | Rationale and rejected approach |
 | --- | --- |
-| Native controls, invalidation-driven paint, cached icons | Keep idle cost small; no browser runtime or permanent frame timer. A bounded slide-in timer runs after desktop switches or shell-switcher dismissal; existing reconciliation is the measured polling exception. |
+| Native controls, invalidation-driven paint, cached icons | Keep idle cost small; no browser runtime, animation loop or permanent frame timer. A bounded slide-in timer runs only after shell-switcher dismissal. Existing reconciliation is the measured polling exception. |
 | Peek exclusion with a bounded slide-in | Preserve Task View thumbnail exclusion and capture behavior; presentation is independent of layout/focus policy and inherits shell timing limits. |
 | AppBar protocol with passive tool-window style | Negotiate work area instead of globally writing it. Presence across desktops must be tested; being an AppBar alone does not guarantee it. |
 | Process-isolated shell adapter | A deadline cannot cancel COM; unlimited replacement threads would leak blocked work. |
