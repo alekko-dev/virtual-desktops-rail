@@ -1047,6 +1047,7 @@ impl App {
                     };
                     unsafe {
                         if button.caption != *caption {
+                            SetWindowTextW(button.hwnd, info.text);
                             button.caption = caption.clone();
                             SendMessageW(self.tooltip, 0x0439, 0, &mut info as *mut _ as isize);
                         }

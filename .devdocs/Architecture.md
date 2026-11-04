@@ -244,6 +244,10 @@ bypass focus restrictions with synthetic Alt or thread-input attachment.
 
 ## Rail presentation
 
+When button geometry is unchanged, reuse native button HWNDs and synchronize their
+Win32 captions as well as tooltips when labels change, keeping accessibility names
+current across desktop, name and pause/status updates.
+
 AppBars reserve work area but do not constrain manually positioned or fullscreen
 windows. Per-Monitor V2 and display/DPI notifications govern rail geometry; fullscreen
 foreground yields z-order without activation and normal foreground restores topmost.

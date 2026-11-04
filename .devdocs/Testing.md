@@ -258,6 +258,15 @@ Representative physical-machine distributions and completion timing remain unmea
 
 ### Integration smoke check
 
+On 2026-11-04, source `e1f8384` plus the native-caption synchronization fix passed
+`check-dev.ps1`, including version contracts and locked release builds. On Windows
+26300.9818 in the local Explorer session at 144 DPI, Computer Use inspected the
+rail screenshots and verified Pause/Resume with both real clicks and Space. The
+accessible button name and tooltip changed in both directions while the rail HWND
+was retained. Pause was restored to off; automation visibility was restored off and
+the owned process exited. Desktop switching/renaming and screen-reader speech were
+not exercised by this check.
+
 On 2026-11-03, the presentation changes combined with main's minimized-intent feature
 (`140f2b16686d` plus changes; executable SHA-256
 `2ABEF49CBB20DA54F0AE052061A458557FC9B6AD524ABCB47F339026F7E5EAAA`)
