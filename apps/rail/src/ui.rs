@@ -98,14 +98,67 @@ struct Button {
     width: i32,
 }
 
+#[repr(C)]
+struct TrackMouseEventData {
+    size: u32,
+    flags: u32,
+    track: Handle,
+    hover_time: u32,
+}
+
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn TrackMouseEvent(event: *mut TrackMouseEventData) -> i32;
+}
+
+static HOVERED_BUTTON: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static KEYBOARD_FOCUS: AtomicBool = AtomicBool::new(false);
+
 unsafe extern "system" fn button_procedure(
     window: Handle,
     message: u32,
     wparam: usize,
     lparam: isize,
 ) -> isize {
-    if message == 0x0014 {
-        return 1;
+    match message {
+        0x0014 => return 1,
+        0x0201 | 0x0203 if KEYBOARD_FOCUS.swap(false, Ordering::AcqRel) => unsafe {
+            InvalidateRect(window, null(), 0);
+        },
+        0x0100
+            if matches!(wparam, 0x09 | 0x20 | 0x0d | 0x25..=0x28)
+                && !KEYBOARD_FOCUS.swap(true, Ordering::AcqRel) =>
+        unsafe {
+            InvalidateRect(window, null(), 0);
+        },
+        0x0200 => {
+            let previous = HOVERED_BUTTON.swap(window as usize, Ordering::AcqRel);
+            if previous != window as usize {
+                if previous != 0 {
+                    unsafe {
+                        InvalidateRect(previous as Handle, null(), 0);
+                    }
+                }
+                let mut track = TrackMouseEventData {
+                    size: size_of::<TrackMouseEventData>() as u32,
+                    flags: 0x0000_0002, // TME_LEAVE
+                    track: window,
+                    hover_time: 0,
+                };
+                unsafe {
+                    TrackMouseEvent(&mut track);
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+        }
+        0x02a3
+            if HOVERED_BUTTON
+                .compare_exchange(window as usize, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok() =>
+        unsafe {
+            InvalidateRect(window, null(), 0);
+        },
+        _ => {}
     }
     let orig = unsafe { GetWindowLongPtrW(window, -21) };
     if orig != 0 {
@@ -1071,6 +1124,7 @@ impl App {
                     if !self.tooltip.is_null() {
                         DestroyWindow(self.tooltip);
                     }
+                    HOVERED_BUTTON.store(0, Ordering::Release);
                     for button in self.buttons.drain(..) {
                         DestroyWindow(button.hwnd);
                     }
@@ -1897,15 +1951,15 @@ fn smooth_shape(
     dc: Handle,
     width: i32,
     height: i32,
-    background: u32,
+    dpi: u32,
     color: u32,
     distance: impl Fn(f64, f64) -> f64,
 ) {
     use windows::Win32::{
         Foundation::COLORREF,
-        Graphics::Gdi::{HDC, SetPixelV},
+        Graphics::Gdi::{GetPixel, HDC, SetPixelV},
     };
-    let scale = width as f64 / 25.0;
+    let scale = dpi.max(96) as f64 / 96.0;
     for y in 0..height {
         for x in 0..width {
             let d = distance(
@@ -1916,9 +1970,10 @@ fn smooth_shape(
             if coverage == 0.0 {
                 continue;
             }
+            let base = unsafe { GetPixel(HDC(dc), x, y).0 };
             let mut blended = 0;
             for shift in [0, 8, 16] {
-                let a = ((background >> shift) & 255) as f64;
+                let a = ((base >> shift) & 255) as f64;
                 let b = ((color >> shift) & 255) as f64;
                 blended |= ((a + (b - a) * coverage).round() as u32) << shift;
             }
@@ -1929,13 +1984,42 @@ fn smooth_shape(
     }
 }
 
+fn rounded_rect_sdf(x: f64, y: f64, half_w: f64, half_h: f64, radius: f64) -> f64 {
+    let qx = x.abs() - (half_w - radius);
+    let qy = y.abs() - (half_h - radius);
+    qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius
+}
+
+fn segment_sdf(x: f64, y: f64, ax: f64, ay: f64, bx: f64, by: f64, radius: f64) -> f64 {
+    let pax = x - ax;
+    let pay = y - ay;
+    let bax = bx - ax;
+    let bay = by - ay;
+    let h = ((pax * bax + pay * bay) / (bax * bax + bay * bay)).clamp(0.0, 1.0);
+    (pax - bax * h).hypot(pay - bay * h) - radius
+}
+
 fn draw(app: &App, item: &DrawItem) {
     let width = item.rect.right - item.rect.left;
     let height = item.rect.bottom - item.rect.top;
     if width <= 0 || height <= 0 {
         return;
     }
+    let dpi = unsafe { GetDpiForWindow(app.window) }.max(96);
+    let scale = dpi as f64 / 96.0;
+    let is_dark = dark();
     let (background, text, accent, unavailable) = palette();
+    let high_contrast = accent == text;
+    let muted = if high_contrast {
+        text
+    } else if is_dark {
+        0x00bab1b0
+    } else {
+        0x006e6462
+    };
+    let hovered = HOVERED_BUTTON.load(Ordering::Acquire) == item.window as usize;
+    let pressed = item.state & 0x01 != 0;
+    let disabled = item.state & 0x04 != 0;
     unsafe {
         let dc = CreateCompatibleDC(item.dc);
         let bitmap = CreateCompatibleBitmap(item.dc, width, height);
@@ -1947,7 +2031,20 @@ fn draw(app: &App, item: &DrawItem) {
             bottom: height,
         };
         fill(dc, &bounds, background);
-        let center = width / 2;
+        if !disabled && (hovered || pressed) && !high_contrast {
+            let surface = if is_dark {
+                if pressed { 0x00484342 } else { 0x003a3534 }
+            } else if pressed {
+                0x00e0dcdc
+            } else {
+                0x00ece8e7
+            };
+            let half_w = (width as f64 / scale) * 0.5 - 2.0;
+            let half_h = (height as f64 / scale) * 0.5 - 2.5;
+            smooth_shape(dc, width, height, dpi, surface, |x, y| {
+                rounded_rect_sdf(x, y, half_w.max(2.0), half_h.max(2.0), 4.0)
+            });
+        }
         if let Some(button) = app.buttons.iter().find(|b| b.hwnd == item.window) {
             match &button.kind {
                 ButtonKind::Desktop(id) => {
@@ -1958,15 +2055,15 @@ fn draw(app: &App, item: &DrawItem) {
                         .iter()
                         .position(|d| &d.id == id)
                         .unwrap_or(0);
-                    let color = if accent == text {
+                    let color = if high_contrast {
                         text
                     } else {
-                        desktop_color(index, dark())
+                        desktop_color(index, is_dark)
                     };
-                    smooth_shape(dc, width, height, background, color, |x, y| {
+                    smooth_shape(dc, width, height, dpi, color, |x, y| {
                         let distance = (x * x + y * y).sqrt();
                         if active {
-                            distance - 5.0
+                            distance - 4.75
                         } else {
                             (distance - 2.75).abs() - 0.75
                         }
@@ -1975,12 +2072,12 @@ fn draw(app: &App, item: &DrawItem) {
                 ButtonKind::Window(key) => {
                     let icon = app
                         .icon_cache
-                        .get(&(key.clone(), GetDpiForWindow(app.window).max(96)))
+                        .get(&(key.clone(), dpi))
                         .copied()
                         .filter(|icon| *icon != 0)
                         .map(|icon| icon as Handle)
                         .unwrap_or_else(|| LoadIconW(null_mut(), 32512usize as *const u16));
-                    let size = icons::pixel_size(GetDpiForWindow(app.window).max(96));
+                    let size = icons::pixel_size(dpi);
                     let minimized = app
                         .model
                         .windows
@@ -1990,8 +2087,8 @@ fn draw(app: &App, item: &DrawItem) {
                     // Only the underline changes: outlined minimized, solid visible.
                     DrawIconEx(
                         dc,
-                        (width - size) / 2,
-                        (height - size) / 2,
+                        ((width - size) as f64 / 2.0).round() as i32,
+                        ((height - size) as f64 / 2.0 - 2.5 * scale).round() as i32,
                         icon,
                         size,
                         size,
@@ -1999,75 +2096,77 @@ fn draw(app: &App, item: &DrawItem) {
                         null_mut(),
                         3,
                     );
-                    let indicator = Rect {
-                        left: center - 5,
-                        top: height - 4,
-                        right: center + 5,
-                        bottom: height - 1,
-                    };
-                    fill(dc, &indicator, if minimized { text } else { accent });
-                    if minimized {
-                        fill(
-                            dc,
-                            &Rect {
-                                left: indicator.left + 1,
-                                top: indicator.top + 1,
-                                right: indicator.right - 1,
-                                bottom: indicator.bottom - 1,
-                            },
-                            background,
-                        );
-                    }
+                    let indicator_y = height as f64 / (2.0 * scale) - 5.5;
+                    let indicator_color = if minimized { muted } else { accent };
+                    smooth_shape(dc, width, height, dpi, indicator_color, |x, y| {
+                        let dy = y - indicator_y;
+                        if minimized {
+                            rounded_rect_sdf(x, dy, 4.0, 1.25, 1.25).abs() - 0.55
+                        } else {
+                            rounded_rect_sdf(x, dy, 4.75, 1.4, 1.4)
+                        }
+                    });
                 }
                 ButtonKind::Pause | ButtonKind::Settings | ButtonKind::Exit => {
                     let color = if matches!(button.kind, ButtonKind::Pause) && !app.ready {
                         unavailable
-                    } else {
+                    } else if hovered || pressed {
                         text
+                    } else {
+                        muted
                     };
-                    smooth_shape(dc, width, height, background, color, |x, y| {
+                    smooth_shape(dc, width, height, dpi, color, |x, y| {
                         if matches!(button.kind, ButtonKind::Pause) && !app.ready {
                             // A full warning symbol stays legible in the narrow rail and
                             // distinguishes unavailable integration without relying on color.
-                            let triangle = (x.abs() * 0.866 - y * 0.5 - 3.5).max(y - 6.0);
-                            let outline = triangle.abs() - 0.7;
-                            let stem = (x.abs() - 0.75).max((y + 0.5).abs() - 2.4);
-                            let dot = (x * x + (y - 4.0).powi(2)).sqrt() - 0.85;
+                            let triangle = (x.abs() * 0.866 - y * 0.5 - 3.1).max(y - 5.2);
+                            let outline = triangle.abs() - 0.65;
+                            let stem = segment_sdf(x, y, 0.0, -2.2, 0.0, 1.2, 0.65);
+                            let dot = (x * x + (y - 3.4).powi(2)).sqrt() - 0.75;
                             outline.min(stem).min(dot)
                         } else if matches!(button.kind, ButtonKind::Settings) {
-                            let track = |yy: f64| (y - yy).abs().max(x.abs() - 7.0) - 0.8;
+                            let upper_left = segment_sdf(x, y, -5.2, -3.0, -4.4, -3.0, 0.65);
+                            let upper_right = segment_sdf(x, y, -0.2, -3.0, 5.2, -3.0, 0.65);
+                            let lower_left = segment_sdf(x, y, -5.2, 3.0, 0.2, 3.0, 0.65);
+                            let lower_right = segment_sdf(x, y, 4.4, 3.0, 5.2, 3.0, 0.65);
                             let ring = |xx: f64, yy: f64| {
-                                (((x - xx).powi(2) + (y - yy).powi(2)).sqrt() - 2.5).abs() - 0.8
+                                (((x - xx).powi(2) + (y - yy).powi(2)).sqrt() - 1.9).abs() - 0.65
                             };
-                            let upper = if (x + 3.0).abs() < 3.0 {
-                                100.0
-                            } else {
-                                track(-4.0)
-                            };
-                            let lower = if (x - 3.0).abs() < 3.0 {
-                                100.0
-                            } else {
-                                track(4.0)
-                            };
-                            upper.min(lower).min(ring(-3.0, -4.0)).min(ring(3.0, 4.0))
+                            upper_left
+                                .min(upper_right)
+                                .min(lower_left)
+                                .min(lower_right)
+                                .min(ring(-2.3, -3.0))
+                                .min(ring(2.3, 3.0))
                         } else if matches!(button.kind, ButtonKind::Exit) {
-                            let ring = ((x * x + y * y).sqrt() - 6.0).abs() - 0.8;
-                            let ring = if y < -2.0 && x.abs() < 3.0 {
-                                100.0
+                            let angle = x.atan2(-y).abs();
+                            let radius = 4.6;
+                            let gap = 0.62;
+                            let arc = if angle < gap {
+                                let gx = radius * gap.sin();
+                                let gy = -radius * gap.cos();
+                                ((x.abs() - gx).hypot(y - gy)) - 0.68
                             } else {
-                                ring
+                                ((x * x + y * y).sqrt() - radius).abs() - 0.68
                             };
-                            ring.min((x.abs() - 0.8).max((y + 4.0).abs() - 4.0))
+                            let stem = segment_sdf(x, y, 0.0, -5.4, 0.0, -0.6, 0.68);
+                            arc.min(stem)
                         } else if app.model.saved.paused {
-                            (-x - 4.0).max(y.abs() * 1.4 + x - 4.0)
+                            let s1 = segment_sdf(x, y, -2.5, -4.2, -2.5, 4.2, 0.6);
+                            let s2 = segment_sdf(x, y, -2.5, -4.2, 3.6, 0.0, 0.6);
+                            let s3 = segment_sdf(x, y, 3.6, 0.0, -2.5, 4.2, 0.6);
+                            let inside = (-x - 2.5).max(y.abs() * 1.45 + x - 3.6);
+                            s1.min(s2).min(s3).min(inside)
                         } else {
-                            ((x.abs() - 3.0).abs() - 0.9).max(y.abs() - 6.0)
+                            let left = segment_sdf(x, y, -2.3, -4.2, -2.3, 4.2, 0.72);
+                            let right = segment_sdf(x, y, 2.3, -4.2, 2.3, 4.2, 0.72);
+                            left.min(right)
                         }
                     });
                 }
             }
         }
-        if item.state & 0x10 != 0 {
+        if item.state & 0x10 != 0 && KEYBOARD_FOCUS.load(Ordering::Acquire) {
             DrawFocusRect(
                 dc,
                 &Rect {
@@ -2315,6 +2414,12 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             // on the rail becoming foreground during input routing.
             if wparam & 0xffff != 0 && lparam != 0 {
                 app.pre_foreground = Some(lparam as usize);
+            } else if wparam & 0xffff == 0 && KEYBOARD_FOCUS.swap(false, Ordering::AcqRel) {
+                for button in &app.buttons {
+                    unsafe {
+                        InvalidateRect(button.hwnd, null(), 0);
+                    }
+                }
             }
             0
         }
@@ -2353,11 +2458,14 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                 );
                 let dpi = GetDpiForWindow(window).max(96) as i32;
                 let scale = |dip: i32| (dip * dpi + 48) / 96;
-                let size = scale(18);
+                let bg = palette().0;
+                let size = scale(14);
+                let icon_x = ((client.right - 1 - size) as f64 / 2.0).round() as i32;
+                let icon_y = scale(10);
                 DrawIconEx(
                     dc,
-                    (client.right - 1 - size) / 2,
-                    scale(12),
+                    icon_x,
+                    icon_y,
                     app_icon(size),
                     size,
                     size,
@@ -2365,6 +2473,30 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     null_mut(),
                     3,
                 );
+                for y in icon_y..icon_y + size {
+                    for x in icon_x..icon_x + size {
+                        let px = windows::Win32::Graphics::Gdi::GetPixel(
+                            windows::Win32::Graphics::Gdi::HDC(dc),
+                            x,
+                            y,
+                        )
+                        .0;
+                        if px != bg {
+                            let mut blended = 0;
+                            for shift in [0, 8, 16] {
+                                let a = ((bg >> shift) & 255) as f64;
+                                let b = ((px >> shift) & 255) as f64;
+                                blended |= ((a + (b - a) * 0.85).round() as u32) << shift;
+                            }
+                            let _ = windows::Win32::Graphics::Gdi::SetPixelV(
+                                windows::Win32::Graphics::Gdi::HDC(dc),
+                                x,
+                                y,
+                                windows::Win32::Foundation::COLORREF(blended),
+                            );
+                        }
+                    }
+                }
                 let border = if dark() { 0x00484140 } else { 0x00e0dad8 };
                 fill(
                     dc,
@@ -2373,6 +2505,17 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         top: 0,
                         right: client.right,
                         bottom: client.bottom,
+                    },
+                    border,
+                );
+                let header_sep_y = scale(33);
+                fill(
+                    dc,
+                    &Rect {
+                        left: scale(5),
+                        top: header_sep_y,
+                        right: client.right - scale(5),
+                        bottom: header_sep_y + scale(1).max(1),
                     },
                     border,
                 );
@@ -2387,6 +2530,19 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     },
                     border,
                 );
+                let footer_sep_y = client.bottom - scale(132);
+                if footer_sep_y > y + scale(16) {
+                    fill(
+                        dc,
+                        &Rect {
+                            left: scale(5),
+                            top: footer_sep_y,
+                            right: client.right - scale(5),
+                            bottom: footer_sep_y + scale(1).max(1),
+                        },
+                        border,
+                    );
+                }
                 let _ = windows::Win32::Graphics::Gdi::SetViewportOrgEx(
                     windows::Win32::Graphics::Gdi::HDC(dc),
                     0,
