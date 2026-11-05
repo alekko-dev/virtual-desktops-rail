@@ -2815,6 +2815,18 @@ pub fn run(settings: bool) -> Result<(), String> {
                 SendMessageW(tooltip, 0x407, 0, &message as *const _ as isize);
             }
             let settings = app.borrow().settings;
+            if settings.is_null()
+                && ((message.message == 0x0100
+                    && matches!(message.wparam, 0x09 | 0x20 | 0x0d | 0x25..=0x28)
+                    && !KEYBOARD_FOCUS.swap(true, Ordering::AcqRel))
+                    || (matches!(message.message, 0x0201 | 0x0203)
+                        && KEYBOARD_FOCUS.swap(false, Ordering::AcqRel)))
+            {
+                let focused = GetFocus();
+                if !focused.is_null() {
+                    InvalidateRect(focused, null(), 0);
+                }
+            }
             if IsDialogMessageW(
                 if settings.is_null() { window } else { settings },
                 &mut message,
