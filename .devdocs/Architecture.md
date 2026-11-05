@@ -89,14 +89,14 @@ provide only small artwork can still require enlargement.
 
 | Path | Responsibility |
 | --- | --- |
-| `crates/rail-core/src/lib.rs` | Pure controller, layout/identity model, generations, sequencing, pause and recovery |
-| `crates/rail-core/tests/controller.rs` | Controller regression scenarios |
+| `crates/rail-core/src/{lib,layout,saved,operation,admission,model}.rs` | Pure controller: identity/layout data, persisted memory, operation lifecycle, observation admission and policy |
+| `crates/rail-core/tests/controller.rs` | Named controller regression scenarios and seeded event-sequence invariant checks |
 | `apps/rail/src/main.rs` | GUI/CLI entry, command delivery and integration-worker mode |
 | `apps/rail/src/ui.rs` | Native controls, paint/input, WinEvents, settings and orchestration |
 | `apps/rail/src/appbar.rs` | Work-area reservation, fullscreen/z-order and shell recovery |
 | `apps/rail/src/platform.rs` | OS eligibility, window properties, candidates, identity and geometry |
 | `apps/rail/src/bridge.rs` | Shell COM subprocess, bounded protocol, watchdog, backoff and JobObject |
-| `apps/rail/src/actions.rs` | Async actions, verification, quarantine and guarded focus |
+| `apps/rail/src/actions.rs` | Async action executor over an injected native window/clock interface, verification, quarantine and guarded focus |
 | `apps/rail/src/store.rs` | Atomic storage, backup/recovery, session merges, bounded diagnostics/report archive and Startup shortcut |
 | `apps/rail/src/icons.rs`, `metrics.rs` | Off-UI icon extraction/cache and bounded dispatch statistics |
 | `apps/rail/src/singleton.rs`, `native.rs` | Session instance coordination and small raw Win32 declarations |
@@ -223,10 +223,17 @@ flush is bounded. Startup is an opt-in per-user shortcut; a named user/session m
 prevents a second AppBar/controller, while `--settings` addresses the existing instance.
 
 Each window has a generation, monotonic sequence, latest intent, and at most one
-unverified operation. Revalidate identity, desktop, pause and drag state before dispatch.
-New destinations supersede stale queued work; current clicks can supersede queued
-minimization. Coalesced A→B→A events still represent a transition. Timestamped drag and
-snapshot observations must not commit stale geometry to the wrong desktop.
+unverified operation (`Queued`, `Accepted`, or `Quarantined`). The controller owns
+policy and latest intent; the action executor owns native dispatch progress and
+verification evidence, reporting `Acceptance` separately from the settling `Outcome`
+(`Verified`, `Rejected`, `IdentityLost`, `TimedOut`, `Busy`). The original request is
+never rewritten: user intent governs whether memory and focus may change, while the
+verified execution target (display-adjusted, or observed when a restore converts to a
+raise) governs which layout is committed. Revalidate identity, desktop, pause and drag
+state before dispatch. New destinations supersede stale queued work; current clicks can
+supersede queued minimization. Coalesced A→B→A events still represent a transition.
+Timestamped drag and snapshot observations must not commit stale or unreachable
+geometry to the wrong desktop.
 
 API acceptance is not completion. Verify actions with a two-second deadline; timeout
 quarantines the operation until observed or its identity dies. Never release the slot

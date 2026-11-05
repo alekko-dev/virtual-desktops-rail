@@ -416,11 +416,7 @@ impl App {
                 ));
             }
             Command::ExperimentalIntegration { enabled } => {
-                if self.model.saved.experimental_integration != enabled {
-                    self.model.saved.experimental_integration = enabled;
-                    self.model.saved.preferences_revision =
-                        self.model.saved.preferences_revision.saturating_add(1);
-                    self.model.dirty = true;
+                if self.model.set_experimental_integration(enabled) {
                     self.command(Command::Retry);
                 }
             }
@@ -446,16 +442,12 @@ impl App {
                 self.model.unavailable();
                 self.ready = false;
                 self.status = "Reconnecting to Windows desktops…".into();
+                let experimental = self.model.saved().experimental_integration;
                 if let Some(integration) = &self.integration {
-                    let _ = integration.try_send(bridge::CommandMessage::Retry {
-                        experimental: self.model.saved.experimental_integration,
-                    });
+                    let _ = integration.try_send(bridge::CommandMessage::Retry { experimental });
                 } else {
-                    match platform::supported(self.model.saved.experimental_integration) {
-                        Ok(()) => {
-                            self.integration =
-                                Some(bridge::start(self.model.saved.experimental_integration))
-                        }
+                    match platform::supported(experimental) {
+                        Ok(()) => self.integration = Some(bridge::start(experimental)),
                         Err(error) => self.status = error,
                     }
                 }
@@ -468,19 +460,20 @@ impl App {
                 return;
             }
             Command::Status { nonce } => {
+                let saved = self.model.saved();
                 let value = serde_json::json!({"schema_version":1,"build":crate::version::info(),"pid":std::process::id(),"status":self.status,"ready":self.ready,"notice":self.notice,
-                    "paused":self.model.saved.paused,"startup":self.model.saved.startup,"generation":self.model.generation,"current":self.model.current,
+                    "paused":saved.paused,"startup":saved.startup,"generation":self.model.generation(),"current":self.model.current(),
                     "appbar":crate::appbar::diagnostics(self.window),
                     "reveal":{"active":self.reveal.started.is_some(),"offset_px":self.reveal_offset,"held_for_switcher":self.shell_switcher.is_some()},
                     "dispatch_latency":self.dispatch_latency,
-                    "experimental_integration":self.model.saved.experimental_integration,
-                    "auto_restore":self.model.saved.auto_restore,
-                    "desktops":self.model.desktops,"windows":self.model.windows.iter().filter(|(_,r)|r.present).map(|(key,r)|serde_json::json!({
-                        "key":key,"hwnd":r.window.hwnd,"pid":r.window.pid,"minimized":r.window.minimized,"blocked":r.blocked,
-                        "responsive":r.window.responsive,"pending":r.pending.is_some(),"layout":r.window.layout,
-                        "saved_layouts":self.model.saved.windows.get(key).map(|r|&r.layouts),
-                        "minimized_desktops":self.model.saved.windows.get(key).map(|r|&r.minimized_desktops),
-                        "layout_count":self.model.saved.windows.get(key).map(|r|r.layouts.len()).unwrap_or(0)})).collect::<Vec<_>>()});
+                    "experimental_integration":saved.experimental_integration,
+                    "auto_restore":saved.auto_restore,
+                    "desktops":self.model.desktops(),"windows":self.model.present().map(|(key,r)|serde_json::json!({
+                        "key":key,"hwnd":r.window().hwnd,"pid":r.window().pid,"minimized":r.window().minimized,"blocked":r.blocked(),
+                        "responsive":r.window().responsive,"pending":r.pending().is_some(),"layout":r.window().layout,
+                        "saved_layouts":saved.windows.get(key).map(|r|&r.layouts),
+                        "minimized_desktops":saved.windows.get(key).map(|r|&r.minimized_desktops),
+                        "layout_count":saved.windows.get(key).map(|r|r.layouts.len()).unwrap_or(0)})).collect::<Vec<_>>()});
                 if self
                     .storage
                     .sender
@@ -492,14 +485,14 @@ impl App {
             }
             Command::Switch { guid } => {
                 if let (true, Some(integration), Some(current)) =
-                    (self.ready, &self.integration, &self.model.current)
-                    && self.model.desktops.iter().any(|d| d.id == guid)
-                    && *current != guid
+                    (self.ready, &self.integration, self.model.current())
+                    && self.model.desktops().iter().any(|d| d.id == guid)
+                    && current != guid
                 {
                     let _ = integration.try_send(bridge::CommandMessage::Switch {
                         guid,
-                        expected_current: current.clone(),
-                        expected_serial: self.model.transition_serial,
+                        expected_current: current.into(),
+                        expected_serial: self.model.transition_serial(),
                     });
                 }
             }
@@ -511,13 +504,15 @@ impl App {
                     .pre_foreground
                     .take()
                     .unwrap_or_else(|| unsafe { GetForegroundWindow() } as usize);
-                if let Some(runtime) = self.model.windows.get_mut(&key) {
+                if let Some((hwnd, popup)) = self
+                    .model
+                    .runtime(&key)
+                    .map(|runtime| (runtime.window().hwnd, runtime.window().popup))
+                {
                     self.focus_from.insert(key.clone(), foreground);
                     // This is a nonblocking USER state query, not an application message.
-                    runtime.window.minimized = unsafe {
-                        windows::Win32::UI::WindowsAndMessaging::IsIconic(platform::hwnd(
-                            runtime.window.hwnd,
-                        ))
+                    let minimized = unsafe {
+                        windows::Win32::UI::WindowsAndMessaging::IsIconic(platform::hwnd(hwnd))
                     }
                     .as_bool();
                     let root = unsafe {
@@ -527,10 +522,15 @@ impl App {
                         )
                     }
                     .0 as usize;
-                    let was = foreground == runtime.window.hwnd
-                        || root == runtime.window.hwnd
-                        || Some(foreground) == runtime.window.popup;
-                    self.model.click(&key, was);
+                    let was_foreground =
+                        foreground == hwnd || root == hwnd || Some(foreground) == popup;
+                    self.model.click(
+                        &key,
+                        rail_core::Click {
+                            minimized,
+                            was_foreground,
+                        },
+                    );
                 }
             }
         }
@@ -540,16 +540,16 @@ impl App {
 
     fn dispatch(&mut self) {
         self.focus_from
-            .retain(|key, _| self.model.windows.contains_key(key));
+            .retain(|key, _| self.model.runtime(key).is_some());
         self.generation
-            .store(self.model.generation, Ordering::Release);
+            .store(self.model.generation(), Ordering::Release);
         self.paused
-            .store(self.model.saved.paused, Ordering::Release);
-        for (key, runtime) in &self.model.windows {
+            .store(self.model.saved().paused, Ordering::Release);
+        for (key, sequence) in self.model.tickets() {
             self.tickets
-                .entry(key.clone())
-                .or_insert_with(|| Arc::new(AtomicU64::new(runtime.sequence)))
-                .store(runtime.sequence, Ordering::Release);
+                .entry(key.to_owned())
+                .or_insert_with(|| Arc::new(AtomicU64::new(sequence)))
+                .store(sequence, Ordering::Release);
         }
         for request in self.model.take_requests(platform::tick()) {
             let key = request.key.clone();
@@ -564,20 +564,24 @@ impl App {
                 request,
             };
             if self.actions.try_send(actions::Work::Action(job)).is_err() {
-                self.model
-                    .completed(&key, sequence, platform::tick(), false, true);
+                self.model.settle(
+                    &key,
+                    sequence,
+                    platform::tick(),
+                    rail_core::Outcome::Rejected,
+                );
                 self.notice = "Window action queue is busy; try again.".into();
             }
         }
         if self.loaded
-            && self.model.dirty
+            && self.model.is_dirty()
             && self
                 .storage
                 .sender
-                .try_send(store::Work::Save(self.model.saved.clone()))
+                .try_send(store::Work::Save(self.model.saved().clone()))
                 .is_ok()
         {
-            self.model.dirty = false;
+            self.model.mark_clean();
         }
     }
 
@@ -602,22 +606,20 @@ impl App {
                         self.notice =
                             "Saved layouts are unavailable; this run uses memory only.".into();
                     }
-                    if self.model.saved.startup {
+                    if self.model.saved().startup {
                         self.startup_busy = true;
                         let _ = self.startup.try_send(true);
                     }
-                    match platform::supported(self.model.saved.experimental_integration) {
-                        Ok(()) => {
-                            self.integration =
-                                Some(bridge::start(self.model.saved.experimental_integration))
-                        }
+                    let experimental = self.model.saved().experimental_integration;
+                    match platform::supported(experimental) {
+                        Ok(()) => self.integration = Some(bridge::start(experimental)),
                         Err(error) => self.status = error,
                     }
                 }
                 Event::Frame(frame, received, experimental) => {
                     // Ignore queued frames from a worker superseded by a legacy
                     // preference change while its replacement is reconnecting.
-                    if experimental != self.model.saved.experimental_integration {
+                    if experimental != self.model.saved().experimental_integration {
                         continue;
                     }
                     // The existing reconciliation is also a fallback if a
@@ -643,14 +645,13 @@ impl App {
                     }
                     self.ready = true;
                     self.status = "Desktop integration is ready.".into();
-                    if self.model.current.as_ref().is_some_and(|current| {
-                        *current != frame.current
-                            || self.model.transition_serial != frame.transition_serial
+                    if self.model.current().is_some_and(|current| {
+                        current != frame.current
+                            || self.model.transition_serial() != frame.transition_serial
                     }) {
                         let from = self
                             .model
-                            .current
-                            .as_deref()
+                            .current()
                             .and_then(|id| self.diagnostic_desktop_labels.get(id).cloned())
                             .unwrap_or_else(|| "unknown".into());
                         let to = self
@@ -662,13 +663,12 @@ impl App {
                             serde_json::json!({"event":"desktop_transition_observed","from":from,"to":to,"serial":frame.transition_serial}),
                         ));
                         self.transition_received_us = received;
-                    } else if self.model.current.is_none() {
+                    } else if self.model.current().is_none() {
                         self.transition_received_us = None;
                     }
                     self.model.snapshot(frame);
-                    for (key, runtime) in &self.model.windows {
-                        if runtime.present
-                            && !self.diagnostic_window_labels.contains_key(key)
+                    for (key, _) in self.model.present() {
+                        if !self.diagnostic_window_labels.contains_key(key)
                             && self.diagnostic_window_labels.len() < 512
                         {
                             self.next_diagnostic_window += 1;
@@ -681,12 +681,11 @@ impl App {
                 }
                 Event::Minimized(observation) => {
                     let key = observation.window.identity.key();
-                    if self.model.observe_minimized(observation) {
+                    if self.model.observe_minimized(observation).is_ok() {
                         let label = self.diagnostic_window_label(&key);
                         let desktop = self
                             .model
-                            .current
-                            .as_ref()
+                            .current()
                             .and_then(|id| self.diagnostic_desktop_labels.get(id));
                         let _ = self.storage.sender.try_send(store::Work::Trace(
                             serde_json::json!({"event":"window_minimized_intent","window":label,"desktop":desktop,"source":"external"}),
@@ -724,65 +723,66 @@ impl App {
                         serde_json::json!({"event":"user_notice","kind":if self.notice==ACTION_TIMEOUT_NOTICE{"action_timeout"}else{"other"}}),
                     ));
                 }
-                Event::Accepted(key, sequence, target, action) => {
+                Event::Accepted {
+                    key,
+                    sequence,
+                    acceptance,
+                } => {
                     let label = self.diagnostic_window_label(&key);
-                    let target_summary = target.as_ref().map(|layout| {
+                    let source = self
+                        .model
+                        .runtime(&key)
+                        .and_then(|runtime| runtime.pending())
+                        .filter(|pending| pending.request().sequence == sequence)
+                        .map(|pending| pending.request().action.source())
+                        .unwrap_or("explicit");
+                    let target_summary = acceptance.target.as_ref().map(|layout| {
                         serde_json::json!({
                             "normal":layout.normal,"maximized":layout.maximized,
                             "visible":layout.visible,"arranged":layout.arranged
                         })
                     });
                     let _ = self.storage.sender.try_send(store::Work::Trace(
-                        serde_json::json!({"event":"window_action_accepted","window":label,"sequence":sequence,"target":target_summary,"action":action.kind(),"source":action.source()}),
+                        serde_json::json!({"event":"window_action_accepted","window":label,"sequence":sequence,"target":target_summary,"action":acceptance.effect.kind(),"source":source}),
                     ));
-                    if let Some(target) = target
-                        && let Some(runtime) = self.model.windows.get_mut(&key)
-                        && let Some(pending) = &mut runtime.pending
-                        && pending.request.sequence == sequence
-                    {
-                        pending.request.action = match pending.request.action {
-                            rail_core::Action::RestoreAutomatic(_) => {
-                                rail_core::Action::RestoreAutomatic(target)
-                            }
-                            rail_core::Action::Restore(_) => rail_core::Action::Restore(target),
-                            ref action => action.clone(),
-                        };
-                    }
-                    self.model.dispatched(&key, sequence);
+                    self.model.accepted(&key, sequence, acceptance);
                 }
-                Event::ActionResult(key, sequence, tick, verified, cancelled) => {
-                    let action = self
-                        .model
-                        .windows
-                        .get(&key)
-                        .and_then(|r| r.pending.as_ref())
-                        .filter(|p| p.request.sequence == sequence)
-                        .map(|p| (p.request.action.kind(), p.request.action.source()));
-                    self.model
-                        .completed(&key, sequence, tick, verified, cancelled);
-                    let observed = self.model.windows.get(&key).map(|runtime| {
+                Event::ActionResult {
+                    key,
+                    sequence,
+                    tick,
+                    outcome,
+                } => {
+                    let settled = self.model.settle(&key, sequence, tick, outcome);
+                    let observed = self.model.runtime(&key).map(|runtime| {
+                        let window = runtime.window();
                         serde_json::json!({
-                            "normal":runtime.window.layout.normal,
-                            "visible":runtime.window.layout.visible,
-                            "maximized":runtime.window.layout.maximized,
-                            "arranged":runtime.window.layout.arranged,
-                            "minimized":runtime.window.minimized,
-                            "pending":runtime.pending.is_some(),
-                            "blocked":runtime.blocked
+                            "normal":window.layout.normal,
+                            "visible":window.layout.visible,
+                            "maximized":window.layout.maximized,
+                            "arranged":window.layout.arranged,
+                            "minimized":window.minimized,
+                            "pending":runtime.pending().is_some(),
+                            "blocked":runtime.blocked()
                         })
                     });
+                    let verified = outcome == rail_core::Outcome::Verified;
+                    let cancelled = matches!(
+                        outcome,
+                        rail_core::Outcome::Rejected | rail_core::Outcome::IdentityLost
+                    );
+                    let action = settled.as_ref().map(|s| {
+                        s.effect
+                            .map(rail_core::Effect::kind)
+                            .unwrap_or_else(|| s.intent.kind())
+                    });
+                    let source = settled.as_ref().map(|s| s.intent.source());
                     let _ = self.storage.sender.try_send(store::Work::Trace(
-                        serde_json::json!({"event":"window_action_completed","window":self.diagnostic_window_label(&key),"sequence":sequence,"verified":verified,"cancelled":cancelled,"tick_ms":tick,"observed":observed,"action":action.map(|a|a.0),"source":action.map(|a|a.1)}),
+                        serde_json::json!({"event":"window_action_completed","window":self.diagnostic_window_label(&key),"sequence":sequence,"outcome":outcome.name(),"verified":verified,"cancelled":cancelled,"tick_ms":tick,"observed":observed,"action":action,"source":source}),
                     ));
-                    if !verified && !cancelled {
+                    if !outcome.releases() {
                         self.notice = ACTION_TIMEOUT_NOTICE.into();
-                    } else if self.notice == ACTION_TIMEOUT_NOTICE
-                        && !self.model.windows.values().any(|runtime| {
-                            runtime
-                                .pending
-                                .as_ref()
-                                .is_some_and(|pending| pending.timed_out)
-                        })
+                    } else if self.notice == ACTION_TIMEOUT_NOTICE && !self.model.has_quarantined()
                     {
                         self.notice.clear();
                     }
@@ -794,19 +794,15 @@ impl App {
                     key,
                     generation,
                     tick,
-                    layout,
+                    layout: Ok(layout),
                 } => {
-                    if generation == self.model.generation
-                        && let (Some(runtime), Ok(layout)) = (self.model.windows.get(&key), layout)
-                    {
-                        let hwnd = runtime.window.hwnd;
-                        self.model.moving(hwnd, false, tick, Some(layout));
-                    }
+                    self.model.captured(&key, generation, tick, layout);
                 }
+                Event::Captured { layout: Err(_), .. } => {}
                 Event::Stored(result) => {
                     if let Err(error) = result {
                         self.notice = format!("Saved layouts could not be written: {error}");
-                        self.model.dirty = true;
+                        self.model.mark_dirty();
                     }
                 }
                 Event::Report(result) => {
@@ -820,14 +816,7 @@ impl App {
                 Event::Startup(value, result) => {
                     self.startup_busy = false;
                     match result {
-                        Ok(()) => {
-                            if self.model.saved.startup != value {
-                                self.model.saved.startup = value;
-                                self.model.saved.preferences_revision =
-                                    self.model.saved.preferences_revision.saturating_add(1);
-                                self.model.dirty = true;
-                            }
-                        }
+                        Ok(()) => self.model.set_startup(value),
                         Err(error) => {
                             self.notice =
                                 format!("Windows startup preference could not be changed: {error}")
@@ -836,7 +825,7 @@ impl App {
                 }
                 Event::Icon(key, dpi, icon) => {
                     self.icon_pending.remove(&(key.clone(), dpi));
-                    if self.model.windows.get(&key).is_some_and(|r| r.present)
+                    if self.model.runtime(&key).is_some_and(|r| r.present())
                         && dpi == unsafe { GetDpiForWindow(self.window) }.max(96)
                     {
                         if let Some(old) = self.icon_cache.insert((key, dpi), icon)
@@ -855,28 +844,11 @@ impl App {
                 }
                 Event::NativeWindow(event, hwnd, tick) => match event {
                     0x16 => {
-                        if let (Some(integration), Some(desktop), Some(runtime)) = (
-                            &self.integration,
-                            &self.model.current,
-                            self.model
-                                .windows
-                                .values()
-                                .find(|r| r.present && r.window.hwnd == hwnd),
-                        ) && runtime.pending.is_none()
-                            && !runtime.blocked
-                            && !runtime.dragging
+                        if let (Some(integration), Some(probe)) =
+                            (&self.integration, self.model.minimize_probe(hwnd, tick))
                         {
-                            let _ = integration.try_send(bridge::CommandMessage::ObserveMinimize(
-                                Box::new(rail_core::MinimizeObservation {
-                                    window: runtime.window.clone(),
-                                    desktop: desktop.clone(),
-                                    generation: self.model.generation,
-                                    sequence: runtime.sequence,
-                                    event_tick: tick,
-                                    tick,
-                                    transition_serial: self.model.transition_serial,
-                                }),
-                            ));
+                            let _ = integration
+                                .try_send(bridge::CommandMessage::ObserveMinimize(Box::new(probe)));
                         }
                     }
                     3 => {
@@ -889,16 +861,11 @@ impl App {
                     10 => self.model.moving(hwnd, true, tick, None),
                     11 => {
                         self.model.moving(hwnd, false, tick, None);
-                        if let Some((key, runtime)) = self
-                            .model
-                            .windows
-                            .iter()
-                            .find(|(_, r)| r.present && r.window.hwnd == hwnd)
-                        {
+                        if let Some(capture) = self.model.capture_request(hwnd) {
                             let _ = self.actions.try_send(actions::Work::Capture {
-                                key: key.clone(),
-                                window: runtime.window.clone(),
-                                generation: self.model.generation,
+                                key: capture.key,
+                                window: capture.window,
+                                generation: capture.generation,
                                 tick,
                             });
                         }
@@ -933,15 +900,18 @@ impl App {
         let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
         let signature = format!(
             "{:?}|{:?}|{}|{}|{:?}|{}|{}",
-            self.model.desktops,
-            self.model.current,
+            self.model.desktops(),
+            self.model.current(),
             self.ready,
-            self.model.saved.paused,
+            self.model.saved().paused,
             self.model
-                .windows
-                .iter()
-                .filter(|(_, r)| r.present)
-                .map(|(key, r)| (key, r.window.minimized, r.blocked, r.window.responsive))
+                .present()
+                .map(|(key, r)| (
+                    key,
+                    r.window().minimized,
+                    r.blocked(),
+                    r.window().responsive
+                ))
                 .collect::<Vec<_>>(),
             dpi,
             self.status
@@ -977,10 +947,8 @@ impl App {
             }
             let windows = self
                 .model
-                .windows
-                .iter()
-                .filter(|(_, r)| r.present)
-                .map(|(k, r)| (k.clone(), r.window.clone(), r.blocked))
+                .present()
+                .map(|(k, r)| (k.clone(), r.window().clone(), r.blocked()))
                 .collect::<Vec<_>>();
             self.update_window_frame();
             let mut bounds = Rect::default();
@@ -992,13 +960,13 @@ impl App {
             let button_width = scale(25) - 1;
             let mut specs = Vec::new();
             let mut y = scale(42);
-            for (index, desktop) in self.model.desktops.iter().enumerate() {
+            for (index, desktop) in self.model.desktops().iter().enumerate() {
                 let name = if desktop.name.is_empty() {
                     format!("Desktop {}", index + 1)
                 } else {
                     desktop.name.clone()
                 };
-                let caption = if self.model.current.as_ref() == Some(&desktop.id) {
+                let caption = if self.model.current() == Some(desktop.id.as_str()) {
                     format!("{name} (current)")
                 } else {
                     name
@@ -1040,7 +1008,7 @@ impl App {
                 PAUSE,
                 format!(
                     "{}. {}",
-                    if self.model.saved.paused {
+                    if self.model.saved().paused {
                         "Resume automatic window actions"
                     } else {
                         "Pause automatic window actions"
@@ -1163,9 +1131,7 @@ impl App {
             }
             let live = self
                 .model
-                .windows
-                .iter()
-                .filter(|(_, r)| r.present)
+                .present()
                 .map(|(k, _)| k)
                 .collect::<BTreeSet<_>>();
             self.icon_cache.retain(|(key, icon_dpi), icon| {
@@ -1558,20 +1524,24 @@ impl App {
         if self.settings.is_null() {
             return;
         }
+        let saved = self.model.saved();
         let signature = format!(
             "{}|{}|{}|{}|{}|{}|{}|{}",
             self.status,
             self.notice,
-            self.model.saved.paused,
-            self.model.saved.startup,
+            saved.paused,
+            saved.startup,
             self.startup_busy,
             self.loaded,
-            self.model.saved.experimental_integration,
-            self.model.saved.auto_restore
+            saved.experimental_integration,
+            saved.auto_restore
         );
         if signature == self.settings_signature {
             return;
         }
+        let paused = saved.paused;
+        let startup = saved.startup;
+        let auto_restore = saved.auto_restore;
         self.settings_signature = signature;
         self.layout_settings_notice();
         unsafe {
@@ -1583,19 +1553,19 @@ impl App {
             SendMessageW(
                 GetDlgItem(self.settings, SET_PAUSE as i32),
                 0xf1,
-                self.model.saved.paused as usize,
+                paused as usize,
                 0,
             );
             SendMessageW(
                 GetDlgItem(self.settings, STARTUP as i32),
                 0xf1,
-                self.model.saved.startup as usize,
+                startup as usize,
                 0,
             );
             SendMessageW(
                 GetDlgItem(self.settings, AUTO_RESTORE as i32),
                 0xf1,
-                self.model.saved.auto_restore as usize,
+                auto_restore as usize,
                 0,
             );
             EnableWindow(
@@ -1627,7 +1597,7 @@ impl App {
         self.update_settings();
         let aliases: BTreeMap<_, _> = self
             .model
-            .desktops
+            .desktops()
             .iter()
             .filter_map(|desktop| {
                 self.diagnostic_desktop_labels
@@ -1637,28 +1607,23 @@ impl App {
             .collect();
         let desktops = self
             .model
-            .desktops
+            .desktops()
             .iter()
             .filter_map(|desktop| {
                 let label = self.diagnostic_desktop_labels.get(&desktop.id)?;
                 Some(serde_json::json!({
                     "label":label,
-                    "current":self.model.current.as_deref()==Some(desktop.id.as_str())
+                    "current":self.model.current()==Some(desktop.id.as_str())
                 }))
             })
             .collect::<Vec<_>>();
+        let saved = self.model.saved();
         let windows = self
             .model
-            .windows
-            .iter()
-            .filter(|(_, runtime)| runtime.present)
+            .present()
             .map(|(key, runtime)| {
-                let record = self.model.saved.windows.get(key);
-                let layouts = self
-                    .model
-                    .saved
-                    .windows
-                    .get(key)
+                let record = saved.windows.get(key);
+                let layouts = record
                     .map(|record| {
                         record
                             .layouts
@@ -1677,8 +1642,8 @@ impl App {
                     .unwrap_or_default();
                 store::ReportWindow {
                     label: self.diagnostic_window_label(key),
-                    window: runtime.window.clone(),
-                    cached_layout: runtime.window.layout.clone(),
+                    window: runtime.window().clone(),
+                    cached_layout: runtime.window().layout.clone(),
                     last_usable_layout: record.map(|record| record.last_usable.clone()),
                     saved_layouts: serde_json::json!(layouts),
                     minimized_desktops: record
@@ -1695,15 +1660,14 @@ impl App {
                                 .collect()
                         })
                         .unwrap_or_default(),
-                    pending: runtime.pending.is_some(),
-                    blocked: runtime.blocked,
+                    pending: runtime.pending().is_some(),
+                    blocked: runtime.blocked(),
                 }
             })
             .collect();
         let current_desktop = self
             .model
-            .current
-            .as_ref()
+            .current()
             .and_then(|id| self.diagnostic_desktop_labels.get(id));
         let context = serde_json::json!({
             "schema_version":1,
@@ -1711,9 +1675,9 @@ impl App {
             "generated_unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),
             "application":crate::version::info(),
             "integration":{"status":self.status,"ready":self.ready},
-            "settings":{"paused":self.model.saved.paused,"auto_restore":self.model.saved.auto_restore,"startup":self.model.saved.startup},
+            "settings":{"paused":saved.paused,"auto_restore":saved.auto_restore,"startup":saved.startup},
             "desktops":desktops,
-            "model":{"generation":self.model.generation,"transition_serial":self.model.transition_serial,"current_desktop":current_desktop},
+            "model":{"generation":self.model.generation(),"transition_serial":self.model.transition_serial(),"current_desktop":current_desktop},
             "dispatch_latency":self.dispatch_latency,
         });
         Some(ReportDraft {
@@ -1775,7 +1739,7 @@ impl App {
         let _ = self
             .storage
             .stop
-            .try_send((self.loaded.then(|| self.model.saved.clone()), ack));
+            .try_send((self.loaded.then(|| self.model.saved().clone()), ack));
         self.shutdown_ack = Some(result);
         for hook in self.hooks.drain(..) {
             unsafe {
@@ -2048,10 +2012,10 @@ fn draw(app: &App, item: &DrawItem) {
         if let Some(button) = app.buttons.iter().find(|b| b.hwnd == item.window) {
             match &button.kind {
                 ButtonKind::Desktop(id) => {
-                    let active = app.model.current.as_ref() == Some(id);
+                    let active = app.model.current() == Some(id.as_str());
                     let index = app
                         .model
-                        .desktops
+                        .desktops()
                         .iter()
                         .position(|d| &d.id == id)
                         .unwrap_or(0);
@@ -2078,11 +2042,7 @@ fn draw(app: &App, item: &DrawItem) {
                         .map(|icon| icon as Handle)
                         .unwrap_or_else(|| LoadIconW(null_mut(), 32512usize as *const u16));
                     let size = icons::pixel_size(dpi);
-                    let minimized = app
-                        .model
-                        .windows
-                        .get(key)
-                        .is_some_and(|r| r.window.minimized);
+                    let minimized = app.model.runtime(key).is_some_and(|r| r.window().minimized);
                     // Preserve the application's normal icon in every state.
                     // Only the underline changes: outlined minimized, solid visible.
                     DrawIconEx(
@@ -2151,7 +2111,7 @@ fn draw(app: &App, item: &DrawItem) {
                             };
                             let stem = segment_sdf(x, y, 0.0, -5.4, 0.0, -0.6, 0.68);
                             arc.min(stem)
-                        } else if app.model.saved.paused {
+                        } else if app.model.saved().paused {
                             let s1 = segment_sdf(x, y, -2.5, -4.2, -2.5, 4.2, 0.6);
                             let s2 = segment_sdf(x, y, -2.5, -4.2, 3.6, 0.0, 0.6);
                             let s3 = segment_sdf(x, y, 3.6, 0.0, -2.5, 4.2, 0.6);
@@ -2228,7 +2188,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                 && let Some(integration) = &app.integration
             {
                 let _ = integration.try_send(bridge::CommandMessage::Retry {
-                    experimental: app.model.saved.experimental_integration,
+                    experimental: app.model.saved().experimental_integration,
                 });
             }
         }
@@ -2519,7 +2479,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     },
                     border,
                 );
-                let y = scale(42 + 33 * app.model.desktops.len() as i32 + 3);
+                let y = scale(42 + 33 * app.model.desktops().len() as i32 + 3);
                 fill(
                     dc,
                     &Rect {
@@ -2589,7 +2549,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         ButtonKind::Desktop(guid) => app.command(Command::Switch { guid }),
                         ButtonKind::Window(key) => app.command(Command::Click { key }),
                         ButtonKind::Pause => {
-                            let command = if app.model.saved.paused {
+                            let command = if app.model.saved().paused {
                                 Command::Resume
                             } else {
                                 Command::Pause
