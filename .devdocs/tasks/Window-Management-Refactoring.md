@@ -1,11 +1,11 @@
-﻿# Window-management refactoring plan
+# Window-management refactoring plan
 
 ## Status and baseline
 
-This is a proposed implementation plan, not a description of completed refactoring.
-Start from main after the per-desktop minimized-intent changes have been committed
-and merged. Preserve that behavior, including its persistence compatibility and
-conservative rejection of ambiguous external events.
+Start from main after the per-desktop minimized-intent changes. Preserve that behavior,
+including its persistence compatibility and conservative rejection of ambiguous
+external events. Progress is tracked per stage below; [Status and roadmap](../Status-and-Roadmap.md)
+remains the authority for product scope.
 
 Read [Architecture](../Architecture.md), [Status and roadmap](../Status-and-Roadmap.md),
 and [Testing](../Testing.md) before implementation. Those documents remain authoritative
@@ -27,6 +27,23 @@ The objective is to make these rules explicit and deterministically testable whi
 preserving externally observable behavior. File splitting alone does not achieve this.
 Keep changes small enough to review and merge independently.
 
+### Review of the original plan
+
+The original sequence was sound; the following changes make it more checkable:
+
+- **Concrete inventory.** Stage 1 names every UI mutation point instead of describing
+  them generally, so completion can be checked by visibility rather than by review.
+- **Characterize before redesigning.** The executor was originally made testable only
+  after its protocol changed, leaving the protocol change untested on the executor
+  side. Stage 2 now extracts the executor mechanically with a fake native interface;
+  Stage 3 changes the protocol with both sides under test.
+- **Derived state removed, not renamed.** The controller's `blocked` flag always equals
+  "pending operation timed out". Encode it once in the operation state.
+- **Behavior changes isolated.** Stage 4 separates the mechanical admission extraction
+  from the freshness-domain change; the latter needs its own reviewed decision.
+- **No new dependencies for generated tests.** A small seeded generator and
+  removal-based shrinking keep the pinned lockfile unchanged.
+
 ## Invariants to preserve
 
 - Validate live identity before native effects; HWND reuse must never transfer memory
@@ -47,17 +64,29 @@ Keep changes small enough to review and merge independently.
 
 ## Implementation sequence
 
-### 1. Encapsulate controller transitions
+### 1. Encapsulate controller transitions — implemented
 
-Inspect `crates/rail-core/src/lib.rs` and the command, dispatch, and event handling in
-`apps/rail/src/ui.rs`. Move direct UI mutations of observed minimized state and pending
-execution targets into controller methods with explicit input types.
+UI mutation points in `apps/rail/src/ui.rs` that move behind controller methods:
 
-Provide read-only controller views for rendering, status, and diagnostics. Make runtime
-and pending-operation internals private once callers have migrated. Distinguish the
-original user intent from the actual execution plan: a restore may become a raise at
-dispatch, or its layout may be adjusted to the current display topology. Specify which
-information governs memory updates rather than implicitly rewriting the request.
+| Former UI code | Controller entry point |
+| --- | --- |
+| Click writes `runtime.window.minimized` from `IsIconic` | `Model::click(key, Click { minimized, was_foreground })` |
+| `Accepted` rewrites `pending.request.action` with the adjusted target | `Model::accepted(key, sequence, Acceptance)` |
+| `ActionResult` reads pending action, then completes | `Model::settle(...)` returns a `Settled` summary |
+| Timeout notice scans pending operations | `Model::has_quarantined()` |
+| WinEvent minimize builds `MinimizeObservation` from runtime fields | `Model::minimize_probe(hwnd, tick)` |
+| Move end looks up runtime for a capture request | `Model::capture_request(hwnd)` |
+| `Captured` resolves an HWND, then reports a move end | `Model::captured(key, generation, tick, layout)` (by identity key) |
+| Ticket synchronization reads runtime sequences | `Model::tickets()` |
+| Startup / legacy integration preferences and `dirty` | `set_startup`, `set_experimental_integration`, `is_dirty`, `mark_clean`, `mark_dirty` |
+
+Model and runtime fields become private; rendering, status, and diagnostics use
+read-only accessors. **Intent versus execution:** the original request is never
+rewritten. The executor reports the actual effect (restore, raise after an external
+reveal, or an adjusted/observed target). The *intent* governs whether memory and focus
+may change (explicit versus automatic, minimize versus restore); the verified
+*execution target* governs which layout is committed. Without an acceptance report,
+the requested layout is used.
 
 Completion criteria:
 
@@ -66,31 +95,12 @@ Completion criteria:
   conversion with the intended memory semantics.
 - Existing behavior and regression scenarios remain intact.
 
-### 2. Define the operation lifecycle and worker protocol
+### 2. Make execution deterministic under test — implemented
 
-Replace ambiguous Boolean combinations with explicit lifecycle states and typed
-outcomes where they clarify legal transitions. Candidate concepts include queued,
-accepted, quarantined, verified, verified late, rejected before effects, and identity
-lost. These names are design suggestions, not a requirement for one large enum.
-
-Document controller versus executor ownership. The controller owns policy and latest
-intent; the executor owns native dispatch progress and verification evidence. Their
-protocol must distinguish failure before any effect from partial accepted dispatch.
-Keep cancellation tickets and generation checks where they guard the native boundary.
-
-Completion criteria:
-
-- Each outcome has a documented effect on the operation slot, intent, memory, and focus.
-- Partial failure cannot accidentally release an outstanding operation.
-- Timeout and late verification are represented explicitly.
-- Tests exercise supersession before dispatch, during execution, and after timeout.
-
-### 3. Make execution deterministic under test
-
-Extract executor progression from the thread loop in `apps/rail/src/actions.rs`.
-Inject a clock and a small native-window interface for the operations and observations
-it actually needs. Keep scheduling and Win32 bindings in thin production adapters.
-Avoid a broad platform abstraction unrelated to tested behavior.
+Extract executor progression from the thread loop in `apps/rail/src/actions.rs` into a
+pure state machine over an injected `Native` interface (clock plus the window queries
+and commands it actually uses). The thread loop and Win32 bindings become thin
+adapters. Avoid a broad platform abstraction unrelated to tested behavior.
 
 Build a fake native implementation that can accept a request before applying its
 effect, reject a later stage, change identity, report intermediate geometry, and move
@@ -104,21 +114,52 @@ Completion criteria:
 - Tests verify emitted native calls and state transitions without wall-clock sleeps.
 - Native desktop tests still verify actual Windows behavior; fakes do not certify it.
 
+### 3. Define the operation lifecycle and worker protocol — implemented
+
+Replace Boolean combinations with explicit states and typed outcomes:
+
+| Controller operation state | Meaning |
+| --- | --- |
+| `Queued` | Sent to the executor; no native effect accepted yet. Supersession can still cancel it through the ticket. |
+| `Accepted` | A native effect was accepted; awaiting verification within the deadline. |
+| `Quarantined` | Deadline passed without verification; the slot stays held. |
+
+| Executor outcome | Slot | Intent / desired | Memory | Focus |
+| --- | --- | --- | --- | --- |
+| `Verified` (current) | Released | Kept | Explicit intent commits | Executor may request guarded focus |
+| `Verified` after quarantine (late) | Released | Kept; reconciled next | None | None (executor gates on its own timeout) |
+| `Rejected` (no effect applied) | Released | Kept | None | None |
+| `IdentityLost` (outstanding identity died) | Released | Kept | None | None |
+| `TimedOut` | Quarantined | Kept | None | None |
+| `Busy` (executor still owns an older operation for the identity) | Quarantined | Kept | None | None |
+
+The controller owns policy and latest intent; the executor owns native dispatch
+progress and verification evidence. A failure after a native stage was accepted is
+reported as acceptance (plus a notice) so that partial dispatch never releases the slot.
+Cancellation tickets and generation checks remain at the native boundary.
+
+Completion criteria:
+
+- Each outcome has a documented effect on the operation slot, intent, memory, and focus.
+- Partial failure cannot accidentally release an outstanding operation.
+- Timeout and late verification are represented explicitly.
+- Tests exercise supersession before dispatch, during execution, and after timeout.
+
 ### 4. Consolidate observation admission and freshness
 
-Review snapshot, native minimize, geometry capture, and action-result admission as a
-single design problem. Define a common context for identity, generation, desktop
-transition, operation sequence, event time, and sampling time where applicable.
-Document why each field is required and where its validity is established.
+**4a. Mechanical extraction — implemented.** Snapshot, native minimize, geometry
+capture, and action-result admission share a documented context (identity, generation,
+desktop transition serial, operation sequence, event time, sampling time). Snapshot
+per-window predicates are named and documented in one place instead of inline flags.
 
-The merged implementation advances a global snapshot watermark after accepting native
-minimize evidence. This protects newer state but also discards older whole snapshots,
-including desktop and other-window information. Assess separate freshness domains for
-desktop transitions, inventory, and per-window state. Do not simply remove the global
-guard: old desktop evidence must never authorize an action or layout attribution.
-
-Separate evidence admission from the policy decision to remember external intent.
-Preserve conservative rejection when the source desktop cannot be established safely.
+**4b. Freshness domains — open decision.** Accepted native minimize evidence advances
+the global snapshot watermark. Per-window state is already protected by each window's
+`state_tick`, so the global advance mainly discards older whole snapshots, delaying
+desktop and other-window information until the next snapshot. A proposed split keeps
+the global watermark for desktop transitions while letting per-window `state_tick`
+alone guard window state. This is a behavior change: review it separately with tests
+for native evidence racing queued snapshots and explicit switches. Old desktop evidence
+must never authorize an action or layout attribution.
 
 Completion criteria:
 
@@ -128,24 +169,41 @@ Completion criteria:
 - Every accepted memory update has attributable identity and desktop context.
 - Any intentional behavior change is reviewed separately from mechanical extraction.
 
-### 5. Add generated event-sequence coverage and organize modules
+### 5. Add generated event-sequence coverage and organize modules — implemented
 
 Retain readable named regression scenarios and add generated sequences covering clicks,
 switches, drags, pause/resume, recovery, identity replacement, and delayed outcomes.
 Assert the invariants above after each step. Use reproducible seeds and minimized
 failure traces; avoid a reference model that merely duplicates implementation branches.
+Use an in-repository seeded generator; do not add a property-testing dependency.
 
 After ownership is clear, split modules by responsibility: identity/layout data,
-observation admission, controller policy, operation lifecycle, and native execution.
-Choose the final structure from the resulting dependencies, not an arbitrary file-size
-limit. Keep the existing crate and subprocess boundaries unless concrete evidence
-justifies changing them.
+persisted memory, observation admission, controller policy, operation lifecycle, and
+native execution. Keep crate-root re-exports so callers do not depend on file layout.
+Keep the existing crate and subprocess boundaries unless concrete evidence justifies
+changing them.
 
 Completion criteria:
 
 - Generated failures can be reproduced as small named regression scenarios.
 - UI orchestration translates input and renders views without owning domain rules.
 - Module dependencies make policy, evidence, and effects easy to locate and test.
+
+## Remaining work and known limits
+
+- Stage 5's seeded generator surfaced two controller edge cases during implementation,
+  both now fixed and covered by named tests:
+  - Drag-end geometry captures (`Model::moving` with `started = false` and a layout)
+    now check `layout.reachable()`, matching the snapshot learning path so minimized
+    parking coordinates can never be saved from a late capture.
+  - Settling an operation for an already-absent window now drops its `Runtime` entry
+    immediately instead of retaining an idle absent entry until the next snapshot.
+- Stage 4b freshness domains need a reviewed behavior decision (see above).
+- `Busy` is reachable only when the controller is replaced while the executor still owns
+  an operation (model reload). The new request remains quarantined until its identity
+  dies because the older operation reports under its own sequence. This preserves prior
+  behavior; it is not reachable after startup in current code.
+- Interactive verification of the refactor (see below) has not been recorded yet.
 
 ## Verification and delivery
 

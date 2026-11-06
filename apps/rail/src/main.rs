@@ -31,8 +31,17 @@ enum Event {
     DispatchLatency(u64),
     Status(String, bool),
     Notice(String),
-    Accepted(String, u64, Option<Layout>, rail_core::Action),
-    ActionResult(String, u64, u64, bool, bool),
+    Accepted {
+        key: String,
+        sequence: u64,
+        acceptance: rail_core::Acceptance,
+    },
+    ActionResult {
+        key: String,
+        sequence: u64,
+        tick: u64,
+        outcome: rail_core::Outcome,
+    },
     Captured {
         key: String,
         generation: u64,
