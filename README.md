@@ -49,6 +49,9 @@ verifies the visible result. Automatic reveals preserve focus.
 Recreating lost or different native Snap groups is unsupported; incompatible saved
 arrangements and changed displays can be declined. Application-specific constraints
 remain unverified. Pause automatic actions when using unsupported arrangements.
+The rail leaves a known minimized Snap arrangement untouched when an ordinary saved
+layout would replace it, and declines saved Snap restoration from a minimized
+maximized state. It shows the existing Snap notice.
 Exact last-visit restoration, including windows left minimized, is still in progress.
 
 ## Requirements

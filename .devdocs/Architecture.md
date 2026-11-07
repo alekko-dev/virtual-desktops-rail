@@ -220,6 +220,22 @@ before dispatch. A currently arranged window also cannot receive ordinary saved
 placement. These guards preserve native state rather than attempting reconstruction
 with `SetWindowPlacement`, `SetWindowPos` or `MoveWindow`.
 
+The live identity record also retains confirmed visible Snap evidence across
+minimization, when Windows may report arranged=false. This evidence is independent
+of saved destination history, is passed with requests, and prevents an ordinary
+placement from breaking a retained arrangement. A fresh confirmed visible unsnapped
+observation clears it; display-context changes or identity replacement invalidate it.
+An independent observation watermark prevents older snapshots from clearing newer
+identity-validated drag-capture evidence.
+The verified minimize also retains its identity-validated pre-dispatch layout,
+covering a snap newer than the controller snapshot.
+Fresh visible native state takes precedence over retained minimized evidence at
+dispatch. A minimized window with restore-to-maximized state cannot qualify for a
+Snap reveal, even when its normal restore bounds match. Both mismatches use the
+existing Snap notice and reject before any show/placement command, releasing the
+pending action rather than entering verification/quarantine. User-minimized
+destinations still produce no automatic restore request.
+
 ### Storage and action sequencing
 
 Schema 1 JSON under LocalAppData defaults missing `auto_restore` to false. Storage is

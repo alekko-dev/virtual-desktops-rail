@@ -104,6 +104,35 @@ Confirm group membership afterward. Native reveal tests do not substitute for pr
 automatic switches or shell group actions. Remaining combinations belong in
 [Status](Status-and-Roadmap.md#planned-work).
 
+Snap mismatch regressions must cover both explicit rail restoration and an automatic
+destination restore (without a user-minimized preference on that destination):
+
+1. Save an ordinary layout on the destination, then establish and visually confirm a
+   two-member Snap Group elsewhere. Let the rail observe the visible snapped member,
+   minimize it, and request the ordinary destination layout. Expect the existing Snap
+   notice, unchanged minimized state and placement, no pending/quarantined action,
+   and no show/placement dispatch. Restore through Windows afterward and confirm the
+   original Group thumbnail and shared-edge resize still work.
+2. Save a Snap layout, then maximize the same live window and minimize it. Confirm
+   `WPF_RESTORETOMAXIMIZED`, keeping the same normal restore bounds to isolate the
+   mismatch. Request the saved Snap layout. Expect rejection before any show/placement
+   dispatch, continued minimization and no pending/quarantined action after two seconds.
+   Confirm another rail action remains usable. With a user-minimized destination
+   preference, expect no automatic request at all.
+
+Use the separate owned unsnapped observer as the foreground anchor; inspect foreground
+before/after each rejected automatic request and after native minimize. Confirm Group
+membership through shell UI, not arranged flags or adjacent geometry. The executor fake
+checks the empty native-call log and released controller/executor slots for both
+request sources, but does not model `SW_MINIMIZE` activation effects or native Groups.
+
+Also verify a matching saved Snap layout still reveals without placement,
+manual reveal can focus only after verification, automatic reveal preserves the
+independent observer foreground, and the rail's own minimize preserves the Group.
+After visibly unsnapping the target, an ordinary saved restore must work again.
+Also snap immediately before rail minimization, before another inventory poll, and
+check that a subsequent incompatible ordinary restore is still declined.
+
 ### Minimized-intent procedure
 
 With auto-restore enabled and owned app-pinned fixtures, minimize before any geometry
@@ -272,6 +301,24 @@ cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json
 Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
+
+The minimized-Snap edge-case follow-up is integrated on
+`codex/preserve-native-snap-groups` based on `ec21a14`. On 2026-11-07, `check-dev.ps1` passed with `CARGO_BUILD_JOBS=1`: formatting,
+Clippy, locked workspace tests (including all 22 executor regressions), version
+contracts and release builds. The integrated release executable SHA-256 is
+`93EE34D871786505257828C291FC910DBD80BDAB16CB5011F94AF7E5E34D0F85`.
+Manual and automatic regressions cover retained Snap evidence, restore-maximized
+mismatch rejection before show/placement, released pending slots, unchanged saved
+layouts, user-minimized destination suppression, and stale/identity/display evidence
+invalidation. The live minimize query also contributes evidence when a snap is newer
+than the controller snapshot.
+
+Earlier follow-up desktop checks used a main-derived executable that omitted the
+PR's two Snap commits; they do not validate this integration. Computer Use input
+worked again in that session, but no root cause for the earlier access denial was
+established. Desktop revalidation of this branch is deferred at the user's request;
+use the Native Snap procedure above. Exact zero-dispatch assertions are deterministic
+executor evidence, not native Group or foreground certification.
 
 The 2026-11-07 correction on source `0139d77` plus changes restored the minimized
 Snap path to `SW_SHOWNOACTIVATE` and removed the separate reveal fake that had

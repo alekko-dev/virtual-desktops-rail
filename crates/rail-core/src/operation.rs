@@ -53,6 +53,8 @@ impl Action {
 pub struct Request {
     pub key: String,
     pub window: Window,
+    /// Live identity-scoped Snap evidence retained across minimization, not saved history.
+    pub retained_arrangement: Option<Box<Layout>>,
     pub generation: u64,
     pub sequence: u64,
     pub action: Action,
@@ -80,7 +82,8 @@ impl Effect {
 
 /// Executor report that a native effect was accepted. This is not completion.
 ///
-/// `target` is the layout the executor will verify: the display-adjusted restore
+/// For minimize, `target` retains the fresh pre-dispatch live layout as Snap evidence.
+/// For other effects, `target` is the layout the executor will verify: the display-adjusted restore
 /// target, or the observed layout for a raise. The request's intent decides whether a
 /// verified result may change memory; this target decides which layout is committed.
 #[derive(Clone, Debug, PartialEq, Eq)]

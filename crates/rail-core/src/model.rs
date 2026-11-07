@@ -27,9 +27,33 @@ pub struct Runtime {
     pub(crate) present: bool,
     pub(crate) external_restore: Option<ExternalRestore>,
     pub(crate) state_tick: u64,
+    retained_arrangement: Option<Layout>,
+    arrangement_tick: u64,
 }
 
 impl Runtime {
+    fn observe_arrangement(&mut self, layout: &Layout, tick: u64) {
+        if tick <= self.arrangement_tick {
+            return;
+        }
+        self.arrangement_tick = tick;
+        if self.retained_arrangement.as_ref().is_some_and(|old| {
+            old.monitor != layout.monitor
+                || old.monitor_rect != layout.monitor_rect
+                || old.work_area != layout.work_area
+                || old.dpi != layout.dpi
+        }) {
+            self.retained_arrangement = None;
+        }
+        if layout.visible.is_some() {
+            match layout.arranged {
+                Some(true) => self.retained_arrangement = Some(layout.clone()),
+                Some(false) => self.retained_arrangement = None,
+                None => {}
+            }
+        }
+    }
+
     /// Last accepted observation of the window.
     pub fn window(&self) -> &Window {
         &self.window
@@ -293,7 +317,21 @@ impl Model {
                 present: true,
                 external_restore: None,
                 state_tick: snapshot.tick,
+                retained_arrangement: (window.layout.visible.is_some()
+                    && window.layout.arranged == Some(true))
+                .then(|| window.layout.clone()),
+                arrangement_tick: snapshot.tick,
             });
+            if snapshot.tick >= runtime.state_tick {
+                if runtime.window.hwnd != window.hwnd {
+                    runtime.retained_arrangement = None;
+                }
+                // Initial observations also establish live evidence. Equal-tick
+                // repeats must not replace an already accepted observation.
+                if snapshot.tick > runtime.state_tick {
+                    runtime.observe_arrangement(&window.layout, snapshot.tick);
+                }
+            }
             // Stable external restores and geometry changes are user intent.
             // Startup/recovery and our own pending/late work are not.
             let admit =
@@ -572,6 +610,9 @@ impl Model {
             && layout.reachable()
             && let Some(record) = self.saved.windows.get_mut(key)
         {
+            if tick > runtime.state_tick {
+                runtime.observe_arrangement(&layout, tick);
+            }
             record
                 .layouts
                 .insert(self.current.clone().unwrap(), layout.clone());
@@ -602,6 +643,7 @@ impl Model {
                 let request = Request {
                     key: key.clone(),
                     window: runtime.window.clone(),
+                    retained_arrangement: runtime.retained_arrangement.clone().map(Box::new),
                     generation: self.generation,
                     sequence: runtime.sequence,
                     action,
@@ -654,6 +696,13 @@ impl Model {
             && runtime.sequence == sequence
             && !late
             && request_generation == self.generation;
+        if current_verified
+            && let Some(layout) = execution
+                .as_ref()
+                .and_then(|execution| execution.target.as_ref())
+        {
+            runtime.observe_arrangement(layout, tick);
+        }
         let mut committed = false;
         if current_verified && let Some(record) = self.saved.windows.get_mut(key) {
             let desktop = self.current.as_ref().unwrap();
