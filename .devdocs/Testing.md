@@ -104,7 +104,8 @@ Confirm group membership afterward. Native reveal tests do not substitute for pr
 automatic switches or shell group actions. Remaining combinations belong in
 [Status](Status-and-Roadmap.md#planned-work).
 
-Snap mismatch regressions must cover both explicit rail restoration and an automatic
+With **Minimize snapped windows on other desktops** disabled, Snap mismatch
+regressions must cover both explicit rail restoration and an automatic
 destination restore (without a user-minimized preference on that destination):
 
 1. Save an ordinary layout on the destination, then establish and visually confirm a
@@ -132,6 +133,26 @@ independent observer foreground, and the rail's own minimize preserves the Group
 After visibly unsnapping the target, an ordinary saved restore must work again.
 Also snap immediately before rail minimization, before another inventory poll, and
 check that a subsequent incompatible ordinary restore is still declined.
+
+For the default-on **Minimize snapped windows on other desktops** preference, save an
+ordinary destination and establish native Snap on another desktop. With auto-restore
+on, returning to the ordinary destination must minimize without placement, foreground
+request, geometry/intent changes or a new mismatch notice. A matching saved Snap
+destination can still reveal. Test both visible and already-minimized starts, a snap
+newer than the last controller poll, and native restore bounds slightly outside the
+work area. Explicit rail reveal must preserve snapping and destination geometry;
+it clears only that desktop's minimized intent. After a confirmed visible unsnap,
+ordinary auto-restoration works again. Uncheck the option and repeat: incompatible
+automatic restoration is declined, leaving the current visible Snap unchanged.
+Settings changes apply at the next switch, do not move windows immediately and must
+cancel stale queued automatic work. Check default migration from configuration without
+the field, explicit opt-out persistence across restart and cross-session preference
+merges, pause/recovery, accepted-but-unverified minimization and late completion.
+
+For the zero-dispatch mismatch procedure, explicitly disable this
+preference when testing automatic requests; the new enabled policy deliberately
+requests minimization. Manual legacy decline scenarios likewise disable it. Native
+Group membership still requires shell UI evidence; arranged=true is not a Group pass.
 
 With Settings open, inspect the expanded Snap notice after either rejection. Restore
 or raise the affected member successfully through real rail input and inspect the
@@ -320,6 +341,40 @@ cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json
 Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
+
+The default-on Snap desktop policy follow-up to `6b52682` passed `check-dev.ps1`
+on 2026-11-07 with `CARGO_BUILD_JOBS=1`, incremental compilation off and writable
+checkout-local temporary files: formatting, warnings-denied Clippy, locked workspace
+tests, version contracts and release builds. Deterministic coverage includes default
+migration/opt-out persistence and preference merges, fresh live Snap dispatch, visible
+and minimized conflicts, matching Snap targets with native restore bounds outside the
+work area, temporary explicit reveal without destination-memory replacement, queued
+preference invalidation, pause and accepted-but-unverified/late minimization. Legacy
+zero-show/placement mismatch tests explicitly exercise the disabled policy.
+
+In the local Windows 26300.9711 Explorer session at 2560×1440 / 120 DPI, an individually
+pinned owned native window reproduced the original behavior: a real title-bar native
+edge Snap followed by return to an ordinary saved destination remained visible and
+arranged, with a rejected restore notice and no pending action. The new policy build
+`57EF75BAA478BFE436D19FBD07BF05ED02BA2BC4EC1B14A6181E2A9803D068D8`
+used an actual native arrangement plus controlled saved ordinary/Snap targets.
+Existing configuration without the field displayed a checked Settings option.
+Product-CLI switches retained the visible matching Snap destination and minimized
+the ordinary destination with no new notice or pending/blocked action. Real rail
+pointer reveal preserved native arrangement and ordinary destination geometry.
+Real checkbox opt-out restored the prior visible-Snap/rejection behavior; Space
+re-enabled it without immediate movement, and the preference survived restart.
+
+The final footer refinement
+`97CE9211E88E2688E968A7FEF100E9E1E84D9AB8F4B67FDB84C5E7D6BA84E6CB`
+repeated Settings compact/expanded screenshots, real checkbox input and disabled
+cross-desktop rejection, correcting the footer background offset for the new row.
+No desktop was created, renamed or deleted; the original desktop selection/inventory
+was verified. Automation visibility was restored off, owned pin/processes removed,
+and all original app files restored and hash-checked. Native arranged state and
+visible geometry do not certify shell Snap Group membership; multi-member Groups,
+independent automatic foreground anchoring and other DPI/topology combinations
+remain unverified for this option. Process integrity was not independently recorded.
 
 On 2026-11-07, the Snap notice lifecycle follow-up on source `394ff73` plus changes
 passed `check-dev.ps1` with `CARGO_BUILD_JOBS=1` and incremental compilation off:

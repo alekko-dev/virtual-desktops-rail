@@ -9,9 +9,13 @@ use crate::{Layout, Window};
 /// Requested intent. The original request is never rewritten by execution.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
-    Minimize { automatic: bool },
+    Minimize {
+        automatic: bool,
+    },
     Restore(Layout),
     RestoreAutomatic(Layout),
+    /// Explicit reveal of the retained live Snap; does not replace destination memory.
+    RevealSnap(Layout),
     Raise,
 }
 
@@ -19,7 +23,7 @@ impl Action {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Minimize { .. } => "minimize",
-            Self::Restore(_) | Self::RestoreAutomatic(_) => "restore",
+            Self::Restore(_) | Self::RestoreAutomatic(_) | Self::RevealSnap(_) => "restore",
             Self::Raise => "raise",
         }
     }
@@ -43,7 +47,7 @@ impl Action {
     pub fn effect(&self) -> Effect {
         match self {
             Self::Minimize { .. } => Effect::Minimize,
-            Self::Restore(_) | Self::RestoreAutomatic(_) => Effect::Restore,
+            Self::Restore(_) | Self::RestoreAutomatic(_) | Self::RevealSnap(_) => Effect::Restore,
             Self::Raise => Effect::Raise,
         }
     }
@@ -55,6 +59,8 @@ pub struct Request {
     pub window: Window,
     /// Live identity-scoped Snap evidence retained across minimization, not saved history.
     pub retained_arrangement: Option<Box<Layout>>,
+    /// Automatic restore may minimize instead of declining an incompatible live Snap.
+    pub minimize_snapped_elsewhere: bool,
     pub generation: u64,
     pub sequence: u64,
     pub action: Action,
@@ -98,7 +104,9 @@ impl Acceptance {
         Self {
             effect: action.effect(),
             target: match action {
-                Action::Restore(layout) | Action::RestoreAutomatic(layout) => Some(layout.clone()),
+                Action::Restore(layout)
+                | Action::RestoreAutomatic(layout)
+                | Action::RevealSnap(layout) => Some(layout.clone()),
                 Action::Minimize { .. } | Action::Raise => None,
             },
         }

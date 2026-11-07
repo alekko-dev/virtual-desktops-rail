@@ -1070,6 +1070,63 @@ fn auto_restore_uses_only_destination_layouts_for_each_window() {
 }
 
 #[test]
+fn snap_policy_defaults_migrates_and_persists_explicit_opt_out() {
+    let mut value = serde_json::to_value(Saved::default()).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("minimize_snapped_elsewhere");
+    let saved = Saved::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(saved.minimize_snapped_elsewhere);
+    let mut model = Model::new(saved);
+    let revision = model.saved().preferences_revision;
+    model.set_minimize_snapped_elsewhere(false);
+    assert!(model.is_dirty());
+    assert_eq!(model.saved().preferences_revision, revision + 1);
+    let saved = Saved::decode(&serde_json::to_vec(model.saved()).unwrap()).unwrap();
+    assert!(!saved.minimize_snapped_elsewhere);
+    assert!(!Model::new(saved).saved().minimize_snapped_elsewhere);
+}
+
+#[test]
+fn snap_policy_changes_cancel_automatic_work_without_moving_windows_or_manual_intent() {
+    let (mut model, window, key) = saved_destinations();
+    model.snapshot(snapshot("B", 200, vec![window.clone()]));
+    let request = model.take_requests(200).pop().unwrap();
+    model.set_minimize_snapped_elsewhere(false);
+    assert_ne!(model.runtime(&key).unwrap().sequence(), request.sequence);
+    assert!(!model.runtime(&key).unwrap().window().minimized);
+    model.accepted(
+        &key,
+        request.sequence,
+        Acceptance {
+            effect: Effect::Minimize,
+            target: Some(window.layout.clone()),
+        },
+    );
+    let settled = model
+        .settle(&key, request.sequence, 210, Outcome::Verified)
+        .unwrap();
+    assert!(!settled.current_verified);
+    assert!(!settled.committed);
+    assert!(model.take_requests(220).is_empty());
+    model.click(
+        &key,
+        Click {
+            minimized: true,
+            was_foreground: false,
+        },
+    );
+    let manual = model.take_requests(230).pop().unwrap();
+    model.set_minimize_snapped_elsewhere(true);
+    assert_eq!(model.runtime(&key).unwrap().sequence(), manual.sequence);
+    assert!(model.runtime(&key).unwrap().pending().is_some());
+    model.pause(true);
+    model.snapshot(snapshot("A", 240, vec![window]));
+    assert!(model.runtime(&key).unwrap().desired().is_none());
+}
+
+#[test]
 fn manual_rail_restore_on_new_desktop_enables_later_automatic_restore() {
     let (mut model, mut window, key) = baseline();
     model.set_auto_restore(true);

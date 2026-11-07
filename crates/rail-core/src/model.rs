@@ -219,6 +219,20 @@ impl Model {
         self.saved.auto_restore = enabled;
         self.saved.bump_preferences();
         self.dirty = true;
+        self.cancel_automatic_intent();
+    }
+
+    pub fn set_minimize_snapped_elsewhere(&mut self, enabled: bool) {
+        if self.saved.minimize_snapped_elsewhere == enabled {
+            return;
+        }
+        self.saved.minimize_snapped_elsewhere = enabled;
+        self.saved.bump_preferences();
+        self.dirty = true;
+        self.cancel_automatic_intent();
+    }
+
+    fn cancel_automatic_intent(&mut self) {
         // A preference change does not move windows. Cancel queued automatic
         // intent; the next confirmed switch applies the new policy.
         for runtime in self.windows.values_mut() {
@@ -433,7 +447,9 @@ impl Model {
                         || runtime.pending.as_ref().is_some_and(|pending| {
                             matches!(
                                 pending.request.action,
-                                Action::Restore(_) | Action::RestoreAutomatic(_)
+                                Action::Restore(_)
+                                    | Action::RestoreAutomatic(_)
+                                    | Action::RevealSnap(_)
                             )
                         })
                     {
@@ -546,13 +562,19 @@ impl Model {
             let Some(record) = self.saved.windows.get(key) else {
                 return;
             };
-            Action::Restore(
-                record
-                    .layouts
-                    .get(desktop)
-                    .unwrap_or(&record.last_usable)
-                    .clone(),
-            )
+            if self.saved.minimize_snapped_elsewhere
+                && let Some(arrangement) = &runtime.retained_arrangement
+            {
+                Action::RevealSnap(arrangement.clone())
+            } else {
+                Action::Restore(
+                    record
+                        .layouts
+                        .get(desktop)
+                        .unwrap_or(&record.last_usable)
+                        .clone(),
+                )
+            }
         } else if click.was_foreground {
             Action::Minimize { automatic: false }
         } else {
@@ -654,6 +676,7 @@ impl Model {
                     key: key.clone(),
                     window: runtime.window.clone(),
                     retained_arrangement: runtime.retained_arrangement.clone().map(Box::new),
+                    minimize_snapped_elsewhere: self.saved.minimize_snapped_elsewhere,
                     generation: self.generation,
                     sequence: runtime.sequence,
                     action,
@@ -733,24 +756,27 @@ impl Model {
                     self.dirty |= record.minimized_desktops.insert(desktop.clone());
                     committed = true;
                 }
+                Action::RevealSnap(_) => {
+                    self.dirty |= record.minimized_desktops.remove(desktop);
+                    committed = true;
+                }
                 _ => {}
             }
         }
         let released = outcome.releases();
         if released {
             if verified {
-                match intent {
-                    Action::Minimize { .. } => runtime.window.minimized = true,
-                    Action::Restore(_) | Action::RestoreAutomatic(_) => {
+                match effect.unwrap_or_else(|| intent.effect()) {
+                    crate::Effect::Minimize => runtime.window.minimized = true,
+                    crate::Effect::Restore | crate::Effect::Raise => {
                         runtime.window.minimized = false
                     }
-                    Action::Raise => {}
                 }
             }
             runtime.pending = None;
             runtime.suppress_next_state = verified;
-            runtime.restore_after_minimize =
-                current_verified && matches!(intent, Action::Minimize { .. });
+            runtime.restore_after_minimize = current_verified
+                && effect.unwrap_or_else(|| intent.effect()) == crate::Effect::Minimize;
             runtime.state_tick = runtime.state_tick.max(tick);
             if !runtime.present {
                 self.windows.remove(key);

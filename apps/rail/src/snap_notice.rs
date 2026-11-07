@@ -86,16 +86,22 @@ impl Lifecycle {
             return;
         }
         let saved = match &notice.request.action {
-            Action::Restore(saved) | Action::RestoreAutomatic(saved) => saved,
+            Action::Restore(saved)
+            | Action::RestoreAutomatic(saved)
+            | Action::RevealSnap(saved) => saved,
             _ => return,
         };
         let observed = &window.layout;
-        let target = saved.adjusted(
-            &observed.monitor,
-            observed.monitor_rect,
-            observed.work_area,
-            observed.dpi,
-        );
+        let target = if saved.arranged == Some(true) {
+            saved.clone()
+        } else {
+            saved.adjusted(
+                &observed.monitor,
+                observed.monitor_rect,
+                observed.work_area,
+                observed.dpi,
+            )
+        };
         // A saved Snap target must still match native arranged state, normal and
         // visible bounds, maximized state and the original display context.
         // An ordinary target requires a confirmed unsnap and matching adjusted

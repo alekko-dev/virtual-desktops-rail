@@ -23,6 +23,7 @@ owner's interaction group. Unsupported/inaccessible windows are omitted.
 | --- | --- |
 | Confirmed desktop switch, default mode | Minimize visible managed windows; preserve layout memory. |
 | Switch with `auto_restore` enabled | Keep user-minimized destinations minimized; otherwise restore saved destination layouts without focus, or minimize windows with no destination layout. |
+| Incompatible live Snap during automatic restore | With default-on `minimize_snapped_elsewhere`, minimize without placement or foreground; disabling it retains the decline-and-notice policy. Matching saved Snap arrangements may still restore. |
 | Rail click, minimized | Restore destination layout, or last usable clamped fallback, then request guarded focus. |
 | Rail click, visible background group | Bring the group forward. |
 | Rail click, foreground group | Minimize through its owner. |
@@ -30,7 +31,8 @@ owner's interaction group. Unsupported/inaccessible windows are omitted.
 | Startup, discovery, recovery, resume, setting change | Establish a baseline without immediate visibility changes. |
 
 Move/resize and reliable normal/maximized-state changes update desktop memory.
-Verified manual rail restoration also establishes the destination layout. External
+Verified manual rail restoration also establishes the destination layout, except
+for temporary `RevealSnap` requests under the Snap minimization preference. External
 minimize-to-visible restoration is manual intent only on a stable desktop, outside
 drags and our pending/late operations: require matching reachable geometry observations
 at least 100 ms apart. Reject transient off-screen coordinates. Automatic restoration
@@ -117,7 +119,7 @@ support archive.
 The Settings footer places the integration indicator and status above a
 10-DIP version label in the system gray text color. The label aligns with the status
 text; Done is centered beside the combined group. The compact Settings window is
-380 DIP high. Status and notices use separate controls. A measured read-only notice area
+414 DIP high, including the Snap minimization preference. Status and notices use separate controls. A measured read-only notice area
 expands the window only while populated; oversized details remain selectable and
 vertically scrollable. Relayout preserves controls/focus, clamps to the work area,
 and redraws children. The timeout notice clears when no quarantined action remains.
@@ -215,8 +217,8 @@ or normal bounds alone do not establish success. `SW_SHOWNOACTIVATE` reveals a
 minimized arrangement without activation; `SW_SHOWNA` can leave it minimized, and
 `SW_RESTORE` would activate before the guarded-focus check. See the native evidence
 in [Troubleshooting](Troubleshooting.md#snapped-restoration-reports-success-at-the-wrong-visible-size).
-Incompatible saved Snap arrangements, including after changed topology, are declined
-before dispatch. A currently arranged window also cannot receive ordinary saved
+Incompatible saved Snap arrangements, including after changed topology, are not
+restored through placement. A currently arranged window also cannot receive ordinary saved
 placement. These guards preserve native state rather than attempting reconstruction
 with `SetWindowPlacement`, `SetWindowPos` or `MoveWindow`.
 
@@ -231,10 +233,31 @@ The verified minimize also retains its identity-validated pre-dispatch layout,
 covering a snap newer than the controller snapshot.
 Fresh visible native state takes precedence over retained minimized evidence at
 dispatch. A minimized window with restore-to-maximized state cannot qualify for a
-Snap reveal, even when its normal restore bounds match. Both mismatches use the
+Snap reveal, even when its normal restore bounds match. Under the decline policy,
+both mismatches use the
 existing Snap notice and reject before any show/placement command, releasing the
 pending action rather than entering verification/quarantine. User-minimized
 destinations still produce no automatic restore request.
+
+`minimize_snapped_elsewhere` defaults true, including when absent from schema-1
+configuration. It changes confirmed desktop-switch actions only; pause, startup,
+recovery and preference changes retain the fresh-baseline/no-immediate-action rule.
+The executor checks fresh live and identity-scoped retained Snap evidence at dispatch.
+When automatic restoration cannot preserve that arrangement on the saved destination,
+it executes a verified minimize rather than placement/reveal or a mismatch notice.
+Already-iconic mismatches need no show command. A saved Snap target alone, without
+live/retained evidence, cannot trigger this fallback. Automatic work never changes
+saved geometry or user-minimized intent. Settings changes invalidate queued automatic
+tickets, while pending native work still settles under the existing late-result rules.
+
+Explicit rail restoration remains available: with the option enabled and retained
+native evidence, `RevealSnap` reveals/verifies the live arrangement without placement,
+then requests guarded focus. It clears current-desktop minimized intent but preserves
+destination geometry and last-usable memory, so a temporary manual reveal does not
+turn an ordinary destination into a Snap restoration target. Fresh visible unsnapping
+clears retained evidence and restores ordinary behavior. Native Snap restore bounds
+may extend outside the work area: placement-free matching compares those original
+bounds rather than clamping them. Display context and visible-result checks still apply.
 
 The existing Snap preservation notice carries the rejected request's live identity
 (including HWND/PID), target and dispatch timestamp. Only a current, non-quarantined
@@ -256,7 +279,9 @@ The timeout notice retains its existing independent quarantine lifecycle.
 
 ### Storage and action sequencing
 
-Schema 1 JSON under LocalAppData defaults missing `auto_restore` to false. Storage is
+Schema 1 JSON under LocalAppData defaults missing `auto_restore` to false and missing
+`minimize_snapped_elsewhere` to true; explicit false survives restart and cross-session
+preference merges. Storage is
 bounded to 4 MiB, 512 identities and 64 distinct remembered desktop IDs per identity
 (the union of layouts and minimized intent). Missing minimized sets default empty;
 deleted desktops are pruned from both. At the identity cap new
@@ -272,7 +297,9 @@ verification evidence, reporting `Acceptance` separately from the settling `Outc
 (`Verified`, `Rejected`, `IdentityLost`, `TimedOut`, `Busy`). The original request is
 never rewritten: user intent governs whether memory and focus may change, while the
 verified execution target (display-adjusted, or observed when a restore converts to a
-raise) governs which layout is committed. Revalidate identity, desktop, pause and drag
+raise) governs which layout is committed. Automatic restore may execute minimize
+under the Snap policy; cached visibility follows the verified execution effect while
+the original intent still controls memory/focus. Revalidate identity, desktop, pause and drag
 state before dispatch. New destinations supersede stale queued work; current clicks can
 supersede queued minimization. Coalesced A→B→A events still represent a transition.
 Timestamped drag and snapshot observations must not commit stale or unreachable

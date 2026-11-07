@@ -86,6 +86,7 @@ fn write(
         merged.startup = saved.startup;
         merged.experimental_integration = saved.experimental_integration;
         merged.auto_restore = saved.auto_restore;
+        merged.minimize_snapped_elsewhere = saved.minimize_snapped_elsewhere;
         merged.preferences_revision = merged.preferences_revision.saturating_add(1);
     }
     let bytes = serde_json::to_vec_pretty(&merged).map_err(|e| e.to_string())?;
@@ -598,6 +599,7 @@ mod tests {
         a.paused = false;
         a.experimental_integration = true;
         a.auto_restore = true;
+        a.minimize_snapped_elsewhere = false;
         a.preferences_revision += 1;
         a.windows.get_mut(&first_key).unwrap().last_usable.normal = [250, 100, 750, 500];
         a.windows
@@ -616,6 +618,7 @@ mod tests {
         assert!(!merged.paused);
         assert!(merged.experimental_integration);
         assert!(merged.auto_restore);
+        assert!(!merged.minimize_snapped_elsewhere);
         assert_eq!(merged.windows[&first_key].last_usable.normal[0], 250);
         assert!(merged.windows.contains_key(&second_key));
         assert!(
@@ -631,12 +634,14 @@ mod tests {
         b.paused = true;
         b.experimental_integration = false;
         b.auto_restore = false;
+        b.minimize_snapped_elsewhere = true;
         b.preferences_revision += 1;
         write(&path, &b, 8, &mut seen_b).unwrap();
         write(&path, &a, 7, &mut seen_a).unwrap();
         assert!(read(&path).unwrap().paused);
         assert!(!read(&path).unwrap().experimental_integration);
         assert!(!read(&path).unwrap().auto_restore);
+        assert!(read(&path).unwrap().minimize_snapped_elsewhere);
     }
     #[test]
     fn corruption_recovers_previous_state_and_keeps_the_unreadable_bytes() {
