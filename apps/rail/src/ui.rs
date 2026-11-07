@@ -750,6 +750,13 @@ impl App {
                         serde_json::json!({"event":"user_notice","kind":if self.notice==ACTION_TIMEOUT_NOTICE{"action_timeout"}else{"other"}}),
                     ));
                 }
+                Event::ObservedArrangement {
+                    request,
+                    layout,
+                    tick,
+                } => {
+                    self.model.observed_arrangement(&request, &layout, tick);
+                }
                 Event::Accepted {
                     key,
                     sequence,

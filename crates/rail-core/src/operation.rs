@@ -59,6 +59,8 @@ pub struct Request {
     pub window: Window,
     /// Live identity-scoped Snap evidence retained across minimization, not saved history.
     pub retained_arrangement: Option<Box<Layout>>,
+    /// Definitive arrangement evidence at issue time; proves causal order at equal ticks.
+    pub arrangement_revision: u64,
     /// Automatic restore may minimize instead of declining an incompatible live Snap.
     pub minimize_snapped_elsewhere: bool,
     pub generation: u64,
@@ -88,7 +90,8 @@ impl Effect {
 
 /// Executor report that a native effect was accepted. This is not completion.
 ///
-/// For minimize, `target` retains the fresh pre-dispatch live layout as Snap evidence.
+/// For minimize, `target` describes the pre-dispatch layout for diagnostics. Live
+/// Snap evidence is delivered independently with its native sample timestamp.
 /// For other effects, `target` is the layout the executor will verify: the display-adjusted restore
 /// target, or the observed layout for a raise. The request's intent decides whether a
 /// verified result may change memory; this target decides which layout is committed.

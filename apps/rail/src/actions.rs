@@ -237,9 +237,15 @@ impl<N: Native> Executor<N> {
             Effect::Minimize => {
                 // Query immediately before dispatch; cached snapshots can predate a snap.
                 let observed = self.native.layout(hwnd)?;
+                let observed_tick = self.native.tick_ms();
                 if !valid(job) || !self.native.validate(&request.window) {
                     return Err("Minimize superseded before dispatch".into());
                 }
+                out.push(Event::ObservedArrangement {
+                    request: Box::new(request.clone()),
+                    layout: observed.clone(),
+                    tick: observed_tick,
+                });
                 let arranged = observed.arranged == Some(true);
                 let issued = self.native.clock_us();
                 if arranged {
@@ -1067,8 +1073,17 @@ mod tests {
             self.sync_tickets();
             let mut events = Vec::new();
             assert!(self.executor.step(work, &mut events));
+            self.deliver(events);
+        }
+
+        fn deliver(&mut self, events: Vec<Event>) {
             for event in events {
                 match event {
+                    Event::ObservedArrangement {
+                        request,
+                        layout,
+                        tick,
+                    } => self.model.observed_arrangement(&request, &layout, tick),
                     Event::Accepted {
                         key,
                         sequence,
@@ -1882,6 +1897,7 @@ mod tests {
         // Windows snapped after the last controller observation. The PR's fresh
         // pre-minimize query must retain that identity-validated evidence too.
         h.executor.native_mut().window_mut(10).layout = snapped();
+        h.executor.native_mut().tick_ms = 110;
         h.model.click(
             &key,
             Click {
@@ -1911,6 +1927,65 @@ mod tests {
             },
         );
         assert_rejected_snap_request(&mut h, &key, false);
+    }
+
+    #[test]
+    fn superseded_minimize_keeps_fresh_snap_evidence_before_or_after_destination_snapshot() {
+        for enabled in [false, true] {
+            for delayed in [false, true] {
+                let mut win = window("one", 10);
+                win.layout = snapped();
+                win.layout.arranged = Some(false);
+                win.layout.visible = Some([131, 100, 771, 460]);
+                let key = win.identity.key();
+                let mut h = Harness::new(&win);
+                h.model.set_minimize_snapped_elsewhere(enabled);
+                h.model.set_auto_restore(true);
+                h.model
+                    .record_mut(&key)
+                    .unwrap()
+                    .layouts
+                    .insert("B".into(), win.layout.clone());
+                h.model.click(
+                    &key,
+                    Click {
+                        minimized: false,
+                        was_foreground: true,
+                    },
+                );
+                h.executor.native_mut().window_mut(10).layout = snapped();
+                h.executor.native_mut().tick_ms = 120;
+                let work = h.issue();
+                let mut events = vec![];
+                assert!(h.executor.step(work, &mut events));
+                if !delayed {
+                    h.deliver(std::mem::take(&mut events));
+                }
+                win.minimized = true;
+                win.layout.visible = None;
+                h.model.snapshot(snapshot("B", 130, vec![win.clone()]));
+                let saved = serde_json::to_value(h.model.saved()).unwrap();
+                h.deliver(events);
+                h.advance(20); // Superseded minimize verifies after the desktop switch.
+                assert!(h.model.runtime(&key).unwrap().pending().is_none());
+                assert_eq!(serde_json::to_value(h.model.saved()).unwrap(), saved);
+                h.executor.native_mut().window_mut(10).layout = win.layout;
+                let work = h.issue();
+                assert!(
+                    matches!(&work[0], Work::Action(job) if job.request.retained_arrangement.is_some())
+                );
+                h.step(work);
+                h.advance(30);
+                assert_eq!(
+                    h.executor.native_mut().calls,
+                    vec![Call::MinimizeArranged(10)]
+                );
+                assert!(h.model.runtime(&key).unwrap().pending().is_none());
+                assert!(!h.model.has_quarantined());
+                assert_eq!(serde_json::to_value(h.model.saved()).unwrap(), saved);
+                assert_eq!(h.notices.is_empty(), enabled);
+            }
+        }
     }
 
     #[test]
@@ -1950,6 +2025,7 @@ mod tests {
                 key: window.identity.key(),
                 window,
                 retained_arrangement: None,
+                arrangement_revision: 0,
                 action,
                 generation: 1,
                 sequence: 1,

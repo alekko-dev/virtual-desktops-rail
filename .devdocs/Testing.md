@@ -88,6 +88,19 @@ produce two matching visible observations before releasing that slot without foc
 The Snap path shares the ordinary `SW_SHOWNOACTIVATE` native method and fake; there
 is no separate reveal implementation that assumes a different show command restores.
 
+The superseded-minimize regression starts with an ordinary controller snapshot,
+snaps only in the native fake, dispatches minimization and admits the destination's
+minimized/arranged=false snapshot before verification settles. Deliver the original
+native sample both before and after that snapshot. The destination request must
+retain the Snap evidence and issue zero placement/reveal/focus commands under either
+the default minimize policy or legacy decline policy, without stale memory/intent
+commits. Controller regressions also cover timeout/late delivery, newer unsnap/Snap
+observations and drag captures, display changes and return to the old topology,
+identity/HWND/PID replacement/removal, same-tick causal baselines and duplicate reports.
+An action's eventual completion timestamp must never make its old pre-minimize
+sample newer than a contradictory observation. See the cache admission contract in
+[Architecture](Architecture.md#native-snap-preservation).
+
 Use two group members and a separate owned unsnapped observer. Larger-group tests
 require explicit user scope; historical larger-group results below remain valid.
 Create a genuine group and confirm an explicit Task View Group thumbnail before
@@ -341,6 +354,29 @@ cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json
 Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
+
+On 2026-11-07, the superseded-minimize evidence correction to `71d41b4` passed
+`check-dev.ps1` with `CARGO_BUILD_JOBS=1`, incremental compilation off and writable
+checkout-local temporary files: formatting, warnings-denied Clippy, locked workspace
+tests, version contracts and release builds. The original controller probe failed
+on the reviewed source by losing the only native Snap sample after the switch;
+the permanent controller/executor regressions above now retain it without authorizing
+stale memory or focus and preserve newer evidence boundaries.
+
+Product SHA-256 `BF6BDEBC8180915DE2C7A80FDC06DCF41E268857C36F303525B38ABEF03393F1`
+was exercised in the local Windows 26300.9711 Explorer session at 2560×1440 / 120 DPI.
+An owned individually pinned fixture was snapped through real title-bar edge drags;
+controlled saved ordinary/native-Snap targets exercised automatic policy. A real rail
+dot click minimized it on the ordinary destination; a product-CLI return revealed
+the matching Snap bounds, with no notice, pending/blocked slot, saved-geometry or
+minimized-intent change. Settings screenshots and pointer Done passed. A Shift+Tab/
+Space attempt did not establish keyboard activation; no keyboard pass is claimed.
+The exposed rail became temporarily unusable to Computer Use on the away desktop,
+then reappeared on return, consistent with the documented automation visibility caveat.
+Original desktop selection/inventory and all original app-file hashes were verified;
+automation visibility was restored off and the owned pin/processes were removed.
+The exact sub-poll supersession race, native Group membership and independent
+automatic foreground anchoring were not live-certified by this smoke check.
 
 The merge of main's `90dc369` into the Snap branch at `487d8f9` retained removal
 of the local ZIP note while preserving the Snap checkbox and shifted footer geometry.

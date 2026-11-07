@@ -227,10 +227,26 @@ minimization, when Windows may report arranged=false. This evidence is independe
 of saved destination history, is passed with requests, and prevents an ordinary
 placement from breaking a retained arrangement. A fresh confirmed visible unsnapped
 observation clears it; display-context changes or identity replacement invalidate it.
-An independent observation watermark prevents older snapshots from clearing newer
-identity-validated drag-capture evidence.
-The verified minimize also retains its identity-validated pre-dispatch layout,
-covering a snap newer than the controller snapshot.
+The worker delivers identity-validated pre-minimize layout evidence with its native
+sample timestamp, independently of API acceptance or action verification. This
+covers a snap newer than the controller snapshot even when a desktop switch, newer
+intent or timeout supersedes the minimize before completion. Such evidence updates
+only the live identity cache; it cannot commit desktop memory, minimized intent,
+notice recovery or focus. Minimize completion never re-dates its old pre-dispatch
+layout as if it were a new observation.
+
+The cache tracks latest display context separately from the last definitive visible
+arranged/unsnapped observation or context/identity boundary. A delayed visible native
+sample can fill retained evidence through newer minimized/unknown observations
+(including a same-tick minimized sample) in the same display context. It must be
+strictly newer than that definitive boundary. A still-current request can prove
+its subsequent native query followed a baseline with the same coarse clock tick,
+but only if its definitive-evidence revision is unchanged. This exception cannot
+override post-request observations or duplicate reports. Newer/equal known visible state,
+drag captures, context changes (even if the display context returns later), identity
+replacement and removal fence old evidence. HWND, PID and full live identity must
+still match. Snapshot admission still prevents equal-tick repeats and older snapshots
+from clearing newer identity-validated captures.
 Fresh visible native state takes precedence over retained minimized evidence at
 dispatch. A minimized window with restore-to-maximized state cannot qualify for a
 Snap reveal, even when its normal restore bounds match. Under the decline policy,

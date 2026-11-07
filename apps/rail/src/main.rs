@@ -33,6 +33,11 @@ enum Event {
     Status(String, bool),
     Notice(String),
     SnapPreservation(Box<snap_notice::SnapNotice>),
+    ObservedArrangement {
+        request: Box<rail_core::Request>,
+        layout: Layout,
+        tick: u64,
+    },
     Accepted {
         key: String,
         sequence: u64,
