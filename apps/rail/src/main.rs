@@ -9,6 +9,7 @@ mod metrics;
 mod native;
 mod platform;
 mod singleton;
+mod snap_notice;
 mod store;
 mod ui;
 mod version;
@@ -31,6 +32,7 @@ enum Event {
     DispatchLatency(u64),
     Status(String, bool),
     Notice(String),
+    SnapPreservation(Box<snap_notice::SnapNotice>),
     Accepted {
         key: String,
         sequence: u64,

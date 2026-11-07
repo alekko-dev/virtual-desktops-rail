@@ -133,6 +133,25 @@ After visibly unsnapping the target, an ordinary saved restore must work again.
 Also snap immediately before rail minimization, before another inventory poll, and
 check that a subsequent incompatible ordinary restore is still declined.
 
+With Settings open, inspect the expanded Snap notice after either rejection. Restore
+or raise the affected member successfully through real rail input and inspect the
+notice disappearing and Settings returning to compact height. Repeat with a different
+member's successful action: the notice must remain. Native reveal into the same
+incompatible arrangement must also retain it. Restore the rejected saved arrangement
+through Windows and wait for a fresh observation: it may clear only under the precise
+[observation predicate](Architecture.md#native-snap-preservation). Close/unpin or
+replace the affected identity and confirm its notice clears without affecting other
+warnings. Keep an independent foreground anchor for automatic paths.
+
+Deterministic `snap_notice_*` executor/controller regressions cover explicit and
+automatic recovery, raise, API acceptance without completion, unrelated-window
+success, superseded generations/sequences, quarantined late results, stale/equal-tick
+snapshots and newer drag capture, visible but still incompatible geometry/state,
+confirmed ordinary unsnap, identity removal/replacement and temporary pending omission.
+They also preserve timeout/storage/report text and prevent report-picker cancellation
+from resurrecting a recovered notice. Existing mismatch tests still require zero
+native show/placement calls, unchanged memory and no pending/quarantined action.
+
 ### Minimized-intent procedure
 
 With auto-restore enabled and owned app-pinned fixtures, minimize before any geometry
@@ -301,6 +320,33 @@ cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json
 Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
+
+On 2026-11-07, the Snap notice lifecycle follow-up on source `394ff73` plus changes
+passed `check-dev.ps1` with `CARGO_BUILD_JOBS=1` and incremental compilation off:
+formatting, warnings-denied Clippy, locked workspace tests, version contracts and
+release builds. The seven new `snap_notice_*` regressions supplement the unchanged
+zero-dispatch mismatch tests. An initial default-temp run encountered access denied
+creating an existing report test's temporary directory; redirecting `TMP`/`TEMP` to
+an ignored writable checkout directory resolved it without changing the test. Keep
+desktop fixtures stopped during release checks: Windows locks their executable files.
+
+Computer Use input worked in the local Windows 26300.9711 Explorer session at
+2560×1440 / 120 DPI; the prior `GetCursorPos` denial was not reproduced and its cause
+remains unknown. Tested product SHA-256:
+`9461B51F93134FAC339B7057815ECFE1D9F8C593B750036A314E2A686E4AFAA3`.
+With disposable app state and an individually pinned owned native fixture, a seeded
+incompatible saved Snap target exercised actual rail pointer rejection. Settings
+displayed the full wrapped notice, with the fixture minimized and no pending/blocked
+action. Native activation revealed the still-incompatible ordinary window; subsequent
+fresh observations retained the notice. A real rail pointer raise completed verified,
+cleared the notice and contracted Settings; screenshots and accessibility text covered
+both states, and Tab displayed focus on the pause checkbox after contraction.
+Automation visibility was restored off, the owned pin was removed, identity-verified
+test processes exited and every original app file was restored and hash-checked.
+No desktop was created or switched. This controlled saved-target test does not certify
+native Snap Group preservation, observation-based compatible recovery, automatic
+recovery UI or broad DPI/focus/relayout behavior; those remain deterministic-only or
+require the native procedure above. Process integrity was not independently recorded.
 
 The minimized-Snap edge-case follow-up is integrated on
 `codex/preserve-native-snap-groups` based on `ec21a14`. On 2026-11-07, `check-dev.ps1` passed with `CARGO_BUILD_JOBS=1`: formatting,

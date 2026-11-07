@@ -236,6 +236,24 @@ existing Snap notice and reject before any show/placement command, releasing the
 pending action rather than entering verification/quarantine. User-minimized
 destinations still produce no automatic restore request.
 
+The existing Snap preservation notice carries the rejected request's live identity
+(including HWND/PID), target and dispatch timestamp. Only a current, non-quarantined
+verified restore/raise for that identity clears it; acceptance, unrelated success,
+superseded sequences/generations and late completion do not. A stable-desktop,
+identity-validated snapshot can also clear it, with no pending action or drag, only
+when its timestamp exceeds the rejection, prior snapshot and all accepted state,
+capture and action evidence. The window must be non-minimized with visible bounds.
+For a saved Snap target, native arranged=true, normal/visible bounds, maximized state
+and original monitor/work-area/DPI context must match the existing preservation and
+verification predicates. For an ordinary target, native arranged=false and matching
+display-adjusted normal/visible bounds and maximized state are required. Visibility
+alone, unknown arranged state or an unchanged mismatch cannot clear it. Clearing
+does not rewrite saved layouts. Authoritative inventory removal/replacement or a
+matched identity-lost result clears the affected notice; pending identities survive
+temporary inventory omission. Clearing never erases a different displayed notice,
+and report-picker cancellation cannot resurrect a Snap notice cleared while covered.
+The timeout notice retains its existing independent quarantine lifecycle.
+
 ### Storage and action sequencing
 
 Schema 1 JSON under LocalAppData defaults missing `auto_restore` to false. Storage is

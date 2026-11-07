@@ -206,7 +206,9 @@ impl<N: Native> Executor<N> {
                 );
             }
             Err(error) => {
-                out.push(Event::Notice(error));
+                if error != crate::snap_notice::TEXT {
+                    out.push(Event::Notice(error));
+                }
                 let tick = self.native.tick_ms();
                 out.push(Event::ActionResult {
                     key,
@@ -286,7 +288,10 @@ impl<N: Native> Executor<N> {
                         });
                 if saved.arranged == Some(true) || observed.arranged == Some(true) || retained_snap
                 {
-                    return Err("Restoration would replace or lose a native Snap arrangement in the current window/display state. Automatic Snap group reconstruction is unavailable.".into());
+                    out.push(Event::SnapPreservation(Box::new(
+                        crate::snap_notice::SnapNotice::new(request.clone(), self.native.tick_ms()),
+                    )));
+                    return Err(crate::snap_notice::TEXT.into());
                 }
                 if request.action.automatic() {
                     // Establish the destination restore state while minimized,
@@ -600,7 +605,7 @@ fn close_bounds(actual: [i32; 4], expected: [i32; 4]) -> bool {
     actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 2)
 }
 
-fn preserves_arrangement(saved: &Layout, observed: &Layout) -> bool {
+pub(crate) fn preserves_arrangement(saved: &Layout, observed: &Layout) -> bool {
     saved.arranged == Some(true)
         && !saved.maximized
         && !observed.maximized
@@ -620,7 +625,7 @@ fn preserves_arrangement(saved: &Layout, observed: &Layout) -> bool {
         })
 }
 
-fn restored_layout_matches(expected: &Layout, observed: &Layout) -> bool {
+pub(crate) fn restored_layout_matches(expected: &Layout, observed: &Layout) -> bool {
     observed.maximized == expected.maximized
         && close_bounds(observed.normal, expected.normal)
         && expected
@@ -964,6 +969,8 @@ mod tests {
         paused: Arc<AtomicBool>,
         focus_from: BTreeMap<String, usize>,
         notices: Vec<String>,
+        snap_notice: crate::snap_notice::Lifecycle,
+        notice: String,
     }
 
     impl Harness {
@@ -980,6 +987,8 @@ mod tests {
                 paused: Arc::new(AtomicBool::new(false)),
                 focus_from: BTreeMap::new(),
                 notices: Vec::new(),
+                snap_notice: crate::snap_notice::Lifecycle::default(),
+                notice: String::new(),
             }
         }
 
@@ -1036,7 +1045,7 @@ mod tests {
                         tick,
                         outcome,
                     } => {
-                        self.model.settle(&key, sequence, tick, outcome);
+                        self.result(&key, sequence, tick, outcome);
                     }
                     Event::Captured {
                         key,
@@ -1047,6 +1056,11 @@ mod tests {
                         self.model.captured(&key, generation, tick, layout);
                     }
                     Event::Notice(notice) => self.notices.push(notice),
+                    Event::SnapPreservation(notice) => {
+                        self.notices.push(crate::snap_notice::TEXT.into());
+                        self.snap_notice
+                            .rejected(*notice, &self.model, &mut self.notice);
+                    }
                     _ => {}
                 }
             }
@@ -1056,6 +1070,316 @@ mod tests {
             self.executor.native_mut().tick_ms += delta_ms;
             self.step(vec![]);
         }
+
+        fn result(&mut self, key: &str, sequence: u64, tick: u64, outcome: Outcome) {
+            let settled = self.model.settle(key, sequence, tick, outcome);
+            self.snap_notice.settled(
+                &self.model,
+                (key, sequence, tick, outcome),
+                settled.as_ref(),
+                &mut self.notice,
+            );
+            self.snap_notice.reconcile(&self.model, &mut self.notice);
+        }
+
+        fn frame(&mut self, frame: Snapshot) {
+            self.snap_notice
+                .observe(&self.model, &frame, &mut self.notice);
+            self.model.snapshot(frame);
+            self.snap_notice.reconcile(&self.model, &mut self.notice);
+        }
+    }
+
+    fn snap_notice_fixture() -> (Harness, Window) {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        win.layout.maximized = true;
+        win.layout.visible = None;
+        win.layout.arranged = Some(false);
+        win.minimized = true;
+        let key = win.identity.key();
+        let mut h = Harness::new(&win);
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("A".into(), snapped());
+        h.model.click(
+            &key,
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        h.executor.native_mut().tick_ms = 120;
+        assert_rejected_snap_request(&mut h, &key, false);
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        (h, win)
+    }
+
+    #[test]
+    fn snap_notice_clears_only_after_current_verified_restore_or_raise() {
+        for raise in [false, true] {
+            let (mut h, mut win) = snap_notice_fixture();
+            let key = win.identity.key();
+            win.layout = snapped();
+            if !raise {
+                win.layout.visible = None;
+            }
+            win.minimized = !raise;
+            h.executor.native_mut().insert(&win);
+            h.model.click(
+                &key,
+                Click {
+                    minimized: !raise,
+                    was_foreground: false,
+                },
+            );
+            let work = h.issue();
+            h.step(work);
+            // Native acceptance alone must leave the notice intact.
+            assert_eq!(h.notice, crate::snap_notice::TEXT);
+            h.executor.native_mut().window_mut(10).layout = snapped();
+            h.advance(30);
+            h.advance(30);
+            assert!(h.notice.is_empty());
+            assert!(h.model.runtime(&key).unwrap().pending().is_none());
+        }
+    }
+
+    #[test]
+    fn snap_notice_visible_observation_requires_resolved_target_and_fresh_evidence() {
+        for mismatch in 0..8 {
+            let (mut h, mut win) = snap_notice_fixture();
+            win.minimized = false;
+            win.layout = snapped();
+            match mismatch {
+                0 => win.layout.arranged = Some(false),
+                1 => win.layout.arranged = None,
+                2 => win.layout.normal[0] += 40,
+                3 => win.layout.visible = Some([100, 100, 740, 460]),
+                4 => win.layout.maximized = true,
+                5 => win.layout.dpi += 24,
+                6 => win.layout.work_area[0] += 20,
+                _ => win.minimized = true,
+            }
+            h.frame(snapshot("A", 2300, vec![win.clone()]));
+            assert_eq!(h.notice, crate::snap_notice::TEXT, "mismatch {mismatch}");
+            win.minimized = false;
+            win.layout = snapped();
+            h.frame(snapshot("A", 2300, vec![win.clone()]));
+            assert_eq!(h.notice, crate::snap_notice::TEXT, "equal tick");
+            h.frame(snapshot("A", 2301, vec![win]));
+            assert!(h.notice.is_empty());
+        }
+        let (mut h, mut win) = snap_notice_fixture();
+        win.minimized = false;
+        win.layout = snapped();
+        h.frame(snapshot("A", 120, vec![win.clone()]));
+        assert_eq!(h.notice, crate::snap_notice::TEXT, "pre-rejection snapshot");
+        h.model
+            .captured(&win.identity.key(), h.model.generation(), 2500, snapped());
+        h.frame(snapshot("A", 2400, vec![win.clone()]));
+        assert_eq!(h.notice, crate::snap_notice::TEXT, "older than capture");
+        h.frame(snapshot("A", 2501, vec![win]));
+        assert!(h.notice.is_empty());
+    }
+
+    #[test]
+    fn snap_notice_unrelated_success_and_stale_late_results_do_not_clear() {
+        let (mut h, win) = snap_notice_fixture();
+        let key = win.identity.key();
+        let other = window("other", 20);
+        h.frame(snapshot("A", 2300, vec![win.clone(), other.clone()]));
+        h.executor.native_mut().insert(&other);
+        h.model.click(
+            &other.identity.key(),
+            Click {
+                minimized: false,
+                was_foreground: false,
+            },
+        );
+        let work = h.issue();
+        h.step(work);
+        h.advance(30);
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        h.result(&key, 1, 2400, Outcome::Verified); // already released rejection
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        for mode in 0..3 {
+            let (mut h, win) = snap_notice_fixture();
+            let key = win.identity.key();
+            h.model.click(
+                &key,
+                Click {
+                    minimized: true,
+                    was_foreground: false,
+                },
+            );
+            let request = h.model.take_requests(2300).pop().unwrap();
+            h.model.accepted(
+                &key,
+                request.sequence,
+                Acceptance::as_requested(&request.action),
+            );
+            match mode {
+                0 => h.result(&key, request.sequence, 2350, Outcome::TimedOut),
+                1 => h.model.click(
+                    &key,
+                    Click {
+                        minimized: false,
+                        was_foreground: false,
+                    },
+                ),
+                _ => h.model.snapshot(snapshot("B", 2350, vec![win])),
+            }
+            // Keep Snap displayed to isolate its lifecycle from the timeout UI.
+            h.result(&key, request.sequence, 2400, Outcome::Verified);
+            assert_eq!(h.notice, crate::snap_notice::TEXT, "mode {mode}");
+        }
+    }
+
+    #[test]
+    fn snap_notice_identity_removal_replacement_and_other_notices() {
+        for replacement in 0..3 {
+            let (mut h, mut win) = snap_notice_fixture();
+            let windows = match replacement {
+                0 => vec![],
+                1 => {
+                    win.identity.token = "replacement".into();
+                    vec![win]
+                }
+                _ => {
+                    win.hwnd = 11;
+                    vec![win]
+                }
+            };
+            h.frame(snapshot("A", 2300, windows));
+            assert!(h.notice.is_empty());
+        }
+        for text in [
+            crate::ui::ACTION_TIMEOUT_NOTICE,
+            "Saved layouts could not be written",
+            "Diagnostic report saved",
+        ] {
+            let (mut h, _) = snap_notice_fixture();
+            h.notice = text.into();
+            h.frame(snapshot("A", 2300, vec![]));
+            assert_eq!(h.notice, text);
+            assert_eq!(h.snap_notice.previous(text.into()), text);
+            assert!(
+                h.snap_notice
+                    .previous(crate::snap_notice::TEXT.into())
+                    .is_empty()
+            );
+        }
+        let (mut h, win) = snap_notice_fixture();
+        let key = win.identity.key();
+        h.model.click(
+            &key,
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        let request = h.model.take_requests(2300).pop().unwrap();
+        h.frame(snapshot("A", 2301, vec![]));
+        assert_eq!(
+            h.notice,
+            crate::snap_notice::TEXT,
+            "temporary pending omission"
+        );
+        h.result(&key, request.sequence, 2302, Outcome::IdentityLost);
+        assert!(h.notice.is_empty());
+    }
+
+    #[test]
+    fn snap_notice_stale_rejection_cannot_replace_a_newer_notice() {
+        for stale in 0..3 {
+            let (mut h, win) = snap_notice_fixture();
+            let key = win.identity.key();
+            h.model.click(
+                &key,
+                Click {
+                    minimized: true,
+                    was_foreground: false,
+                },
+            );
+            let request = h.model.take_requests(2300).pop().unwrap();
+            match stale {
+                0 => h.model.click(
+                    &key,
+                    Click {
+                        minimized: false,
+                        was_foreground: false,
+                    },
+                ),
+                1 => h.model.snapshot(snapshot("B", 2301, vec![win])),
+                _ => h.result(&key, request.sequence, 2301, Outcome::TimedOut),
+            }
+            h.notice = "Newer storage warning".into();
+            h.snap_notice.rejected(
+                crate::snap_notice::SnapNotice::new(request, 2302),
+                &h.model,
+                &mut h.notice,
+            );
+            assert_eq!(h.notice, "Newer storage warning");
+        }
+    }
+
+    #[test]
+    fn snap_notice_normal_target_requires_confirmed_unsnap_and_matching_geometry() {
+        let (mut h, mut win) = snap_notice_fixture();
+        let key = win.identity.key();
+        // Establish a new rejection against an ordinary destination while live Snap
+        // evidence still forbids placement.
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("B".into(), layout(100));
+        h.model.set_auto_restore(true);
+        win.layout = snapped();
+        win.minimized = false;
+        h.executor.native_mut().insert(&win);
+        h.model.snapshot(snapshot("B", 2300, vec![win.clone()]));
+        h.executor.native_mut().tick_ms = 2300;
+        let work = h.issue();
+        h.step(work);
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        win.layout = layout(150);
+        h.frame(snapshot("B", 2310, vec![win.clone()]));
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        win.layout = layout(100);
+        win.layout.arranged = None;
+        h.frame(snapshot("B", 2320, vec![win.clone()]));
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        win.layout.arranged = Some(false);
+        h.frame(snapshot("B", 2330, vec![win]));
+        assert!(h.notice.is_empty());
+    }
+
+    #[test]
+    fn snap_notice_automatic_verified_recovery_clears() {
+        let (mut h, mut win) = snap_notice_fixture();
+        let key = win.identity.key();
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("B".into(), snapped());
+        h.model.set_auto_restore(true);
+        win.layout = snapped();
+        win.layout.visible = None;
+        h.model.snapshot(snapshot("B", 2300, vec![win.clone()]));
+        h.executor.native_mut().insert(&win);
+        h.executor.native_mut().tick_ms = 2300;
+        let work = h.issue();
+        h.step(work);
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        h.executor.native_mut().window_mut(10).layout = snapped();
+        h.advance(30);
+        h.advance(30);
+        assert!(h.notice.is_empty());
     }
 
     #[test]

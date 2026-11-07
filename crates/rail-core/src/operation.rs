@@ -193,6 +193,8 @@ impl Pending {
 /// Summary of a settled report, for diagnostics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settled {
+    /// Verified for the still-current identity, generation and sequence, before timeout.
+    pub current_verified: bool,
     pub intent: Action,
     pub effect: Option<Effect>,
     /// The report arrived after the operation was quarantined.

@@ -51,7 +51,10 @@ arrangements and changed displays can be declined. Application-specific constrai
 remain unverified. Pause automatic actions when using unsupported arrangements.
 The rail leaves a known minimized Snap arrangement untouched when an ordinary saved
 layout would replace it, and declines saved Snap restoration from a minimized
-maximized state. It shows the existing Snap notice.
+maximized state. Its Snap notice clears after that window successfully restores or
+raises, or a fresh observation confirms the saved target is compatible again. Merely
+becoming visible does not clear an unresolved mismatch; removing the window clears
+its notice.
 Exact last-visit restoration, including windows left minimized, is still in progress.
 
 ## Requirements

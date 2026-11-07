@@ -58,6 +58,12 @@ impl Runtime {
     pub fn window(&self) -> &Window {
         &self.window
     }
+    /// New observations must exceed accepted state, capture and action evidence.
+    pub fn observation_through(&self) -> u64 {
+        self.state_tick
+            .max(self.arrangement_tick)
+            .max(self.ignore_geometry_through)
+    }
     pub fn sequence(&self) -> u64 {
         self.sequence
     }
@@ -259,6 +265,10 @@ impl Model {
             runtime.restore_after_minimize = false;
             runtime.sequence += 1;
         }
+    }
+
+    pub fn last_snapshot_tick(&self) -> u64 {
+        self.last_snapshot_tick
     }
 
     pub fn snapshot(&mut self, snapshot: Snapshot) {
@@ -751,6 +761,7 @@ impl Model {
             pending.state = OperationState::Quarantined;
         }
         Some(Settled {
+            current_verified,
             intent,
             effect,
             late,
