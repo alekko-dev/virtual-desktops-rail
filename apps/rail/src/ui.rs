@@ -1385,16 +1385,6 @@ impl App {
                 272,
                 32,
             ),
-            (
-                6110,
-                "STATIC",
-                "Local ZIP: no titles or content. Nothing is uploaded; review before sharing.",
-                0x50000000,
-                24,
-                292,
-                496,
-                14,
-            ),
             (6106, "STATIC", "", 0x50000010, 0, 308, 560, 1),
             (DONE, "BUTTON", "Done", 0x50010001, 432, 324, 88, 34),
             (6107, "STATIC", "●", 0x50000000, 24, 319, 10, 18),
@@ -1422,7 +1412,6 @@ impl App {
                 let font = self.settings_fonts[match id {
                     6102..=6104 => 1,
                     6100 | 6107 | 6109 => 2,
-                    6110 => 3,
                     _ => 0,
                 }];
                 SendMessageW(child, 0x30, font, 1);

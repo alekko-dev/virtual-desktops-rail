@@ -342,6 +342,18 @@ Representative physical-machine distributions and completion timing remain unmea
 
 ### Integration smoke check
 
+The merge of main's `90dc369` into the Snap branch at `487d8f9` retained removal
+of the local ZIP note while preserving the Snap checkbox and shifted footer geometry.
+On 2026-11-07, the resolved source passed `check-dev.ps1` with the same bounded build
+and writable temporary-directory settings below. Product SHA-256
+`E6AF092AED154B040CD9E4132DC43D7BC2E29AFEACA3D2F5D113F328ECACE3C4`
+passed actual Settings screenshot, checkbox pointer/Space toggling and Done checks
+in the local Windows 26300.9711 / 2560×1440 / 120-DPI session. The note was absent,
+and default-on Snap preference/status updates remained correct. The owned process
+exited, automation visibility was off and original app files were restored and
+hash-checked. No fixture or desktop transition was needed; this Settings merge check
+does not add native Snap Group or automatic-focus evidence.
+
 The default-on Snap desktop policy follow-up to `6b52682` passed `check-dev.ps1`
 on 2026-11-07 with `CARGO_BUILD_JOBS=1`, incremental compilation off and writable
 checkout-local temporary files: formatting, warnings-denied Clippy, locked workspace
