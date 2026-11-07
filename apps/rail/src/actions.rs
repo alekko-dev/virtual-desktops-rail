@@ -520,13 +520,17 @@ fn place_window_behind<N: Native>(native: &mut N, hwnd: usize, popup: Option<usi
 
 fn verified_z_order<N: Native>(native: &mut N, active: &mut Active) -> bool {
     let request = &active.job.request;
-    if matches!(request.action, Action::RestoreAutomatic(_)) && !active.z_reconciled {
-        active.z_reconciled = true;
+    if matches!(request.action, Action::RestoreAutomatic(_)) && valid(&active.job) {
+        let hwnd = request.window.hwnd;
         if let Some(above) = resolve_z_above(native, request, active.job.rail)
-            && !native.is_below(request.window.hwnd, above)
+            && !native.is_below(hwnd, above)
         {
-            let popup = native.popup(&request.window);
-            place_window_behind(native, request.window.hwnd, popup, above);
+            if !active.timed_out && !active.z_reconciled {
+                active.z_reconciled = true;
+
+                let popup = native.popup(&request.window);
+                place_window_behind(native, hwnd, popup, above);
+            }
             return false;
         }
     }
@@ -2728,6 +2732,129 @@ mod tests {
                     above: 20,
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn stalled_or_superseded_z_order_correction_respects_verification_and_authority() {
+        // 1. If the corrective PlaceBehind remains queued on a slow target thread,
+        // verification must not succeed while the window still covers its peer.
+        let mut managed = window("managed", 10);
+        let saved = snapped();
+        managed.layout = saved.clone();
+        managed.layout.visible = None;
+        managed.layout.arranged = Some(false);
+        managed.minimized = true;
+        managed.z_above = vec![20];
+        let peer_a = window("peer-a", 20);
+        let mut executor = Executor::new(FakeNative::new(100));
+        executor.native_mut().insert(&managed);
+        executor.native_mut().insert(&peer_a);
+        executor.native_mut().window_mut(10).auto_apply = false;
+
+        let mut events = Vec::new();
+        executor.step(
+            vec![Work::Action(test_job(
+                managed.clone(),
+                Action::RestoreAutomatic(saved.clone()),
+            ))],
+            &mut events,
+        );
+        {
+            let live = executor.native_mut().window_mut(10);
+            live.iconic = false;
+            live.visible = true;
+            live.layout = saved.clone();
+            live.z_above.clear();
+        }
+        // First poll dispatches the single corrective PlaceBehind, but auto_apply is still false.
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+        assert_eq!(
+            executor
+                .native_mut()
+                .calls
+                .iter()
+                .filter(|call| matches!(call, Call::PlaceBehind { .. }))
+                .count(),
+            2
+        );
+
+        // If the correction never takes effect before the deadline, it times out.
+        executor.native_mut().tick_ms = 2200;
+        executor.step(vec![], &mut events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::TimedOut,
+                ..
+            }
+        )));
+
+        // Once the queued Z-order change finally takes effect, two polls verify and release.
+        executor.native_mut().window_mut(10).z_above = vec![20];
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+
+        // 2. If the job is superseded (e.g. desktop generation changed) before the delayed
+        // reveal, late-completion polling stays observational and does not issue PlaceBehind.
+        let mut executor = Executor::new(FakeNative::new(100));
+        executor.native_mut().insert(&managed);
+        executor.native_mut().insert(&peer_a);
+        executor.native_mut().window_mut(10).auto_apply = false;
+        let job = test_job(managed, Action::RestoreAutomatic(saved.clone()));
+        let generation = job.generation.clone();
+        let mut events = Vec::new();
+        executor.step(vec![Work::Action(job)], &mut events);
+        assert_eq!(
+            executor
+                .native_mut()
+                .calls
+                .iter()
+                .filter(|call| matches!(call, Call::PlaceBehind { .. }))
+                .count(),
+            1
+        );
+        generation.store(2, Ordering::Release);
+        {
+            let live = executor.native_mut().window_mut(10);
+            live.iconic = false;
+            live.visible = true;
+            live.layout = saved;
+            live.z_above.clear();
+        }
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+        assert_eq!(
+            executor
+                .native_mut()
+                .calls
+                .iter()
+                .filter(|call| matches!(call, Call::PlaceBehind { .. }))
+                .count(),
+            1
         );
     }
 
