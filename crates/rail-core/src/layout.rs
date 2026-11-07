@@ -115,6 +115,9 @@ pub struct Window {
     pub responsive: bool,
     pub layout: Layout,
     pub popup: Option<usize>,
+    /// Normal top-level windows ordered from immediately above this window to highest.
+    #[serde(default)]
+    pub z_above: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

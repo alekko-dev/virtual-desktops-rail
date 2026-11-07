@@ -35,6 +35,7 @@ enum Event {
     SnapPreservation(Box<snap_notice::SnapNotice>),
     ObservedArrangement {
         request: Box<rail_core::Request>,
+        z_above: Vec<usize>,
         layout: Layout,
         tick: u64,
     },

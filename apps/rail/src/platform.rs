@@ -382,6 +382,131 @@ pub fn popup(window: &Window) -> Option<HWND> {
     Some(candidate)
 }
 
+fn is_z_order_peer(window: HWND, exclude_owner: HWND, allow_shell_cloaked: bool) -> bool {
+    use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GWL_EXSTYLE, GetClassNameW, GetShellWindow, WS_CHILD, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TOPMOST,
+    };
+    const DWM_CLOAKED_SHELL: u32 = 2;
+    unsafe {
+        if window.is_invalid()
+            || window == exclude_owner
+            || !IsWindowVisible(window).as_bool()
+            || IsIconic(window).as_bool()
+            || !IsWindow(window).as_bool()
+        {
+            return false;
+        }
+        let style = GetWindowLongPtrW(window, GWL_STYLE) as u32;
+        let extended = GetWindowLongPtrW(window, GWL_EXSTYLE) as u32;
+        if style & WS_CHILD.0 != 0
+            || extended & (WS_EX_TOOLWINDOW.0 | WS_EX_TOPMOST.0 | WS_EX_NOACTIVATE.0) != 0
+        {
+            return false;
+        }
+        if !exclude_owner.is_invalid() && GetAncestor(window, GA_ROOTOWNER) == exclude_owner {
+            return false;
+        }
+        if window == GetShellWindow() {
+            return false;
+        }
+        let mut bounds = RECT::default();
+        if GetWindowRect(window, &mut bounds).is_err()
+            || bounds.right <= bounds.left
+            || bounds.bottom <= bounds.top
+        {
+            return false;
+        }
+        let mut class = [0u16; 128];
+        let length = GetClassNameW(window, &mut class) as usize;
+        let class = String::from_utf16_lossy(&class[..length]);
+        if matches!(
+            class.as_str(),
+            "Progman"
+                | "WorkerW"
+                | "Shell_TrayWnd"
+                | "Shell_SecondaryTrayWnd"
+                | "XamlExplorerHostIslandWindow"
+                | "MultitaskingViewFrame"
+        ) {
+            return false;
+        }
+        let mut cloaked = 0u32;
+        if DwmGetWindowAttribute(
+            window,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut _ as *mut _,
+            std::mem::size_of::<u32>() as u32,
+        )
+        .is_ok()
+        {
+            let allowed = if allow_shell_cloaked {
+                DWM_CLOAKED_SHELL
+            } else {
+                0
+            };
+            if cloaked & !allowed != 0 {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+pub fn z_above(handle: HWND) -> Vec<usize> {
+    use windows::Win32::UI::WindowsAndMessaging::{GW_HWNDPREV, GetWindow};
+    if unsafe { IsIconic(handle) }.as_bool() {
+        return Vec::new();
+    }
+    let mut above = Vec::new();
+    let mut current = handle;
+    for _ in 0..4096 {
+        let Ok(prev) = (unsafe { GetWindow(current, GW_HWNDPREV) }) else {
+            break;
+        };
+        if prev.is_invalid() || prev == current {
+            break;
+        }
+        current = prev;
+        if is_z_order_peer(current, handle, true) {
+            let value = current.0 as usize;
+            if !above.contains(&value) {
+                above.push(value);
+                if above.len() >= 16 {
+                    break;
+                }
+            }
+        }
+    }
+    above
+}
+
+pub fn is_z_order_target(handle: HWND) -> bool {
+    is_z_order_peer(handle, HWND::default(), false)
+}
+
+pub fn is_below(handle: HWND, above: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GW_HWNDPREV, GetWindow};
+    if handle.is_invalid() || above.is_invalid() || handle == above {
+        return false;
+    }
+    let mut current = handle;
+    for _ in 0..4096 {
+        let Ok(prev) = (unsafe { GetWindow(current, GW_HWNDPREV) }) else {
+            break;
+        };
+        if prev.is_invalid() || prev == current {
+            break;
+        }
+        if prev == above {
+            return true;
+        }
+        current = prev;
+    }
+    false
+}
+
 pub fn capture(
     candidate: &diagnostic::CandidateIdentity,
     context: &(String, u32),
@@ -403,6 +528,7 @@ pub fn capture(
         responsive: !unsafe { IsHungAppWindow(candidate.hwnd) }.as_bool(),
         layout: layout(candidate.hwnd)?,
         popup: None,
+        z_above: z_above(candidate.hwnd),
     };
     let active = unsafe { GetLastActivePopup(candidate.hwnd) };
     if active != candidate.hwnd && unsafe { IsWindowVisible(active) }.as_bool() {

@@ -27,6 +27,7 @@ fn window(token: &str) -> Window {
         responsive: true,
         layout: layout(100),
         popup: None,
+        z_above: Vec::new(),
     }
 }
 fn snapshot(desktop: &str, tick: u64, windows: Vec<Window>) -> Snapshot {
@@ -2039,6 +2040,84 @@ fn drag_end_capture_rejects_unreachable_parking_bounds_and_releases_absent_ident
     assert!(model.runtime(&key).is_some());
     model.settle(&key, request.sequence, 140, Outcome::IdentityLost);
     assert!(model.runtime(&key).is_none());
+}
+
+#[test]
+fn z_order_above_survives_minimization_and_clears_only_on_explicit_foreground_actions() {
+    let (mut model, mut window, key) = saved_destinations();
+    let mut snapped = layout(100);
+    snapped.arranged = Some(true);
+    snapped.visible = Some([25, 0, 960, 1040]);
+    model
+        .record_mut(&key)
+        .unwrap()
+        .layouts
+        .insert("A".into(), snapped.clone());
+    window.layout = snapped.clone();
+    window.z_above = vec![300, 200];
+    model.snapshot(snapshot("A", 110, vec![window.clone()]));
+    assert_eq!(model.runtime(&key).unwrap().z_above(), &[300, 200]);
+
+    // Switch to Desktop B: pre-minimize native sample updates Z-order and survives
+    // subsequent minimized observations across desktops.
+    window.z_above.clear();
+    model.snapshot(snapshot("B", 120, vec![window.clone()]));
+    let minimize = model.take_requests(120).pop().unwrap();
+    assert_eq!(minimize.z_above, vec![300, 200]);
+    model.observed_z_above(&minimize, vec![400, 300], 125);
+    model.accepted(
+        &key,
+        minimize.sequence,
+        Acceptance {
+            effect: Effect::Minimize,
+            target: Some(snapped.clone()),
+        },
+    );
+    model.settle(&key, minimize.sequence, 130, Outcome::Verified);
+    window.minimized = true;
+    window.layout.visible = None;
+    model.snapshot(snapshot("B", 140, vec![window.clone()]));
+    assert_eq!(model.runtime(&key).unwrap().z_above(), &[400, 300]);
+
+    // Return to Desktop A: automatic restore carries the preserved background Z-order
+    // and keeps it after verified background completion.
+    model.snapshot(snapshot("A", 150, vec![window.clone()]));
+    let restore_auto = model.take_requests(150).pop().unwrap();
+    assert_eq!(
+        restore_auto.action,
+        Action::RestoreAutomatic(snapped.clone())
+    );
+    assert_eq!(restore_auto.z_above, vec![400, 300]);
+    model.accepted(
+        &key,
+        restore_auto.sequence,
+        Acceptance {
+            effect: Effect::Restore,
+            target: Some(snapped.clone()),
+        },
+    );
+    model.settle(&key, restore_auto.sequence, 160, Outcome::Verified);
+    assert_eq!(model.runtime(&key).unwrap().z_above(), &[400, 300]);
+
+    // Explicit user raise brings the window to the front and clears background Z-order.
+    window.minimized = false;
+    window.layout = snapped.clone();
+    click(&mut model, &key, false);
+    let raise = model.take_requests(170).pop().unwrap();
+    assert_eq!(raise.action, Action::Raise);
+    model.accepted(
+        &key,
+        raise.sequence,
+        Acceptance {
+            effect: Effect::Raise,
+            target: Some(snapped),
+        },
+    );
+    model.settle(&key, raise.sequence, 180, Outcome::Verified);
+    assert!(model.runtime(&key).unwrap().z_above().is_empty());
+    // Older pre-minimize samples cannot overwrite newer explicit state.
+    model.observed_z_above(&minimize, vec![400, 300], 125);
+    assert!(model.runtime(&key).unwrap().z_above().is_empty());
 }
 
 #[test]

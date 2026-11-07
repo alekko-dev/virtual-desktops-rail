@@ -142,7 +142,7 @@ request sources, but does not model `SW_MINIMIZE` activation effects or native G
 
 Also verify a matching saved Snap layout still reveals without placement,
 manual reveal can focus only after verification, automatic reveal preserves the
-independent observer foreground, and the rail's own minimize preserves the Group.
+independent observer foreground and background Z-order behind uncloaked peers that were above the window before minimization, and the rail's own minimize preserves the Group.
 After visibly unsnapping the target, an ordinary saved restore must work again.
 Also snap immediately before rail minimization, before another inventory poll, and
 check that a subsequent incompatible ordinary restore is still declined.
