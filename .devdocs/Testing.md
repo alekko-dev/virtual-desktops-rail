@@ -61,6 +61,15 @@ See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-au
 
 ## Interactive regression matrix
 
+The executable-first icon change (`faa5cbf` plus changes, 2026-11-07) passed
+`check-dev.ps1`, including locked release builds. The sandbox denied an existing
+atomic-file replacement test; the complete check passed outside the sandbox.
+Live icon rendering and fallback behavior remain unverified: the test debug rail
+in the local Windows 26300.9711 session reported an integration response error and
+no managed windows. Computer Use located its exposed controls but could not
+exercise application icons. Automation visibility was restored off and the owned
+debug process exited after executable and creation-time checks.
+
 | Area | Repeatable scenarios and observations |
 | --- | --- |
 | Rendering/input | Active desktop shape/colors, icon visibility indicators, Settings/notices, hover tooltips, actual restore/focus/second-click minimize, keyboard focus, Done and Exit |
