@@ -12,9 +12,10 @@ use std::sync::{
 };
 use std::time::Duration;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowPlacement, IsIconic, IsWindowVisible, SW_SHOWMAXIMIZED,
-    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SetForegroundWindow, SetWindowPlacement,
-    ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
+    GetForegroundWindow, GetWindowPlacement, IsIconic, IsWindowVisible, SW_MINIMIZE,
+    SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNA, SW_SHOWNOACTIVATE, SetForegroundWindow,
+    SetWindowPlacement, ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT,
+    WPF_RESTORETOMAXIMIZED,
 };
 
 pub struct Job {
@@ -62,6 +63,8 @@ pub trait Native {
     fn layout(&mut self, hwnd: usize) -> Result<Layout, String>;
     fn adjusted(&mut self, saved: &Layout, hwnd: usize) -> Result<Layout, String>;
     fn show_min_no_active(&mut self, hwnd: usize) -> Result<(), String>;
+    fn minimize_arranged(&mut self, hwnd: usize) -> Result<(), String>;
+    fn reveal_arranged(&mut self, hwnd: usize) -> Result<(), String>;
     fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String>;
     fn set_placement(
         &mut self,
@@ -229,8 +232,14 @@ impl<N: Native> Executor<N> {
         }
         match effect {
             Effect::Minimize => {
+                // Query immediately before dispatch; cached snapshots can predate a snap.
+                let arranged = self.native.layout(hwnd)?.arranged == Some(true);
                 let issued = self.native.clock_us();
-                self.native.show_min_no_active(hwnd)?;
+                if arranged {
+                    self.native.minimize_arranged(hwnd)?;
+                } else {
+                    self.native.show_min_no_active(hwnd)?;
+                }
                 if request.action.automatic()
                     && let (Some(received), Some(issued)) = (job.transition_received_us, issued)
                     && let Some(elapsed) = issued.checked_sub(received)
@@ -255,7 +264,7 @@ impl<N: Native> Executor<N> {
                 if preserves_arrangement(&target, &observed) {
                     // A show request on a visible arranged window can unsnap it.
                     if self.native.is_iconic(hwnd) {
-                        self.native.show_no_activate(hwnd)?;
+                        self.native.reveal_arranged(hwnd)?;
                     }
                     if let Some(popup) = self.native.popup(&request.window) {
                         let _ = self.native.show_no_activate(popup);
@@ -265,8 +274,8 @@ impl<N: Native> Executor<N> {
                         target: Some(target),
                     });
                 }
-                if target.arranged == Some(true) {
-                    return Err("The saved Snap arrangement cannot be preserved in the current window/display state. Automatic Snap group reconstruction is unavailable.".into());
+                if saved.arranged == Some(true) || observed.arranged == Some(true) {
+                    return Err("Restoration would replace or lose a native Snap arrangement in the current window/display state. Automatic Snap group reconstruction is unavailable.".into());
                 }
                 if request.action.automatic() {
                     // Establish the destination restore state while minimized,
@@ -484,6 +493,18 @@ impl Native for Win32Native {
             .ok()
             .map_err(|error| error.to_string())
     }
+    fn minimize_arranged(&mut self, hwnd: usize) -> Result<(), String> {
+        unsafe { ShowWindowAsync(platform::hwnd(hwnd), SW_MINIMIZE) }
+            .ok()
+            .map_err(|error| error.to_string())
+    }
+    fn reveal_arranged(&mut self, hwnd: usize) -> Result<(), String> {
+        // SW_RESTORE activates before guarded focus can run; SW_SHOWNA asks Windows
+        // to reveal its retained state without normalizing or activating it.
+        unsafe { ShowWindowAsync(platform::hwnd(hwnd), SW_SHOWNA) }
+            .ok()
+            .map_err(|error| error.to_string())
+    }
     fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String> {
         unsafe { ShowWindowAsync(platform::hwnd(hwnd), SW_SHOWNOACTIVATE) }
             .ok()
@@ -691,6 +712,8 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Call {
         ShowMinNoActive(usize),
+        MinimizeArranged(usize),
+        RevealArranged(usize),
         ShowNoActivate(usize),
         SetPlacement {
             hwnd: usize,
@@ -839,6 +862,16 @@ mod tests {
                 live.popup_visible = false;
             }
             Ok(())
+        }
+        fn minimize_arranged(&mut self, hwnd: usize) -> Result<(), String> {
+            let result = self.show_min_no_active(hwnd);
+            *self.calls.last_mut().unwrap() = Call::MinimizeArranged(hwnd);
+            result
+        }
+        fn reveal_arranged(&mut self, hwnd: usize) -> Result<(), String> {
+            let result = self.show_no_activate(hwnd);
+            *self.calls.last_mut().unwrap() = Call::RevealArranged(hwnd);
+            result
         }
         fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String> {
             self.calls.push(Call::ShowNoActivate(hwnd));
@@ -1022,6 +1055,143 @@ mod tests {
         fn advance(&mut self, delta_ms: u64) {
             self.executor.native_mut().tick_ms += delta_ms;
             self.step(vec![]);
+        }
+    }
+
+    #[test]
+    fn snap_dispatch_uses_live_state_for_minimize() {
+        for (cached_snap, live_snap) in [(false, true), (true, false)] {
+            let mut win = window("one", 10);
+            win.layout.arranged = Some(cached_snap);
+            let mut executor = Executor::new(FakeNative::new(100));
+            executor.native_mut().insert(&win);
+            executor.native_mut().window_mut(10).layout.arranged = Some(live_snap);
+            let job = test_job(win, Action::Minimize { automatic: true });
+            let mut events = Vec::new();
+            executor.step(vec![Work::Action(job)], &mut events);
+            assert_eq!(
+                executor.native_mut().calls,
+                vec![if live_snap {
+                    Call::MinimizeArranged(10)
+                } else {
+                    Call::ShowMinNoActive(10)
+                }]
+            );
+            executor.step(vec![], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+        }
+    }
+
+    fn test_job(window: Window, action: Action) -> Job {
+        Job {
+            request: Request {
+                key: window.identity.key(),
+                window,
+                action,
+                generation: 1,
+                sequence: 1,
+                tick: 100,
+            },
+            sequence: Arc::new(AtomicU64::new(1)),
+            generation: Arc::new(AtomicU64::new(1)),
+            paused: Arc::new(AtomicBool::new(false)),
+            rail: 1,
+            focus_from: 0,
+            transition_received_us: None,
+        }
+    }
+
+    #[test]
+    fn snap_reveal_never_places_or_focuses_and_requires_visible_snap_evidence() {
+        for automatic in [false, true] {
+            let mut win = window("one", 10);
+            let saved = snapped();
+            win.layout = saved.clone();
+            win.layout.visible = None;
+            win.layout.arranged = Some(false);
+            win.minimized = true;
+            let mut executor = Executor::new(FakeNative::new(100));
+            executor.native_mut().foreground = if automatic { (1, 999) } else { (77, 500) };
+            executor.native_mut().insert(&win);
+            let action = if automatic {
+                Action::RestoreAutomatic(saved.clone())
+            } else {
+                Action::Restore(saved.clone())
+            };
+            let mut events = Vec::new();
+            executor.step(vec![Work::Action(test_job(win, action))], &mut events);
+            assert_eq!(executor.native_mut().calls, vec![Call::RevealArranged(10)]);
+            executor.step(vec![], &mut events);
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+            executor.native_mut().window_mut(10).layout = saved;
+            executor.step(vec![], &mut events);
+            executor.step(vec![], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+            assert_eq!(executor.native_mut().calls, vec![Call::RevealArranged(10)]);
+        }
+    }
+
+    #[test]
+    fn visible_matching_snap_needs_no_show_or_placement() {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        let mut executor = Executor::new(FakeNative::new(100));
+        executor.native_mut().insert(&win);
+        let action = Action::RestoreAutomatic(win.layout.clone());
+        executor.step(vec![Work::Action(test_job(win, action))], &mut Vec::new());
+        assert!(executor.native_mut().calls.is_empty());
+    }
+
+    #[test]
+    fn incompatible_snap_and_topology_changes_never_dispatch_placement() {
+        for case in 0..3 {
+            let mut win = window("one", 10);
+            win.layout = snapped();
+            let mut saved = win.layout.clone();
+            match case {
+                0 => saved.arranged = Some(false), // Normal destination, live snap.
+                1 => saved.normal[0] += 100,       // Different saved arrangement.
+                _ => {
+                    // Adjustment discards saved evidence, still do not place.
+                    win.minimized = true;
+                    win.layout.visible = None;
+                    win.layout.arranged = Some(false);
+                    win.layout.work_area[0] += 100;
+                }
+            }
+            let mut executor = Executor::new(FakeNative::new(100));
+            executor.native_mut().insert(&win);
+            let mut events = Vec::new();
+            executor.step(
+                vec![Work::Action(test_job(win, Action::RestoreAutomatic(saved)))],
+                &mut events,
+            );
+            assert!(executor.native_mut().calls.is_empty());
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Rejected,
+                    ..
+                }
+            )));
         }
     }
 

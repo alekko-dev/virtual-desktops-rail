@@ -12,7 +12,7 @@ owns completed validation and its limits. A scoped pass is not general release c
 | Shared-window discovery | Individual OR app-level pins, minimized inventory, bounded cached reconciliation/rescans | Task View pin origin established on the initial tested revision; later API tests do not establish origin |
 | Layout management | Independent normal/maximized desktop layouts, clamped fallback, default minimize-on-switch and manual restore/focus | Owned A/B/A, duplicate, modal and restart cases passed locally |
 | Auto-restore | Optional saved-destination restoration without focus; independent per-desktop minimized intent; stable manual/external learning | Scoped real-input and deterministic minimized-intent regressions exist; external changes while stopped/unavailable and ambiguous transitions are not inferred |
-| Native Snap preservation | Separate visible/restore bounds and arranged evidence; no-placement reveal for a matching live arrangement; visible-result verification | Two-member saved/unsaved and both-saved product round trips passed locally; arbitrary reconstruction and different/lost arrangements are unsupported |
+| Native Snap preservation | Live arranged-state minimize with `SW_MINIMIZE`; matching-arrangement reveal with `SW_SHOWNA`; visible-result verification; incompatible saved/live Snap placements declined | Historical two-member product round trips used the previous reveal command; the current command path needs fresh shell-group verification; reconstruction is unsupported |
 | Ordering/identity/recovery | Generations/sequences, one outstanding action per identity, explicit operation lifecycle/outcomes, deterministic executor harness, seeded event-sequence invariant checks, verification/quarantine, late-result guards, strong live identity, isolated COM worker and fresh baselines | Pure regression, deterministic executor, stalled-target and retry checks exist; broader shell/session and real concurrent-session coverage remain open |
 | Persistence/distribution | Bounded versioned storage, backup/corrupt recovery, session merges, optional Startup shortcut, singleton, static-CRT portable ZIP and build provenance | Storage/version/package contracts checked; preview is unsigned and installer/signing choices remain open |
 | Presentation | DPI-aware icons, color/contrast handling, Task View Peek exclusion, double-buffered GDI/persistent button painting, bounded slide-in after Task View return, conditional notices | Scoped live checks exist; physical gesture timing, broad DPI/contrast/accessibility and relayout focus are not certified |
@@ -24,8 +24,8 @@ owns completed validation and its limits. A scoped pass is not general release c
   remains incomplete. Minimized intent is implemented; broader interactive race and
   physical-hardware verification remain open.
 - Different/lost saved Snap arrangements and deliberate Snap-to-normal transitions do
-  not have complete exact-restoration/fallback handling. Changed topology can discard
-  arrangement evidence and use the ordinary clamped normal fallback.
+  not have complete exact-restoration/fallback handling. Saved Snap layouts after
+  changed topology are declined to avoid breaking native membership through placement.
 - Calculator frame/content duplicate eligibility and its reproduced timeout remain
   undiagnosed. They do not establish the cause of the user's exact intermittent edge/Snap conflict.
 - Transient pin-query `0x80070490` failures have no established root cause. Integration

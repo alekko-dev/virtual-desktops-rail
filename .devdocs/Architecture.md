@@ -202,14 +202,21 @@ resolved once from user32; unavailable support is unknown. Saved visible bounds 
 separate from normal restore bounds, and minimized parking rectangles are not learned.
 Legacy layouts without this evidence do not establish a Snap arrangement.
 
+Before minimizing, the action worker queries live arranged-state evidence and uses
+`ShowWindowAsync(SW_MINIMIZE)` for snapped windows. Ordinary windows retain
+`SW_SHOWMINNOACTIVE`. No placement is written by either minimize path.
+
 For a matching saved live arrangement with compatible display context and restore
-bounds, a minimized window receives only `SW_SHOWNOACTIVATE`; a visible match receives
+bounds, a minimized window receives only `ShowWindowAsync(SW_SHOWNA)`; a visible match receives
 no show/placement command. Saved evidence can select a reveal candidate when native
 arranged state is false while minimized. Completion still requires a visible window,
 matching visible and restore bounds and matching native state. A stale arranged flag
-or normal bounds alone do not establish success. Incompatible arrangements in the
-same display context are declined before dispatch. Changed topology discards Snap
-evidence and can use the ordinary clamped normal fallback, not exact Snap restoration.
+or normal bounds alone do not establish success. `SW_SHOWNA` preserves automatic
+focus policy; `SW_RESTORE` would activate before the guarded-focus check.
+Incompatible saved Snap arrangements, including after changed topology, are declined
+before dispatch. A currently arranged window also cannot receive ordinary saved
+placement. These guards preserve native state rather than attempting reconstruction
+with `SetWindowPlacement`, `SetWindowPos` or `MoveWindow`.
 
 ### Storage and action sequencing
 

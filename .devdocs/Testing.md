@@ -74,6 +74,13 @@ See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-au
 
 ### Native Snap procedure
 
+The executor regressions distinguish live arranged state from stale cached state at
+minimize dispatch, require two matching visible observations after a placement-free
+reveal, and reject ordinary-placement and topology fallbacks that would replace
+saved/live Snap state. They also assert that an unrelated foreground is not targeted
+by explicit restoration and automatic restoration never requests foreground. These
+checks do not expose or certify native shell group membership.
+
 Use two group members and a separate owned unsnapped observer. Larger-group tests
 require explicit user scope; historical larger-group results below remain valid.
 Create a genuine group and confirm an explicit Task View Group thumbnail before
@@ -258,6 +265,21 @@ cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json
 Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
+
+On 2026-11-07, source `1498b54` plus the Snap-preservation changes built the release
+executable with SHA-256
+`3CACDC66ACB3BC61A2CBF8C8518FFC1558780E71C4F4386B6CB99968FF6DDF5F`.
+The final source passed `check-dev.ps1` with `CARGO_BUILD_JOBS=1` (formatting,
+Clippy, locked workspace tests, version contracts and release builds).
+In the local Windows 26300.9711 session, product status reported integration ready
+with no managed windows. Computer Use did not expose the rail even with automation
+visibility enabled; its explicit app launch failed with `GetCursorPos failed: Access
+is denied (0x80070005)`. Actual rendering/input, independent foreground behavior and
+two-member Snap Group round trips were unavailable, not passed. No fixture or desktop
+was created. Automation visibility was restored off, the identity-verified test process
+exited, and both original state files were restored and hash-checked byte-for-byte.
+The executor regressions cover dispatch/verification only; fresh native membership
+and display/DPI evidence remain required by the Native Snap procedure above.
 
 On 2026-11-04, source `e1f8384` plus the native-caption synchronization fix passed
 `check-dev.ps1`, including version contracts and locked release builds. On Windows
