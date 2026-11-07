@@ -81,6 +81,13 @@ saved/live Snap state. They also assert that an unrelated foreground is not targ
 by explicit restoration and automatic restoration never requests foreground. These
 checks do not expose or certify native shell group membership.
 
+For manual and automatic Snap restores, accepted-but-unapplied native requests must
+leave the fake window iconic, time out without false verification, retain the
+outstanding slot, and reject another dispatch as busy. A late external restore must
+produce two matching visible observations before releasing that slot without focus.
+The Snap path shares the ordinary `SW_SHOWNOACTIVATE` native method and fake; there
+is no separate reveal implementation that assumes a different show command restores.
+
 Use two group members and a separate owned unsnapped observer. Larger-group tests
 require explicit user scope; historical larger-group results below remain valid.
 Create a genuine group and confirm an explicit Task View Group thumbnail before
@@ -265,6 +272,17 @@ cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json
 Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
+
+The 2026-11-07 correction on source `0139d77` plus changes restored the minimized
+Snap path to `SW_SHOWNOACTIVATE` and removed the separate reveal fake that had
+treated `SW_SHOWNA` as restoration. `check-dev.ps1` passed with
+`CARGO_BUILD_JOBS=1`, including the manual/automatic accepted-but-still-minimized
+timeout, busy-slot and late-observation regression. Computer Use again failed to
+launch an owned native fixture with `GetCursorPos failed: Access is denied
+(0x80070005)`; a refreshed window inventory and process inspection confirmed no
+fixture was left running. No app state, pins, desktops or automation visibility
+were changed. Actual product rendering/input, independent focus and two-member
+Snap Group membership remain unavailable, not passed, for this correction.
 
 On 2026-11-07, source `1498b54` plus the Snap-preservation changes built the release
 executable with SHA-256

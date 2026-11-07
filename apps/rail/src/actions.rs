@@ -13,7 +13,7 @@ use std::sync::{
 use std::time::Duration;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowPlacement, IsIconic, IsWindowVisible, SW_MINIMIZE,
-    SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNA, SW_SHOWNOACTIVATE, SetForegroundWindow,
+    SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SetForegroundWindow,
     SetWindowPlacement, ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT,
     WPF_RESTORETOMAXIMIZED,
 };
@@ -64,7 +64,6 @@ pub trait Native {
     fn adjusted(&mut self, saved: &Layout, hwnd: usize) -> Result<Layout, String>;
     fn show_min_no_active(&mut self, hwnd: usize) -> Result<(), String>;
     fn minimize_arranged(&mut self, hwnd: usize) -> Result<(), String>;
-    fn reveal_arranged(&mut self, hwnd: usize) -> Result<(), String>;
     fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String>;
     fn set_placement(
         &mut self,
@@ -264,7 +263,7 @@ impl<N: Native> Executor<N> {
                 if preserves_arrangement(&target, &observed) {
                     // A show request on a visible arranged window can unsnap it.
                     if self.native.is_iconic(hwnd) {
-                        self.native.reveal_arranged(hwnd)?;
+                        self.native.show_no_activate(hwnd)?;
                     }
                     if let Some(popup) = self.native.popup(&request.window) {
                         let _ = self.native.show_no_activate(popup);
@@ -498,13 +497,6 @@ impl Native for Win32Native {
             .ok()
             .map_err(|error| error.to_string())
     }
-    fn reveal_arranged(&mut self, hwnd: usize) -> Result<(), String> {
-        // SW_RESTORE activates before guarded focus can run; SW_SHOWNA asks Windows
-        // to reveal its retained state without normalizing or activating it.
-        unsafe { ShowWindowAsync(platform::hwnd(hwnd), SW_SHOWNA) }
-            .ok()
-            .map_err(|error| error.to_string())
-    }
     fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String> {
         unsafe { ShowWindowAsync(platform::hwnd(hwnd), SW_SHOWNOACTIVATE) }
             .ok()
@@ -713,7 +705,6 @@ mod tests {
     enum Call {
         ShowMinNoActive(usize),
         MinimizeArranged(usize),
-        RevealArranged(usize),
         ShowNoActivate(usize),
         SetPlacement {
             hwnd: usize,
@@ -866,11 +857,6 @@ mod tests {
         fn minimize_arranged(&mut self, hwnd: usize) -> Result<(), String> {
             let result = self.show_min_no_active(hwnd);
             *self.calls.last_mut().unwrap() = Call::MinimizeArranged(hwnd);
-            result
-        }
-        fn reveal_arranged(&mut self, hwnd: usize) -> Result<(), String> {
-            let result = self.show_no_activate(hwnd);
-            *self.calls.last_mut().unwrap() = Call::RevealArranged(hwnd);
             result
         }
         fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String> {
@@ -1126,7 +1112,8 @@ mod tests {
             };
             let mut events = Vec::new();
             executor.step(vec![Work::Action(test_job(win, action))], &mut events);
-            assert_eq!(executor.native_mut().calls, vec![Call::RevealArranged(10)]);
+            assert_eq!(executor.native_mut().calls, vec![Call::ShowNoActivate(10)]);
+            assert!(!executor.native_mut().is_iconic(10));
             executor.step(vec![], &mut events);
             assert!(!events.iter().any(|event| matches!(
                 event,
@@ -1145,7 +1132,90 @@ mod tests {
                     ..
                 }
             )));
-            assert_eq!(executor.native_mut().calls, vec![Call::RevealArranged(10)]);
+            assert_eq!(executor.native_mut().calls, vec![Call::ShowNoActivate(10)]);
+        }
+    }
+
+    #[test]
+    fn accepted_snap_reveal_that_stays_minimized_times_out_until_observed_restored() {
+        for automatic in [false, true] {
+            let mut win = window("one", 10);
+            let saved = snapped();
+            win.layout = saved.clone();
+            win.layout.visible = None;
+            win.layout.arranged = Some(false);
+            win.minimized = true;
+            let key = win.identity.key();
+            let mut executor = Executor::new(FakeNative::new(100));
+            executor.native_mut().insert(&win);
+            // Model a successfully posted command that never restores the window.
+            // API acceptance must not fabricate visible/native arrangement evidence.
+            executor.native_mut().window_mut(10).auto_apply = false;
+            let action = if automatic {
+                Action::RestoreAutomatic(saved.clone())
+            } else {
+                Action::Restore(saved.clone())
+            };
+            let mut events = Vec::new();
+            executor.step(
+                vec![Work::Action(test_job(win.clone(), action.clone()))],
+                &mut events,
+            );
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, Event::Accepted { .. }))
+            );
+            assert!(executor.native_mut().is_iconic(10));
+            executor.native_mut().tick_ms += 2000;
+            executor.step(vec![], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::TimedOut,
+                    ..
+                }
+            )));
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+            assert!(executor.active[&key].timed_out);
+
+            // Keep the outstanding slot rather than dispatch another native command.
+            events.clear();
+            executor.step(vec![Work::Action(test_job(win, action))], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Busy,
+                    ..
+                }
+            )));
+            assert_eq!(executor.native_mut().calls, vec![Call::ShowNoActivate(10)]);
+
+            // A late external restore releases the slot only after two visible matches.
+            events.clear();
+            let live = executor.native_mut().window_mut(10);
+            live.iconic = false;
+            live.visible = true;
+            live.layout = saved;
+            executor.step(vec![], &mut events);
+            assert!(executor.active.contains_key(&key));
+            assert!(events.is_empty());
+            executor.step(vec![], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+            assert!(!executor.active.contains_key(&key));
+            assert_eq!(executor.native_mut().calls, vec![Call::ShowNoActivate(10)]);
         }
     }
 

@@ -207,12 +207,14 @@ Before minimizing, the action worker queries live arranged-state evidence and us
 `SW_SHOWMINNOACTIVE`. No placement is written by either minimize path.
 
 For a matching saved live arrangement with compatible display context and restore
-bounds, a minimized window receives only `ShowWindowAsync(SW_SHOWNA)`; a visible match receives
-no show/placement command. Saved evidence can select a reveal candidate when native
-arranged state is false while minimized. Completion still requires a visible window,
+bounds, a minimized window receives only `ShowWindowAsync(SW_SHOWNOACTIVATE)`;
+a visible match receives no show/placement command. Saved evidence can select a reveal
+candidate when native arranged state is false while minimized. Completion still requires a visible window,
 matching visible and restore bounds and matching native state. A stale arranged flag
-or normal bounds alone do not establish success. `SW_SHOWNA` preserves automatic
-focus policy; `SW_RESTORE` would activate before the guarded-focus check.
+or normal bounds alone do not establish success. `SW_SHOWNOACTIVATE` reveals a
+minimized arrangement without activation; `SW_SHOWNA` can leave it minimized, and
+`SW_RESTORE` would activate before the guarded-focus check. See the native evidence
+in [Troubleshooting](Troubleshooting.md#snapped-restoration-reports-success-at-the-wrong-visible-size).
 Incompatible saved Snap arrangements, including after changed topology, are declined
 before dispatch. A currently arranged window also cannot receive ordinary saved
 placement. These guards preserve native state rather than attempting reconstruction
