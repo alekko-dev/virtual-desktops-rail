@@ -74,6 +74,20 @@ See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-au
 
 ### Native Snap procedure
 
+The executor regressions distinguish live arranged state from stale cached state at
+minimize dispatch, require two matching visible observations after a placement-free
+reveal, and reject ordinary-placement and topology fallbacks that would replace
+saved/live Snap state. They also assert that an unrelated foreground is not targeted
+by explicit restoration and automatic restoration never requests foreground. These
+checks do not expose or certify native shell group membership.
+
+For manual and automatic Snap restores, accepted-but-unapplied native requests must
+leave the fake window iconic, time out without false verification, retain the
+outstanding slot, and reject another dispatch as busy. A late external restore must
+produce two matching visible observations before releasing that slot without focus.
+The Snap path shares the ordinary `SW_SHOWNOACTIVATE` native method and fake; there
+is no separate reveal implementation that assumes a different show command restores.
+
 Use two group members and a separate owned unsnapped observer. Larger-group tests
 require explicit user scope; historical larger-group results below remain valid.
 Create a genuine group and confirm an explicit Task View Group thumbnail before
@@ -89,6 +103,54 @@ unpinned members separately. Verify the original drag-away size and shared-edge 
 Confirm group membership afterward. Native reveal tests do not substitute for product
 automatic switches or shell group actions. Remaining combinations belong in
 [Status](Status-and-Roadmap.md#planned-work).
+
+Snap mismatch regressions must cover both explicit rail restoration and an automatic
+destination restore (without a user-minimized preference on that destination):
+
+1. Save an ordinary layout on the destination, then establish and visually confirm a
+   two-member Snap Group elsewhere. Let the rail observe the visible snapped member,
+   minimize it, and request the ordinary destination layout. Expect the existing Snap
+   notice, unchanged minimized state and placement, no pending/quarantined action,
+   and no show/placement dispatch. Restore through Windows afterward and confirm the
+   original Group thumbnail and shared-edge resize still work.
+2. Save a Snap layout, then maximize the same live window and minimize it. Confirm
+   `WPF_RESTORETOMAXIMIZED`, keeping the same normal restore bounds to isolate the
+   mismatch. Request the saved Snap layout. Expect rejection before any show/placement
+   dispatch, continued minimization and no pending/quarantined action after two seconds.
+   Confirm another rail action remains usable. With a user-minimized destination
+   preference, expect no automatic request at all.
+
+Use the separate owned unsnapped observer as the foreground anchor; inspect foreground
+before/after each rejected automatic request and after native minimize. Confirm Group
+membership through shell UI, not arranged flags or adjacent geometry. The executor fake
+checks the empty native-call log and released controller/executor slots for both
+request sources, but does not model `SW_MINIMIZE` activation effects or native Groups.
+
+Also verify a matching saved Snap layout still reveals without placement,
+manual reveal can focus only after verification, automatic reveal preserves the
+independent observer foreground, and the rail's own minimize preserves the Group.
+After visibly unsnapping the target, an ordinary saved restore must work again.
+Also snap immediately before rail minimization, before another inventory poll, and
+check that a subsequent incompatible ordinary restore is still declined.
+
+With Settings open, inspect the expanded Snap notice after either rejection. Restore
+or raise the affected member successfully through real rail input and inspect the
+notice disappearing and Settings returning to compact height. Repeat with a different
+member's successful action: the notice must remain. Native reveal into the same
+incompatible arrangement must also retain it. Restore the rejected saved arrangement
+through Windows and wait for a fresh observation: it may clear only under the precise
+[observation predicate](Architecture.md#native-snap-preservation). Close/unpin or
+replace the affected identity and confirm its notice clears without affecting other
+warnings. Keep an independent foreground anchor for automatic paths.
+
+Deterministic `snap_notice_*` executor/controller regressions cover explicit and
+automatic recovery, raise, API acceptance without completion, unrelated-window
+success, superseded generations/sequences, quarantined late results, stale/equal-tick
+snapshots and newer drag capture, visible but still incompatible geometry/state,
+confirmed ordinary unsnap, identity removal/replacement and temporary pending omission.
+They also preserve timeout/storage/report text and prevent report-picker cancellation
+from resurrecting a recovered notice. Existing mismatch tests still require zero
+native show/placement calls, unchanged memory and no pending/quarantined action.
 
 ### Minimized-intent procedure
 
@@ -258,6 +320,77 @@ cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json
 Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
+
+On 2026-11-07, the Snap notice lifecycle follow-up on source `394ff73` plus changes
+passed `check-dev.ps1` with `CARGO_BUILD_JOBS=1` and incremental compilation off:
+formatting, warnings-denied Clippy, locked workspace tests, version contracts and
+release builds. The seven new `snap_notice_*` regressions supplement the unchanged
+zero-dispatch mismatch tests. An initial default-temp run encountered access denied
+creating an existing report test's temporary directory; redirecting `TMP`/`TEMP` to
+an ignored writable checkout directory resolved it without changing the test. Keep
+desktop fixtures stopped during release checks: Windows locks their executable files.
+
+Computer Use input worked in the local Windows 26300.9711 Explorer session at
+2560×1440 / 120 DPI; the prior `GetCursorPos` denial was not reproduced and its cause
+remains unknown. Tested product SHA-256:
+`9461B51F93134FAC339B7057815ECFE1D9F8C593B750036A314E2A686E4AFAA3`.
+With disposable app state and an individually pinned owned native fixture, a seeded
+incompatible saved Snap target exercised actual rail pointer rejection. Settings
+displayed the full wrapped notice, with the fixture minimized and no pending/blocked
+action. Native activation revealed the still-incompatible ordinary window; subsequent
+fresh observations retained the notice. A real rail pointer raise completed verified,
+cleared the notice and contracted Settings; screenshots and accessibility text covered
+both states, and Tab displayed focus on the pause checkbox after contraction.
+Automation visibility was restored off, the owned pin was removed, identity-verified
+test processes exited and every original app file was restored and hash-checked.
+No desktop was created or switched. This controlled saved-target test does not certify
+native Snap Group preservation, observation-based compatible recovery, automatic
+recovery UI or broad DPI/focus/relayout behavior; those remain deterministic-only or
+require the native procedure above. Process integrity was not independently recorded.
+
+The minimized-Snap edge-case follow-up is integrated on
+`codex/preserve-native-snap-groups` based on `ec21a14`. On 2026-11-07, `check-dev.ps1` passed with `CARGO_BUILD_JOBS=1`: formatting,
+Clippy, locked workspace tests (including all 22 executor regressions), version
+contracts and release builds. The integrated release executable SHA-256 is
+`93EE34D871786505257828C291FC910DBD80BDAB16CB5011F94AF7E5E34D0F85`.
+Manual and automatic regressions cover retained Snap evidence, restore-maximized
+mismatch rejection before show/placement, released pending slots, unchanged saved
+layouts, user-minimized destination suppression, and stale/identity/display evidence
+invalidation. The live minimize query also contributes evidence when a snap is newer
+than the controller snapshot.
+
+Earlier follow-up desktop checks used a main-derived executable that omitted the
+PR's two Snap commits; they do not validate this integration. Computer Use input
+worked again in that session, but no root cause for the earlier access denial was
+established. Desktop revalidation of this branch is deferred at the user's request;
+use the Native Snap procedure above. Exact zero-dispatch assertions are deterministic
+executor evidence, not native Group or foreground certification.
+
+The 2026-11-07 correction on source `0139d77` plus changes restored the minimized
+Snap path to `SW_SHOWNOACTIVATE` and removed the separate reveal fake that had
+treated `SW_SHOWNA` as restoration. `check-dev.ps1` passed with
+`CARGO_BUILD_JOBS=1`, including the manual/automatic accepted-but-still-minimized
+timeout, busy-slot and late-observation regression. Computer Use again failed to
+launch an owned native fixture with `GetCursorPos failed: Access is denied
+(0x80070005)`; a refreshed window inventory and process inspection confirmed no
+fixture was left running. No app state, pins, desktops or automation visibility
+were changed. Actual product rendering/input, independent focus and two-member
+Snap Group membership remain unavailable, not passed, for this correction.
+
+On 2026-11-07, source `1498b54` plus the Snap-preservation changes built the release
+executable with SHA-256
+`3CACDC66ACB3BC61A2CBF8C8518FFC1558780E71C4F4386B6CB99968FF6DDF5F`.
+The final source passed `check-dev.ps1` with `CARGO_BUILD_JOBS=1` (formatting,
+Clippy, locked workspace tests, version contracts and release builds).
+In the local Windows 26300.9711 session, product status reported integration ready
+with no managed windows. Computer Use did not expose the rail even with automation
+visibility enabled; its explicit app launch failed with `GetCursorPos failed: Access
+is denied (0x80070005)`. Actual rendering/input, independent foreground behavior and
+two-member Snap Group round trips were unavailable, not passed. No fixture or desktop
+was created. Automation visibility was restored off, the identity-verified test process
+exited, and both original state files were restored and hash-checked byte-for-byte.
+The executor regressions cover dispatch/verification only; fresh native membership
+and display/DPI evidence remain required by the Native Snap procedure above.
 
 On 2026-11-04, source `e1f8384` plus the native-caption synchronization fix passed
 `check-dev.ps1`, including version contracts and locked release builds. On Windows

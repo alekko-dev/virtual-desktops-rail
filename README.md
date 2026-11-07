@@ -44,10 +44,17 @@ executable. Diagnostic `--status` reports the running instance's build, whereas
 
 Native Windows Snap support is limited. New layouts save snapped visible bounds
 separately from the original drag-away size. The rail can preserve a matching live
-arrangement without rewriting its placement, and verifies the visible result.
+arrangement by minimizing and revealing it without rewriting its placement, and
+verifies the visible result. Automatic reveals preserve focus.
 Recreating lost or different native Snap groups is unsupported; incompatible saved
-arrangements can be declined. Changed displays and application-specific constraints
+arrangements and changed displays can be declined. Application-specific constraints
 remain unverified. Pause automatic actions when using unsupported arrangements.
+The rail leaves a known minimized Snap arrangement untouched when an ordinary saved
+layout would replace it, and declines saved Snap restoration from a minimized
+maximized state. Its Snap notice clears after that window successfully restores or
+raises, or a fresh observation confirms the saved target is compatible again. Merely
+becoming visible does not clear an unresolved mismatch; removing the window clears
+its notice.
 Exact last-visit restoration, including windows left minimized, is still in progress.
 
 ## Requirements

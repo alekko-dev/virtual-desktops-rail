@@ -202,14 +202,57 @@ resolved once from user32; unavailable support is unknown. Saved visible bounds 
 separate from normal restore bounds, and minimized parking rectangles are not learned.
 Legacy layouts without this evidence do not establish a Snap arrangement.
 
+Before minimizing, the action worker queries live arranged-state evidence and uses
+`ShowWindowAsync(SW_MINIMIZE)` for snapped windows. Ordinary windows retain
+`SW_SHOWMINNOACTIVE`. No placement is written by either minimize path.
+
 For a matching saved live arrangement with compatible display context and restore
-bounds, a minimized window receives only `SW_SHOWNOACTIVATE`; a visible match receives
-no show/placement command. Saved evidence can select a reveal candidate when native
-arranged state is false while minimized. Completion still requires a visible window,
+bounds, a minimized window receives only `ShowWindowAsync(SW_SHOWNOACTIVATE)`;
+a visible match receives no show/placement command. Saved evidence can select a reveal
+candidate when native arranged state is false while minimized. Completion still requires a visible window,
 matching visible and restore bounds and matching native state. A stale arranged flag
-or normal bounds alone do not establish success. Incompatible arrangements in the
-same display context are declined before dispatch. Changed topology discards Snap
-evidence and can use the ordinary clamped normal fallback, not exact Snap restoration.
+or normal bounds alone do not establish success. `SW_SHOWNOACTIVATE` reveals a
+minimized arrangement without activation; `SW_SHOWNA` can leave it minimized, and
+`SW_RESTORE` would activate before the guarded-focus check. See the native evidence
+in [Troubleshooting](Troubleshooting.md#snapped-restoration-reports-success-at-the-wrong-visible-size).
+Incompatible saved Snap arrangements, including after changed topology, are declined
+before dispatch. A currently arranged window also cannot receive ordinary saved
+placement. These guards preserve native state rather than attempting reconstruction
+with `SetWindowPlacement`, `SetWindowPos` or `MoveWindow`.
+
+The live identity record also retains confirmed visible Snap evidence across
+minimization, when Windows may report arranged=false. This evidence is independent
+of saved destination history, is passed with requests, and prevents an ordinary
+placement from breaking a retained arrangement. A fresh confirmed visible unsnapped
+observation clears it; display-context changes or identity replacement invalidate it.
+An independent observation watermark prevents older snapshots from clearing newer
+identity-validated drag-capture evidence.
+The verified minimize also retains its identity-validated pre-dispatch layout,
+covering a snap newer than the controller snapshot.
+Fresh visible native state takes precedence over retained minimized evidence at
+dispatch. A minimized window with restore-to-maximized state cannot qualify for a
+Snap reveal, even when its normal restore bounds match. Both mismatches use the
+existing Snap notice and reject before any show/placement command, releasing the
+pending action rather than entering verification/quarantine. User-minimized
+destinations still produce no automatic restore request.
+
+The existing Snap preservation notice carries the rejected request's live identity
+(including HWND/PID), target and dispatch timestamp. Only a current, non-quarantined
+verified restore/raise for that identity clears it; acceptance, unrelated success,
+superseded sequences/generations and late completion do not. A stable-desktop,
+identity-validated snapshot can also clear it, with no pending action or drag, only
+when its timestamp exceeds the rejection, prior snapshot and all accepted state,
+capture and action evidence. The window must be non-minimized with visible bounds.
+For a saved Snap target, native arranged=true, normal/visible bounds, maximized state
+and original monitor/work-area/DPI context must match the existing preservation and
+verification predicates. For an ordinary target, native arranged=false and matching
+display-adjusted normal/visible bounds and maximized state are required. Visibility
+alone, unknown arranged state or an unchanged mismatch cannot clear it. Clearing
+does not rewrite saved layouts. Authoritative inventory removal/replacement or a
+matched identity-lost result clears the affected notice; pending identities survive
+temporary inventory omission. Clearing never erases a different displayed notice,
+and report-picker cancellation cannot resurrect a Snap notice cleared while covered.
+The timeout notice retains its existing independent quarantine lifecycle.
 
 ### Storage and action sequencing
 

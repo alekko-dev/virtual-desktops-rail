@@ -1,4 +1,4 @@
-const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be verified in time. Its button remains disabled while that action is outstanding.";
+pub(crate) const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be verified in time. Its button remains disabled while that action is outstanding.";
 
 use crate::{
     EVENTS, Event, MAIN_WINDOW, OVERRUN, WAKE, actions, bridge, icons, native::*, notify, platform,
@@ -224,6 +224,7 @@ struct App {
     signature: String,
     status: String,
     notice: String,
+    snap_notice: crate::snap_notice::Lifecycle,
     loaded: bool,
     ready: bool,
     transition_received_us: Option<u64>,
@@ -666,7 +667,10 @@ impl App {
                     } else if self.model.current().is_none() {
                         self.transition_received_us = None;
                     }
+                    self.snap_notice
+                        .observe(&self.model, &frame, &mut self.notice);
                     self.model.snapshot(frame);
+                    self.snap_notice.reconcile(&self.model, &mut self.notice);
                     for (key, _) in self.model.present() {
                         if !self.diagnostic_window_labels.contains_key(key)
                             && self.diagnostic_window_labels.len() < 512
@@ -713,6 +717,20 @@ impl App {
                         self.model.unavailable();
                     }
                 }
+                Event::SnapPreservation(notice) => {
+                    if self
+                        .snap_notice
+                        .rejected(*notice, &self.model, &mut self.notice)
+                    {
+                        let _ = self
+                            .storage
+                            .sender
+                            .try_send(store::Work::Log(self.notice.clone()));
+                        let _ = self.storage.sender.try_send(store::Work::Trace(
+                            serde_json::json!({"event":"user_notice","kind":"other"}),
+                        ));
+                    }
+                }
                 Event::Notice(notice) => {
                     let _ = self
                         .storage
@@ -754,6 +772,13 @@ impl App {
                     outcome,
                 } => {
                     let settled = self.model.settle(&key, sequence, tick, outcome);
+                    self.snap_notice.settled(
+                        &self.model,
+                        (&key, sequence, tick, outcome),
+                        settled.as_ref(),
+                        &mut self.notice,
+                    );
+                    self.snap_notice.reconcile(&self.model, &mut self.notice);
                     let observed = self.model.runtime(&key).map(|runtime| {
                         let window = runtime.window();
                         serde_json::json!({
@@ -1711,7 +1736,7 @@ impl App {
         if let Some(error) = error {
             self.notice = format!("The save dialog could not be opened: {error}");
         } else if self.notice == REPORT_PICKER_NOTICE {
-            self.notice = draft.previous_notice;
+            self.notice = self.snap_notice.previous(draft.previous_notice);
         }
         self.update_settings();
     }
@@ -2683,6 +2708,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         signature: String::new(),
         status: "Loading saved layouts…".into(),
         notice: String::new(),
+        snap_notice: crate::snap_notice::Lifecycle::default(),
         loaded: false,
         ready: false,
         transition_received_us: None,
