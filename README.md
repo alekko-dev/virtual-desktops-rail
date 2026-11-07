@@ -44,10 +44,19 @@ executable. Diagnostic `--status` reports the running instance's build, whereas
 
 Native Windows Snap support is limited. New layouts save snapped visible bounds
 separately from the original drag-away size. The rail can preserve a matching live
-arrangement without rewriting its placement, and verifies the visible result.
+arrangement by minimizing and revealing it without rewriting its placement, and
+verifies the visible result. Automatic reveals preserve focus.
 Recreating lost or different native Snap groups is unsupported; incompatible saved
-arrangements can be declined. Changed displays and application-specific constraints
+arrangements and changed displays can be declined. Application-specific constraints
 remain unverified. Pause automatic actions when using unsupported arrangements.
+The rail leaves a known minimized Snap arrangement untouched when an ordinary saved
+layout would replace it, and declines saved Snap restoration from a minimized
+maximized state. By default, an automatic restore that conflicts with a live Snap
+arrangement minimizes the window instead. A declined restore's Snap notice clears
+after that window successfully restores or
+raises, or a fresh observation confirms the saved target is compatible again. Merely
+becoming visible does not clear an unresolved mismatch; removing the window clears
+its notice.
 Exact last-visit restoration, including windows left minimized, is still in progress.
 
 ## Requirements
@@ -115,9 +124,21 @@ layout adjusted to stay on an available display.
 Enable **Restore saved layouts on desktop switch** in Settings to restore windows
 that have a saved destination layout, without taking focus. Windows without a layout
 there still minimize. Manual rail restores and stable external Windows restores
-(such as taskbar restores) save the resulting layout for that desktop. Move, resize,
+(such as taskbar restores) save the resulting layout for that desktop, except for the
+temporary Snap reveals described below. Move, resize,
 and maximize normally to update it. Automatic restoration preserves saved geometry;
 minimizing does not forget layouts.
+
+**Minimize snapped windows on other desktops** is enabled by default in Settings,
+including after upgrading an existing configuration. With automatic restoration on,
+a snapped window stays minimized on desktops whose saved layout does not match its
+live Snap arrangement, even if they have an ordinary saved position. A matching saved
+Snap layout can still restore. Turn the option off to retain the snapped window's
+visibility when an incompatible automatic restore is declined.
+
+You can explicitly reveal a preserved snapped window with its rail button on another
+desktop. This keeps its Snap placement and that desktop's existing saved layout;
+it does not make the temporary reveal an automatic restore preference there.
 
 Minimizing a shared window yourself, using its normal controls or the rail, remembers
 it as minimized on that desktop. It stays minimized when you return, including with
@@ -128,7 +149,7 @@ restarts for the same live windows. Changes while Rail is stopped or desktop int
 is unavailable cannot be reliably attributed to a desktop and are not inferred on recovery.
 
 Pause suspends both automatic minimization and restoration. Starting the app,
-resuming, recovering integration, or changing the restoration setting does not
+resuming, recovering integration, or changing either window restoration setting does not
 immediately move windows; the next desktop switch applies the policy.
 
 Layouts survive rail restarts while their application windows remain running.

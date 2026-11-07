@@ -12,9 +12,10 @@ use std::sync::{
 };
 use std::time::Duration;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowPlacement, IsIconic, IsWindowVisible, SW_SHOWMAXIMIZED,
-    SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SetForegroundWindow, SetWindowPlacement,
-    ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT, WPF_RESTORETOMAXIMIZED,
+    GetForegroundWindow, GetWindowPlacement, IsIconic, IsWindowVisible, SW_MINIMIZE,
+    SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SetForegroundWindow,
+    SetWindowPlacement, ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT,
+    WPF_RESTORETOMAXIMIZED,
 };
 
 pub struct Job {
@@ -62,6 +63,7 @@ pub trait Native {
     fn layout(&mut self, hwnd: usize) -> Result<Layout, String>;
     fn adjusted(&mut self, saved: &Layout, hwnd: usize) -> Result<Layout, String>;
     fn show_min_no_active(&mut self, hwnd: usize) -> Result<(), String>;
+    fn minimize_arranged(&mut self, hwnd: usize) -> Result<(), String>;
     fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String>;
     fn set_placement(
         &mut self,
@@ -151,8 +153,10 @@ impl<N: Native> Executor<N> {
         // External restoration between the click and dispatch must not reposition a
         // visible window. Keep the original intent in `job.request`; record the raise
         // as the executed effect.
-        let effect = if matches!(job.request.action, Action::Restore(_))
-            && !self.native.is_iconic(job.request.window.hwnd)
+        let effect = if matches!(
+            job.request.action,
+            Action::Restore(_) | Action::RevealSnap(_)
+        ) && !self.native.is_iconic(job.request.window.hwnd)
         {
             Effect::Raise
         } else {
@@ -204,7 +208,9 @@ impl<N: Native> Executor<N> {
                 );
             }
             Err(error) => {
-                out.push(Event::Notice(error));
+                if error != crate::snap_notice::TEXT {
+                    out.push(Event::Notice(error));
+                }
                 let tick = self.native.tick_ms();
                 out.push(Event::ActionResult {
                     key,
@@ -229,8 +235,24 @@ impl<N: Native> Executor<N> {
         }
         match effect {
             Effect::Minimize => {
+                // Query immediately before dispatch; cached snapshots can predate a snap.
+                let observed = self.native.layout(hwnd)?;
+                let observed_tick = self.native.tick_ms();
+                if !valid(job) || !self.native.validate(&request.window) {
+                    return Err("Minimize superseded before dispatch".into());
+                }
+                out.push(Event::ObservedArrangement {
+                    request: Box::new(request.clone()),
+                    layout: observed.clone(),
+                    tick: observed_tick,
+                });
+                let arranged = observed.arranged == Some(true);
                 let issued = self.native.clock_us();
-                self.native.show_min_no_active(hwnd)?;
+                if arranged {
+                    self.native.minimize_arranged(hwnd)?;
+                } else {
+                    self.native.show_min_no_active(hwnd)?;
+                }
                 if request.action.automatic()
                     && let (Some(received), Some(issued)) = (job.transition_received_us, issued)
                     && let Some(elapsed) = issued.checked_sub(received)
@@ -239,15 +261,26 @@ impl<N: Native> Executor<N> {
                 }
                 Ok(Acceptance {
                     effect: Effect::Minimize,
-                    target: None,
+                    target: Some(observed),
                 })
             }
             Effect::Restore => {
                 let saved = match &request.action {
-                    Action::Restore(saved) | Action::RestoreAutomatic(saved) => saved,
+                    Action::Restore(saved)
+                    | Action::RestoreAutomatic(saved)
+                    | Action::RevealSnap(saved) => saved,
                     _ => unreachable!(),
                 };
-                let target = self.native.adjusted(saved, hwnd)?;
+                // Snap paths never write placement. Compare the original native
+                // restore bounds, which can legitimately extend past the work area;
+                // clamping them would turn a matching arrangement into a mismatch.
+                let target = if saved.arranged == Some(true)
+                    || matches!(request.action, Action::RevealSnap(_))
+                {
+                    saved.clone()
+                } else {
+                    self.native.adjusted(saved, hwnd)?
+                };
                 if !valid(job) || !self.native.validate(&request.window) {
                     return Err("Restore superseded before dispatch".into());
                 }
@@ -265,8 +298,39 @@ impl<N: Native> Executor<N> {
                         target: Some(target),
                     });
                 }
-                if target.arranged == Some(true) {
-                    return Err("The saved Snap arrangement cannot be preserved in the current window/display state. Automatic Snap group reconstruction is unavailable.".into());
+                let retained_snap = observed.visible.is_none()
+                    && request
+                        .retained_arrangement
+                        .as_ref()
+                        .is_some_and(|evidence| {
+                            evidence.monitor == observed.monitor
+                                && evidence.monitor_rect == observed.monitor_rect
+                                && evidence.work_area == observed.work_area
+                                && evidence.dpi == observed.dpi
+                        });
+                if saved.arranged == Some(true) || observed.arranged == Some(true) || retained_snap
+                {
+                    if request.minimize_snapped_elsewhere
+                        && request.action.automatic()
+                        && (observed.arranged == Some(true) || retained_snap)
+                    {
+                        // Preserve the live native arrangement while hiding it on
+                        // an incompatible destination. No placement or focus request.
+                        if !valid(job) || !self.native.validate(&request.window) {
+                            return Err("Restore superseded before dispatch".into());
+                        }
+                        if self.native.is_iconic(hwnd) {
+                            return Ok(Acceptance {
+                                effect: Effect::Minimize,
+                                target: Some(observed),
+                            });
+                        }
+                        return self.dispatch(job, Effect::Minimize, out);
+                    }
+                    out.push(Event::SnapPreservation(Box::new(
+                        crate::snap_notice::SnapNotice::new(request.clone(), self.native.tick_ms()),
+                    )));
+                    return Err(crate::snap_notice::TEXT.into());
                 }
                 if request.action.automatic() {
                     // Establish the destination restore state while minimized,
@@ -484,6 +548,11 @@ impl Native for Win32Native {
             .ok()
             .map_err(|error| error.to_string())
     }
+    fn minimize_arranged(&mut self, hwnd: usize) -> Result<(), String> {
+        unsafe { ShowWindowAsync(platform::hwnd(hwnd), SW_MINIMIZE) }
+            .ok()
+            .map_err(|error| error.to_string())
+    }
     fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String> {
         unsafe { ShowWindowAsync(platform::hwnd(hwnd), SW_SHOWNOACTIVATE) }
             .ok()
@@ -575,8 +644,10 @@ fn close_bounds(actual: [i32; 4], expected: [i32; 4]) -> bool {
     actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 2)
 }
 
-fn preserves_arrangement(saved: &Layout, observed: &Layout) -> bool {
+pub(crate) fn preserves_arrangement(saved: &Layout, observed: &Layout) -> bool {
     saved.arranged == Some(true)
+        && !saved.maximized
+        && !observed.maximized
         // IsWindowArranged may be false while iconic. Saved evidence selects
         // a reveal candidate; only the visible-result verifier certifies it.
         && (observed.visible.is_none() || observed.arranged == Some(true))
@@ -593,7 +664,7 @@ fn preserves_arrangement(saved: &Layout, observed: &Layout) -> bool {
         })
 }
 
-fn restored_layout_matches(expected: &Layout, observed: &Layout) -> bool {
+pub(crate) fn restored_layout_matches(expected: &Layout, observed: &Layout) -> bool {
     observed.maximized == expected.maximized
         && close_bounds(observed.normal, expected.normal)
         && expected
@@ -691,6 +762,7 @@ mod tests {
     #[derive(Clone, Debug, PartialEq, Eq)]
     enum Call {
         ShowMinNoActive(usize),
+        MinimizeArranged(usize),
         ShowNoActivate(usize),
         SetPlacement {
             hwnd: usize,
@@ -840,6 +912,11 @@ mod tests {
             }
             Ok(())
         }
+        fn minimize_arranged(&mut self, hwnd: usize) -> Result<(), String> {
+            let result = self.show_min_no_active(hwnd);
+            *self.calls.last_mut().unwrap() = Call::MinimizeArranged(hwnd);
+            result
+        }
         fn show_no_activate(&mut self, hwnd: usize) -> Result<(), String> {
             self.calls.push(Call::ShowNoActivate(hwnd));
             if let Some(live) = self.windows.get_mut(&hwnd) {
@@ -931,11 +1008,17 @@ mod tests {
         paused: Arc<AtomicBool>,
         focus_from: BTreeMap<String, usize>,
         notices: Vec<String>,
+        snap_notice: crate::snap_notice::Lifecycle,
+        notice: String,
     }
 
     impl Harness {
         fn new(window: &Window) -> Self {
-            let mut model = Model::new(Saved::default());
+            // Existing scenarios explicitly exercise the legacy decline policy.
+            let mut model = Model::new(Saved {
+                minimize_snapped_elsewhere: false,
+                ..Saved::default()
+            });
             model.snapshot(snapshot("A", 100, vec![window.clone()]));
             let mut native = FakeNative::new(100);
             native.insert(window);
@@ -947,6 +1030,8 @@ mod tests {
                 paused: Arc::new(AtomicBool::new(false)),
                 focus_from: BTreeMap::new(),
                 notices: Vec::new(),
+                snap_notice: crate::snap_notice::Lifecycle::default(),
+                notice: String::new(),
             }
         }
 
@@ -988,8 +1073,17 @@ mod tests {
             self.sync_tickets();
             let mut events = Vec::new();
             assert!(self.executor.step(work, &mut events));
+            self.deliver(events);
+        }
+
+        fn deliver(&mut self, events: Vec<Event>) {
             for event in events {
                 match event {
+                    Event::ObservedArrangement {
+                        request,
+                        layout,
+                        tick,
+                    } => self.model.observed_arrangement(&request, &layout, tick),
                     Event::Accepted {
                         key,
                         sequence,
@@ -1003,7 +1097,7 @@ mod tests {
                         tick,
                         outcome,
                     } => {
-                        self.model.settle(&key, sequence, tick, outcome);
+                        self.result(&key, sequence, tick, outcome);
                     }
                     Event::Captured {
                         key,
@@ -1014,6 +1108,11 @@ mod tests {
                         self.model.captured(&key, generation, tick, layout);
                     }
                     Event::Notice(notice) => self.notices.push(notice),
+                    Event::SnapPreservation(notice) => {
+                        self.notices.push(crate::snap_notice::TEXT.into());
+                        self.snap_notice
+                            .rejected(*notice, &self.model, &mut self.notice);
+                    }
                     _ => {}
                 }
             }
@@ -1022,6 +1121,1094 @@ mod tests {
         fn advance(&mut self, delta_ms: u64) {
             self.executor.native_mut().tick_ms += delta_ms;
             self.step(vec![]);
+        }
+
+        fn result(&mut self, key: &str, sequence: u64, tick: u64, outcome: Outcome) {
+            let settled = self.model.settle(key, sequence, tick, outcome);
+            self.snap_notice.settled(
+                &self.model,
+                (key, sequence, tick, outcome),
+                settled.as_ref(),
+                &mut self.notice,
+            );
+            self.snap_notice.reconcile(&self.model, &mut self.notice);
+        }
+
+        fn frame(&mut self, frame: Snapshot) {
+            self.snap_notice
+                .observe(&self.model, &frame, &mut self.notice);
+            self.model.snapshot(frame);
+            self.snap_notice.reconcile(&self.model, &mut self.notice);
+        }
+    }
+
+    fn snap_notice_fixture() -> (Harness, Window) {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        win.layout.maximized = true;
+        win.layout.visible = None;
+        win.layout.arranged = Some(false);
+        win.minimized = true;
+        let key = win.identity.key();
+        let mut h = Harness::new(&win);
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("A".into(), snapped());
+        h.model.click(
+            &key,
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        h.executor.native_mut().tick_ms = 120;
+        assert_rejected_snap_request(&mut h, &key, false);
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        (h, win)
+    }
+
+    #[test]
+    fn snap_notice_clears_only_after_current_verified_restore_or_raise() {
+        for raise in [false, true] {
+            let (mut h, mut win) = snap_notice_fixture();
+            let key = win.identity.key();
+            win.layout = snapped();
+            if !raise {
+                win.layout.visible = None;
+            }
+            win.minimized = !raise;
+            h.executor.native_mut().insert(&win);
+            h.model.click(
+                &key,
+                Click {
+                    minimized: !raise,
+                    was_foreground: false,
+                },
+            );
+            let work = h.issue();
+            h.step(work);
+            // Native acceptance alone must leave the notice intact.
+            assert_eq!(h.notice, crate::snap_notice::TEXT);
+            h.executor.native_mut().window_mut(10).layout = snapped();
+            h.advance(30);
+            h.advance(30);
+            assert!(h.notice.is_empty());
+            assert!(h.model.runtime(&key).unwrap().pending().is_none());
+        }
+    }
+
+    #[test]
+    fn snap_notice_visible_observation_requires_resolved_target_and_fresh_evidence() {
+        for mismatch in 0..8 {
+            let (mut h, mut win) = snap_notice_fixture();
+            win.minimized = false;
+            win.layout = snapped();
+            match mismatch {
+                0 => win.layout.arranged = Some(false),
+                1 => win.layout.arranged = None,
+                2 => win.layout.normal[0] += 40,
+                3 => win.layout.visible = Some([100, 100, 740, 460]),
+                4 => win.layout.maximized = true,
+                5 => win.layout.dpi += 24,
+                6 => win.layout.work_area[0] += 20,
+                _ => win.minimized = true,
+            }
+            h.frame(snapshot("A", 2300, vec![win.clone()]));
+            assert_eq!(h.notice, crate::snap_notice::TEXT, "mismatch {mismatch}");
+            win.minimized = false;
+            win.layout = snapped();
+            h.frame(snapshot("A", 2300, vec![win.clone()]));
+            assert_eq!(h.notice, crate::snap_notice::TEXT, "equal tick");
+            h.frame(snapshot("A", 2301, vec![win]));
+            assert!(h.notice.is_empty());
+        }
+        let (mut h, mut win) = snap_notice_fixture();
+        win.minimized = false;
+        win.layout = snapped();
+        h.frame(snapshot("A", 120, vec![win.clone()]));
+        assert_eq!(h.notice, crate::snap_notice::TEXT, "pre-rejection snapshot");
+        h.model
+            .captured(&win.identity.key(), h.model.generation(), 2500, snapped());
+        h.frame(snapshot("A", 2400, vec![win.clone()]));
+        assert_eq!(h.notice, crate::snap_notice::TEXT, "older than capture");
+        h.frame(snapshot("A", 2501, vec![win]));
+        assert!(h.notice.is_empty());
+    }
+
+    #[test]
+    fn snap_notice_unrelated_success_and_stale_late_results_do_not_clear() {
+        let (mut h, win) = snap_notice_fixture();
+        let key = win.identity.key();
+        let other = window("other", 20);
+        h.frame(snapshot("A", 2300, vec![win.clone(), other.clone()]));
+        h.executor.native_mut().insert(&other);
+        h.model.click(
+            &other.identity.key(),
+            Click {
+                minimized: false,
+                was_foreground: false,
+            },
+        );
+        let work = h.issue();
+        h.step(work);
+        h.advance(30);
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        h.result(&key, 1, 2400, Outcome::Verified); // already released rejection
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        for mode in 0..3 {
+            let (mut h, win) = snap_notice_fixture();
+            let key = win.identity.key();
+            h.model.click(
+                &key,
+                Click {
+                    minimized: true,
+                    was_foreground: false,
+                },
+            );
+            let request = h.model.take_requests(2300).pop().unwrap();
+            h.model.accepted(
+                &key,
+                request.sequence,
+                Acceptance::as_requested(&request.action),
+            );
+            match mode {
+                0 => h.result(&key, request.sequence, 2350, Outcome::TimedOut),
+                1 => h.model.click(
+                    &key,
+                    Click {
+                        minimized: false,
+                        was_foreground: false,
+                    },
+                ),
+                _ => h.model.snapshot(snapshot("B", 2350, vec![win])),
+            }
+            // Keep Snap displayed to isolate its lifecycle from the timeout UI.
+            h.result(&key, request.sequence, 2400, Outcome::Verified);
+            assert_eq!(h.notice, crate::snap_notice::TEXT, "mode {mode}");
+        }
+    }
+
+    #[test]
+    fn snap_notice_identity_removal_replacement_and_other_notices() {
+        for replacement in 0..3 {
+            let (mut h, mut win) = snap_notice_fixture();
+            let windows = match replacement {
+                0 => vec![],
+                1 => {
+                    win.identity.token = "replacement".into();
+                    vec![win]
+                }
+                _ => {
+                    win.hwnd = 11;
+                    vec![win]
+                }
+            };
+            h.frame(snapshot("A", 2300, windows));
+            assert!(h.notice.is_empty());
+        }
+        for text in [
+            crate::ui::ACTION_TIMEOUT_NOTICE,
+            "Saved layouts could not be written",
+            "Diagnostic report saved",
+        ] {
+            let (mut h, _) = snap_notice_fixture();
+            h.notice = text.into();
+            h.frame(snapshot("A", 2300, vec![]));
+            assert_eq!(h.notice, text);
+            assert_eq!(h.snap_notice.previous(text.into()), text);
+            assert!(
+                h.snap_notice
+                    .previous(crate::snap_notice::TEXT.into())
+                    .is_empty()
+            );
+        }
+        let (mut h, win) = snap_notice_fixture();
+        let key = win.identity.key();
+        h.model.click(
+            &key,
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        let request = h.model.take_requests(2300).pop().unwrap();
+        h.frame(snapshot("A", 2301, vec![]));
+        assert_eq!(
+            h.notice,
+            crate::snap_notice::TEXT,
+            "temporary pending omission"
+        );
+        h.result(&key, request.sequence, 2302, Outcome::IdentityLost);
+        assert!(h.notice.is_empty());
+    }
+
+    #[test]
+    fn snap_notice_stale_rejection_cannot_replace_a_newer_notice() {
+        for stale in 0..3 {
+            let (mut h, win) = snap_notice_fixture();
+            let key = win.identity.key();
+            h.model.click(
+                &key,
+                Click {
+                    minimized: true,
+                    was_foreground: false,
+                },
+            );
+            let request = h.model.take_requests(2300).pop().unwrap();
+            match stale {
+                0 => h.model.click(
+                    &key,
+                    Click {
+                        minimized: false,
+                        was_foreground: false,
+                    },
+                ),
+                1 => h.model.snapshot(snapshot("B", 2301, vec![win])),
+                _ => h.result(&key, request.sequence, 2301, Outcome::TimedOut),
+            }
+            h.notice = "Newer storage warning".into();
+            h.snap_notice.rejected(
+                crate::snap_notice::SnapNotice::new(request, 2302),
+                &h.model,
+                &mut h.notice,
+            );
+            assert_eq!(h.notice, "Newer storage warning");
+        }
+    }
+
+    #[test]
+    fn snap_notice_normal_target_requires_confirmed_unsnap_and_matching_geometry() {
+        let (mut h, mut win) = snap_notice_fixture();
+        let key = win.identity.key();
+        // Establish a new rejection against an ordinary destination while live Snap
+        // evidence still forbids placement.
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("B".into(), layout(100));
+        h.model.set_auto_restore(true);
+        win.layout = snapped();
+        win.minimized = false;
+        h.executor.native_mut().insert(&win);
+        h.model.snapshot(snapshot("B", 2300, vec![win.clone()]));
+        h.executor.native_mut().tick_ms = 2300;
+        let work = h.issue();
+        h.step(work);
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        win.layout = layout(150);
+        h.frame(snapshot("B", 2310, vec![win.clone()]));
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        win.layout = layout(100);
+        win.layout.arranged = None;
+        h.frame(snapshot("B", 2320, vec![win.clone()]));
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        win.layout.arranged = Some(false);
+        h.frame(snapshot("B", 2330, vec![win]));
+        assert!(h.notice.is_empty());
+    }
+
+    #[test]
+    fn snap_notice_automatic_verified_recovery_clears() {
+        let (mut h, mut win) = snap_notice_fixture();
+        let key = win.identity.key();
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("B".into(), snapped());
+        h.model.set_auto_restore(true);
+        win.layout = snapped();
+        win.layout.visible = None;
+        h.model.snapshot(snapshot("B", 2300, vec![win.clone()]));
+        h.executor.native_mut().insert(&win);
+        h.executor.native_mut().tick_ms = 2300;
+        let work = h.issue();
+        h.step(work);
+        assert_eq!(h.notice, crate::snap_notice::TEXT);
+        h.executor.native_mut().window_mut(10).layout = snapped();
+        h.advance(30);
+        h.advance(30);
+        assert!(h.notice.is_empty());
+    }
+
+    #[test]
+    fn minimized_snap_declines_ordinary_saved_layout_for_manual_and_automatic_requests() {
+        for automatic in [false, true] {
+            let mut win = window("one", 10);
+            win.layout = snapped();
+            let mut h = Harness::new(&win);
+            let mut ordinary = win.layout.clone();
+            ordinary.arranged = Some(false);
+            ordinary.visible = Some([131, 100, 771, 460]);
+            let key = win.identity.key();
+            h.model
+                .record_mut(&key)
+                .unwrap()
+                .layouts
+                .insert(if automatic { "B" } else { "A" }.into(), ordinary);
+            h.model.set_auto_restore(automatic);
+            win.minimized = true;
+            win.layout.visible = None;
+            win.layout.arranged = Some(false);
+            h.model.snapshot(snapshot("A", 110, vec![win.clone()]));
+            h.executor.native_mut().insert(&win);
+            h.executor.native_mut().tick_ms = 120;
+            if automatic {
+                h.model.snapshot(snapshot("B", 120, vec![win]));
+            } else {
+                h.model.click(
+                    &key,
+                    Click {
+                        minimized: true,
+                        was_foreground: false,
+                    },
+                );
+            }
+            assert_rejected_snap_request(&mut h, &key, automatic);
+        }
+    }
+
+    #[test]
+    fn snap_desktop_policy_defaults_to_minimize_and_legacy_option_retains_visible_snap() {
+        assert!(Saved::default().minimize_snapped_elsewhere);
+        for enabled in [false, true] {
+            for iconic in [false, true] {
+                let mut win = window("one", 10);
+                win.layout = snapped();
+                let key = win.identity.key();
+                let mut h = Harness::new(&win);
+                h.model.set_minimize_snapped_elsewhere(enabled);
+                h.model.set_auto_restore(true);
+                let mut ordinary = snapped();
+                ordinary.arranged = Some(false);
+                ordinary.visible = Some([131, 100, 771, 460]);
+                let record = h.model.record_mut(&key).unwrap();
+                record.layouts.insert("A".into(), ordinary);
+                record.layouts.insert("B".into(), snapped());
+                h.model.snapshot(snapshot("B", 110, vec![win.clone()]));
+                if iconic {
+                    win.minimized = true;
+                    win.layout.visible = None;
+                    win.layout.arranged = Some(false);
+                }
+                h.executor.native_mut().insert(&win);
+                h.model.snapshot(snapshot("A", 120, vec![win]));
+                h.executor.native_mut().tick_ms = 120;
+                let saved = serde_json::to_value(h.model.saved()).unwrap();
+                let work = h.issue();
+                h.step(work);
+                h.advance(30);
+                assert!(h.model.runtime(&key).unwrap().pending().is_none());
+                assert!(!h.model.has_quarantined());
+                assert_eq!(
+                    h.model.runtime(&key).unwrap().window().minimized,
+                    enabled || iconic
+                );
+                assert_eq!(
+                    h.executor.native_mut().calls,
+                    if enabled && !iconic {
+                        vec![Call::MinimizeArranged(10)]
+                    } else {
+                        vec![]
+                    }
+                );
+                assert_eq!(serde_json::to_value(h.model.saved()).unwrap(), saved);
+                assert_eq!(h.notices.is_empty(), enabled);
+            }
+        }
+    }
+
+    #[test]
+    fn snap_desktop_policy_queries_fresh_native_state_and_preserves_manual_reveal() {
+        let mut win = window("one", 10);
+        let key = win.identity.key();
+        let mut h = Harness::new(&win);
+        h.model.set_minimize_snapped_elsewhere(true);
+        h.model.set_auto_restore(true);
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("B".into(), win.layout.clone());
+        h.model.snapshot(snapshot("B", 120, vec![win.clone()]));
+        // Native snap is newer than the controller snapshot, with no retained evidence.
+        h.executor.native_mut().window_mut(10).layout = snapped();
+        h.executor.native_mut().tick_ms = 120;
+        let work = h.issue();
+        h.step(work);
+        h.advance(30);
+        assert_eq!(
+            h.executor.native_mut().calls,
+            vec![Call::MinimizeArranged(10)]
+        );
+        assert!(h.model.runtime(&key).unwrap().window().minimized);
+        let saved_layout = h.model.saved().windows[&key].layouts["B"].clone();
+        let fallback = h.model.saved().windows[&key].last_usable.clone();
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .minimized_desktops
+            .insert("B".into());
+        h.model.click(
+            &key,
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        let work = h.issue();
+        assert!(
+            matches!(&work[0], Work::Action(job) if matches!(job.request.action, Action::RevealSnap(_)))
+        );
+        h.step(work);
+        h.advance(30);
+        assert!(!h.model.runtime(&key).unwrap().window().minimized);
+        assert_eq!(
+            h.executor.native_mut().calls,
+            vec![
+                Call::MinimizeArranged(10),
+                Call::ShowNoActivate(10),
+                Call::SetForeground(10)
+            ]
+        );
+        assert_eq!(h.model.saved().windows[&key].layouts["B"], saved_layout);
+        assert_eq!(h.model.saved().windows[&key].last_usable, fallback);
+        assert!(
+            !h.model.saved().windows[&key]
+                .minimized_desktops
+                .contains("B")
+        );
+        assert!(h.notices.is_empty());
+        // After a genuine visible unsnap, normal destination restoration works again.
+        win.layout = layout(100);
+        h.frame(snapshot("B", 200, vec![win.clone()]));
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("A".into(), layout(200));
+        h.executor.native_mut().insert(&win);
+        h.model.snapshot(snapshot("A", 210, vec![win]));
+        h.executor.native_mut().tick_ms = 210;
+        let work = h.issue();
+        h.step(work);
+        h.advance(30);
+        assert!(!h.model.runtime(&key).unwrap().window().minimized);
+        assert!(
+            h.executor
+                .native_mut()
+                .calls
+                .iter()
+                .any(|call| matches!(call, Call::SetPlacement { .. }))
+        );
+    }
+
+    #[test]
+    fn snap_desktop_policy_restores_matching_snap_without_placement() {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        let key = win.identity.key();
+        let mut h = Harness::new(&win);
+        h.model.set_minimize_snapped_elsewhere(true);
+        h.model.set_auto_restore(true);
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("B".into(), snapped());
+        h.model.snapshot(snapshot("B", 120, vec![win]));
+        h.executor.native_mut().tick_ms = 120;
+        let work = h.issue();
+        h.step(work);
+        h.advance(30);
+        assert!(!h.model.runtime(&key).unwrap().window().minimized);
+        assert!(h.executor.native_mut().calls.is_empty());
+        assert!(h.notices.is_empty());
+    }
+
+    #[test]
+    fn matching_snap_uses_native_restore_bounds_even_outside_work_area() {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        win.layout.normal = [-8, 100, 632, 460];
+        let saved = win.layout.clone();
+        let mut executor = Executor::new(FakeNative::new(100));
+        executor.native_mut().insert(&win);
+        let mut events = vec![];
+        executor.step(
+            vec![Work::Action(test_job(
+                win,
+                Action::RestoreAutomatic(saved.clone()),
+            ))],
+            &mut events,
+        );
+        executor.step(vec![], &mut events);
+        assert!(executor.native_mut().calls.is_empty());
+        assert!(events.iter().any(|event| matches!(event, Event::Accepted { acceptance, .. } if acceptance.target.as_ref() == Some(&saved))));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn snap_policy_minimize_acceptance_requires_verification_and_late_result_preserves_memory() {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        let key = win.identity.key();
+        let mut h = Harness::new(&win);
+        h.model.set_minimize_snapped_elsewhere(true);
+        h.model.set_auto_restore(true);
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("B".into(), layout(100));
+        h.model.snapshot(snapshot("B", 120, vec![win]));
+        let saved = serde_json::to_value(h.model.saved()).unwrap();
+        h.executor.native_mut().window_mut(10).auto_apply = false;
+        h.executor.native_mut().tick_ms = 120;
+        let work = h.issue();
+        h.step(work);
+        assert!(!h.model.runtime(&key).unwrap().window().minimized);
+        assert_eq!(
+            h.model
+                .runtime(&key)
+                .unwrap()
+                .pending()
+                .unwrap()
+                .execution()
+                .unwrap()
+                .effect,
+            Effect::Minimize
+        );
+        h.advance(2000);
+        assert!(h.model.has_quarantined());
+        h.executor.native_mut().window_mut(10).iconic = true;
+        h.executor.native_mut().window_mut(10).visible = false;
+        h.advance(20);
+        h.advance(20);
+        assert!(h.model.runtime(&key).unwrap().pending().is_none());
+        assert!(h.model.runtime(&key).unwrap().window().minimized);
+        assert_eq!(serde_json::to_value(h.model.saved()).unwrap(), saved);
+        assert_eq!(
+            h.executor.native_mut().calls,
+            vec![Call::MinimizeArranged(10)]
+        );
+    }
+
+    #[test]
+    fn minimized_from_maximized_declines_saved_snap_for_manual_and_automatic_requests() {
+        for automatic in [false, true] {
+            let mut win = window("one", 10);
+            win.layout = snapped();
+            win.layout.maximized = true;
+            win.layout.visible = None;
+            win.layout.arranged = Some(false);
+            win.minimized = true;
+            let key = win.identity.key();
+            let mut h = Harness::new(&win);
+            h.model
+                .record_mut(&key)
+                .unwrap()
+                .layouts
+                .insert(if automatic { "B" } else { "A" }.into(), snapped());
+            h.model.set_auto_restore(automatic);
+            if automatic {
+                h.model.snapshot(snapshot("B", 120, vec![win]));
+            } else {
+                h.model.click(
+                    &key,
+                    Click {
+                        minimized: true,
+                        was_foreground: false,
+                    },
+                );
+            }
+            h.executor.native_mut().tick_ms = 120;
+            assert_rejected_snap_request(&mut h, &key, automatic);
+        }
+    }
+
+    fn assert_rejected_snap_request(h: &mut Harness, key: &str, automatic: bool) {
+        let saved = h.model.saved().clone();
+        let work = h.issue();
+        assert_eq!(work.len(), 1);
+        assert!(
+            matches!(&work[0], Work::Action(job) if job.request.action.automatic() == automatic)
+        );
+        h.step(work);
+        h.advance(2100);
+        assert!(h.executor.native_mut().calls.is_empty());
+        assert!(h.executor.native_mut().window_mut(10).iconic);
+        assert!(h.model.runtime(key).unwrap().pending().is_none());
+        assert!(!h.model.has_quarantined());
+        assert_eq!(h.executor.poll_interval(), None);
+        assert!(h.issue().is_empty());
+        assert_eq!(
+            serde_json::to_value(h.model.saved()).unwrap(),
+            serde_json::to_value(saved).unwrap()
+        );
+        assert!(h.notices.iter().any(|notice| {
+            notice.contains("Restoration would replace or lose a native Snap arrangement")
+        }));
+    }
+
+    #[test]
+    fn user_minimized_snap_destinations_are_not_automatically_dispatched() {
+        for maximized in [false, true] {
+            let mut win = window("one", 10);
+            win.minimized = true;
+            win.layout = snapped();
+            win.layout.maximized = maximized;
+            win.layout.visible = None;
+            win.layout.arranged = Some(false);
+            let key = win.identity.key();
+            let mut h = Harness::new(&win);
+            let record = h.model.record_mut(&key).unwrap();
+            record.layouts.insert("B".into(), snapped());
+            record.minimized_desktops.insert("B".into());
+            h.model.set_auto_restore(true);
+            h.model.snapshot(snapshot("B", 120, vec![win]));
+            let work = h.issue();
+            assert!(work.is_empty());
+            h.step(work);
+            assert!(h.executor.native_mut().calls.is_empty());
+            assert!(h.executor.native_mut().window_mut(10).iconic);
+            assert!(h.model.runtime(&key).unwrap().pending().is_none());
+        }
+    }
+
+    #[test]
+    fn snap_evidence_does_not_follow_changed_display_or_replaced_identity() {
+        for replace_identity in [false, true] {
+            let mut win = window("one", 10);
+            win.layout = snapped();
+            let mut h = Harness::new(&win);
+            win.minimized = true;
+            win.layout.visible = None;
+            win.layout.arranged = Some(false);
+            if replace_identity {
+                win.identity.process_created += 1;
+            } else {
+                win.layout.work_area[0] += 10;
+            }
+            h.model.snapshot(snapshot("A", 120, vec![win.clone()]));
+            h.model.click(
+                &win.identity.key(),
+                Click {
+                    minimized: true,
+                    was_foreground: false,
+                },
+            );
+            let work = h.issue();
+            assert_eq!(work.len(), 1);
+            assert!(
+                matches!(&work[0], Work::Action(job) if job.request.retained_arrangement.is_none())
+            );
+        }
+    }
+
+    #[test]
+    fn older_snapshots_cannot_clear_newer_identity_validated_snap_capture() {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        win.layout.arranged = Some(false);
+        win.layout.visible = Some([131, 100, 771, 460]);
+        let key = win.identity.key();
+        let mut h = Harness::new(&win);
+        h.model.captured(&key, h.model.generation(), 200, snapped());
+        // A queued pre-capture visible unsnapped observation is not current evidence.
+        h.model.snapshot(snapshot("A", 150, vec![win.clone()]));
+        win.minimized = true;
+        win.layout.visible = None;
+        h.model.snapshot(snapshot("A", 210, vec![win]));
+        h.model.click(
+            &key,
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        let work = h.issue();
+        assert_eq!(work.len(), 1);
+        assert!(
+            matches!(&work[0], Work::Action(job) if job.request.retained_arrangement.is_some())
+        );
+    }
+
+    #[test]
+    fn confirmed_visible_unsnap_clears_retained_evidence_before_minimized_restore() {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        let mut h = Harness::new(&win);
+        win.layout.arranged = Some(false);
+        win.layout.visible = Some([131, 100, 771, 460]);
+        h.model
+            .record_mut(&win.identity.key())
+            .unwrap()
+            .layouts
+            .insert("A".into(), win.layout.clone());
+        h.model.snapshot(snapshot("A", 110, vec![win.clone()]));
+        win.minimized = true;
+        win.layout.visible = None;
+        h.model.snapshot(snapshot("A", 120, vec![win.clone()]));
+        h.executor.native_mut().insert(&win);
+        h.model.click(
+            &win.identity.key(),
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        let work = h.issue();
+        assert!(
+            matches!(&work[0], Work::Action(job) if job.request.retained_arrangement.is_none())
+        );
+        h.step(work);
+        assert!(
+            h.executor
+                .native_mut()
+                .calls
+                .iter()
+                .any(|call| matches!(call, Call::SetPlacement { .. }))
+        );
+    }
+
+    #[test]
+    fn minimize_retains_live_snap_newer_than_the_controller_snapshot() {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        win.layout.arranged = Some(false);
+        win.layout.visible = Some([131, 100, 771, 460]);
+        let key = win.identity.key();
+        let mut h = Harness::new(&win);
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("A".into(), win.layout.clone());
+        // Windows snapped after the last controller observation. The PR's fresh
+        // pre-minimize query must retain that identity-validated evidence too.
+        h.executor.native_mut().window_mut(10).layout = snapped();
+        h.executor.native_mut().tick_ms = 110;
+        h.model.click(
+            &key,
+            Click {
+                minimized: false,
+                was_foreground: true,
+            },
+        );
+        let work = h.issue();
+        h.step(work);
+        h.advance(20);
+        assert_eq!(
+            h.executor.native_mut().calls,
+            vec![Call::MinimizeArranged(10)]
+        );
+        assert!(h.model.runtime(&key).unwrap().pending().is_none());
+        win.minimized = true;
+        win.layout.visible = None;
+        h.model.snapshot(snapshot("A", 130, vec![win.clone()]));
+        h.executor.native_mut().window_mut(10).layout = win.layout;
+        h.executor.native_mut().tick_ms = 130;
+        h.executor.native_mut().calls.clear();
+        h.model.click(
+            &key,
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        assert_rejected_snap_request(&mut h, &key, false);
+    }
+
+    #[test]
+    fn superseded_minimize_keeps_fresh_snap_evidence_before_or_after_destination_snapshot() {
+        for enabled in [false, true] {
+            for delayed in [false, true] {
+                let mut win = window("one", 10);
+                win.layout = snapped();
+                win.layout.arranged = Some(false);
+                win.layout.visible = Some([131, 100, 771, 460]);
+                let key = win.identity.key();
+                let mut h = Harness::new(&win);
+                h.model.set_minimize_snapped_elsewhere(enabled);
+                h.model.set_auto_restore(true);
+                h.model
+                    .record_mut(&key)
+                    .unwrap()
+                    .layouts
+                    .insert("B".into(), win.layout.clone());
+                h.model.click(
+                    &key,
+                    Click {
+                        minimized: false,
+                        was_foreground: true,
+                    },
+                );
+                h.executor.native_mut().window_mut(10).layout = snapped();
+                h.executor.native_mut().tick_ms = 120;
+                let work = h.issue();
+                let mut events = vec![];
+                assert!(h.executor.step(work, &mut events));
+                if !delayed {
+                    h.deliver(std::mem::take(&mut events));
+                }
+                win.minimized = true;
+                win.layout.visible = None;
+                h.model.snapshot(snapshot("B", 130, vec![win.clone()]));
+                let saved = serde_json::to_value(h.model.saved()).unwrap();
+                h.deliver(events);
+                h.advance(20); // Superseded minimize verifies after the desktop switch.
+                assert!(h.model.runtime(&key).unwrap().pending().is_none());
+                assert_eq!(serde_json::to_value(h.model.saved()).unwrap(), saved);
+                h.executor.native_mut().window_mut(10).layout = win.layout;
+                let work = h.issue();
+                assert!(
+                    matches!(&work[0], Work::Action(job) if job.request.retained_arrangement.is_some())
+                );
+                h.step(work);
+                h.advance(30);
+                assert_eq!(
+                    h.executor.native_mut().calls,
+                    vec![Call::MinimizeArranged(10)]
+                );
+                assert!(h.model.runtime(&key).unwrap().pending().is_none());
+                assert!(!h.model.has_quarantined());
+                assert_eq!(serde_json::to_value(h.model.saved()).unwrap(), saved);
+                assert_eq!(h.notices.is_empty(), enabled);
+            }
+        }
+    }
+
+    #[test]
+    fn snap_dispatch_uses_live_state_for_minimize() {
+        for (cached_snap, live_snap) in [(false, true), (true, false)] {
+            let mut win = window("one", 10);
+            win.layout.arranged = Some(cached_snap);
+            let mut executor = Executor::new(FakeNative::new(100));
+            executor.native_mut().insert(&win);
+            executor.native_mut().window_mut(10).layout.arranged = Some(live_snap);
+            let job = test_job(win, Action::Minimize { automatic: true });
+            let mut events = Vec::new();
+            executor.step(vec![Work::Action(job)], &mut events);
+            assert_eq!(
+                executor.native_mut().calls,
+                vec![if live_snap {
+                    Call::MinimizeArranged(10)
+                } else {
+                    Call::ShowMinNoActive(10)
+                }]
+            );
+            executor.step(vec![], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+        }
+    }
+
+    fn test_job(window: Window, action: Action) -> Job {
+        Job {
+            request: Request {
+                minimize_snapped_elsewhere: false,
+                key: window.identity.key(),
+                window,
+                retained_arrangement: None,
+                arrangement_revision: 0,
+                action,
+                generation: 1,
+                sequence: 1,
+                tick: 100,
+            },
+            sequence: Arc::new(AtomicU64::new(1)),
+            generation: Arc::new(AtomicU64::new(1)),
+            paused: Arc::new(AtomicBool::new(false)),
+            rail: 1,
+            focus_from: 0,
+            transition_received_us: None,
+        }
+    }
+
+    #[test]
+    fn snap_reveal_never_places_or_focuses_and_requires_visible_snap_evidence() {
+        for automatic in [false, true] {
+            let mut win = window("one", 10);
+            let saved = snapped();
+            win.layout = saved.clone();
+            win.layout.visible = None;
+            win.layout.arranged = Some(false);
+            win.minimized = true;
+            let mut executor = Executor::new(FakeNative::new(100));
+            executor.native_mut().foreground = if automatic { (1, 999) } else { (77, 500) };
+            executor.native_mut().insert(&win);
+            let action = if automatic {
+                Action::RestoreAutomatic(saved.clone())
+            } else {
+                Action::Restore(saved.clone())
+            };
+            let mut events = Vec::new();
+            executor.step(vec![Work::Action(test_job(win, action))], &mut events);
+            assert_eq!(executor.native_mut().calls, vec![Call::ShowNoActivate(10)]);
+            assert!(!executor.native_mut().is_iconic(10));
+            executor.step(vec![], &mut events);
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+            executor.native_mut().window_mut(10).layout = saved;
+            executor.step(vec![], &mut events);
+            executor.step(vec![], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+            assert_eq!(executor.native_mut().calls, vec![Call::ShowNoActivate(10)]);
+        }
+    }
+
+    #[test]
+    fn accepted_snap_reveal_that_stays_minimized_times_out_until_observed_restored() {
+        for automatic in [false, true] {
+            let mut win = window("one", 10);
+            let saved = snapped();
+            win.layout = saved.clone();
+            win.layout.visible = None;
+            win.layout.arranged = Some(false);
+            win.minimized = true;
+            let key = win.identity.key();
+            let mut executor = Executor::new(FakeNative::new(100));
+            executor.native_mut().insert(&win);
+            // Model a successfully posted command that never restores the window.
+            // API acceptance must not fabricate visible/native arrangement evidence.
+            executor.native_mut().window_mut(10).auto_apply = false;
+            let action = if automatic {
+                Action::RestoreAutomatic(saved.clone())
+            } else {
+                Action::Restore(saved.clone())
+            };
+            let mut events = Vec::new();
+            executor.step(
+                vec![Work::Action(test_job(win.clone(), action.clone()))],
+                &mut events,
+            );
+            assert!(
+                events
+                    .iter()
+                    .any(|event| matches!(event, Event::Accepted { .. }))
+            );
+            assert!(executor.native_mut().is_iconic(10));
+            executor.native_mut().tick_ms += 2000;
+            executor.step(vec![], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::TimedOut,
+                    ..
+                }
+            )));
+            assert!(!events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+            assert!(executor.active[&key].timed_out);
+
+            // Keep the outstanding slot rather than dispatch another native command.
+            events.clear();
+            executor.step(vec![Work::Action(test_job(win, action))], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Busy,
+                    ..
+                }
+            )));
+            assert_eq!(executor.native_mut().calls, vec![Call::ShowNoActivate(10)]);
+
+            // A late external restore releases the slot only after two visible matches.
+            events.clear();
+            let live = executor.native_mut().window_mut(10);
+            live.iconic = false;
+            live.visible = true;
+            live.layout = saved;
+            executor.step(vec![], &mut events);
+            assert!(executor.active.contains_key(&key));
+            assert!(events.is_empty());
+            executor.step(vec![], &mut events);
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Verified,
+                    ..
+                }
+            )));
+            assert!(!executor.active.contains_key(&key));
+            assert_eq!(executor.native_mut().calls, vec![Call::ShowNoActivate(10)]);
+        }
+    }
+
+    #[test]
+    fn visible_matching_snap_needs_no_show_or_placement() {
+        let mut win = window("one", 10);
+        win.layout = snapped();
+        let mut executor = Executor::new(FakeNative::new(100));
+        executor.native_mut().insert(&win);
+        let action = Action::RestoreAutomatic(win.layout.clone());
+        executor.step(vec![Work::Action(test_job(win, action))], &mut Vec::new());
+        assert!(executor.native_mut().calls.is_empty());
+    }
+
+    #[test]
+    fn incompatible_snap_and_topology_changes_never_dispatch_placement() {
+        for case in 0..3 {
+            let mut win = window("one", 10);
+            win.layout = snapped();
+            let mut saved = win.layout.clone();
+            match case {
+                0 => saved.arranged = Some(false), // Normal destination, live snap.
+                1 => saved.normal[0] += 100,       // Different saved arrangement.
+                _ => {
+                    // Adjustment discards saved evidence, still do not place.
+                    win.minimized = true;
+                    win.layout.visible = None;
+                    win.layout.arranged = Some(false);
+                    win.layout.work_area[0] += 100;
+                }
+            }
+            let mut executor = Executor::new(FakeNative::new(100));
+            executor.native_mut().insert(&win);
+            let mut events = Vec::new();
+            executor.step(
+                vec![Work::Action(test_job(win, Action::RestoreAutomatic(saved)))],
+                &mut events,
+            );
+            assert!(executor.native_mut().calls.is_empty());
+            assert!(events.iter().any(|event| matches!(
+                event,
+                Event::ActionResult {
+                    outcome: Outcome::Rejected,
+                    ..
+                }
+            )));
         }
     }
 

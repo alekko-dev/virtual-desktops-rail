@@ -1070,6 +1070,304 @@ fn auto_restore_uses_only_destination_layouts_for_each_window() {
 }
 
 #[test]
+fn snap_policy_defaults_migrates_and_persists_explicit_opt_out() {
+    let mut value = serde_json::to_value(Saved::default()).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("minimize_snapped_elsewhere");
+    let saved = Saved::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(saved.minimize_snapped_elsewhere);
+    let mut model = Model::new(saved);
+    let revision = model.saved().preferences_revision;
+    model.set_minimize_snapped_elsewhere(false);
+    assert!(model.is_dirty());
+    assert_eq!(model.saved().preferences_revision, revision + 1);
+    let saved = Saved::decode(&serde_json::to_vec(model.saved()).unwrap()).unwrap();
+    assert!(!saved.minimize_snapped_elsewhere);
+    assert!(!Model::new(saved).saved().minimize_snapped_elsewhere);
+}
+
+fn pre_minimize_snap_sample() -> (Model, Window, String, Request, Window) {
+    let (mut model, mut window, key) = saved_destinations();
+    window.layout.visible = Some([125, 80, 725, 500]);
+    window.layout.arranged = Some(false);
+    model.snapshot(snapshot("A", 110, vec![window.clone()]));
+    model.click(
+        &key,
+        Click {
+            minimized: false,
+            was_foreground: true,
+        },
+    );
+    let request = model.take_requests(120).pop().unwrap();
+    let mut sampled = window.clone();
+    sampled.layout.arranged = Some(true);
+    sampled.layout.visible = Some([25, 0, 960, 1040]);
+    model.accepted(
+        &key,
+        request.sequence,
+        Acceptance {
+            effect: Effect::Minimize,
+            target: Some(sampled.layout.clone()),
+        },
+    );
+    (model, window, key, request, sampled)
+}
+
+#[test]
+fn native_snap_evidence_survives_supersession_timeout_and_delayed_delivery_without_memory_commit() {
+    for late in [false, true] {
+        for sample_tick in [120, 130] {
+            let (mut model, mut window, key, request, sampled) = pre_minimize_snap_sample();
+            window.minimized = true;
+            window.layout.visible = None;
+            model.snapshot(snapshot("B", 130, vec![window]));
+            let saved = serde_json::to_value(model.saved()).unwrap();
+            model.mark_clean();
+            if late {
+                model.settle(&key, request.sequence, 140, Outcome::TimedOut);
+            }
+            // A later minimized snapshot (including the same tick) is not unsnap evidence.
+            model.observed_arrangement(&request, &sampled.layout, sample_tick);
+            assert!(!model.is_dirty());
+            let settled = model
+                .settle(&key, request.sequence, 150, Outcome::Verified)
+                .unwrap();
+            assert!(!settled.current_verified);
+            assert!(!settled.committed);
+            let next = model.take_requests(160).pop().unwrap();
+            assert!(matches!(next.action, Action::RestoreAutomatic(_)));
+            assert_eq!(next.retained_arrangement.as_deref(), Some(&sampled.layout));
+            assert_eq!(serde_json::to_value(model.saved()).unwrap(), saved);
+        }
+    }
+}
+
+#[test]
+fn old_native_snap_evidence_cannot_override_newer_visible_state_or_display_boundaries() {
+    for mode in 0..6 {
+        let (mut model, mut window, key, request, sampled) = pre_minimize_snap_sample();
+        window.minimized = true;
+        window.layout.visible = None;
+        model.snapshot(snapshot("B", 130, vec![window.clone()]));
+        let expected = match mode {
+            0 | 1 => {
+                // Newer, or equal-time, visible unsnap.
+                window.minimized = false;
+                window.layout.visible = Some([125, 80, 725, 500]);
+                model.snapshot(snapshot("B", 140, vec![window.clone()]));
+                None
+            }
+            2 => {
+                // A newer visible Snap wins over the delayed old bounds.
+                window = sampled.clone();
+                window.layout.visible = Some([25, 0, 1100, 1040]);
+                model.snapshot(snapshot("B", 140, vec![window.clone()]));
+                Some(window.layout.clone())
+            }
+            _ => {
+                // Context changes invalidate even when topology returns later.
+                match mode {
+                    3 => window.layout.dpi = 120,
+                    4 => window.layout.work_area[0] += 25,
+                    _ => window.layout.monitor = "other".into(),
+                }
+                model.snapshot(snapshot("B", 140, vec![window.clone()]));
+                window.layout = sampled.layout.clone();
+                window.layout.visible = None;
+                window.layout.arranged = Some(false);
+                model.snapshot(snapshot("B", 150, vec![window.clone()]));
+                None
+            }
+        };
+        model.observed_arrangement(&request, &sampled.layout, if mode == 1 { 140 } else { 120 });
+        model.settle(&key, request.sequence, 160, Outcome::Verified);
+        let next = model.take_requests(170).pop().unwrap();
+        assert_eq!(
+            next.retained_arrangement.as_deref(),
+            expected.as_ref(),
+            "mode {mode}"
+        );
+    }
+}
+
+#[test]
+fn current_minimize_completion_does_not_redate_old_snap_evidence_over_a_newer_unsnap() {
+    let (mut model, mut window, key, request, sampled) = pre_minimize_snap_sample();
+    model.observed_arrangement(&request, &sampled.layout, 120);
+    model.snapshot(snapshot("A", 130, vec![window.clone()]));
+    let settled = model
+        .settle(&key, request.sequence, 140, Outcome::Verified)
+        .unwrap();
+    assert!(settled.current_verified);
+    window.minimized = true;
+    window.layout.visible = None;
+    model.snapshot(snapshot("B", 150, vec![window]));
+    assert!(
+        model
+            .take_requests(160)
+            .pop()
+            .unwrap()
+            .retained_arrangement
+            .is_none()
+    );
+}
+
+#[test]
+fn delayed_native_snap_evidence_cannot_override_a_newer_drag_capture() {
+    for arranged in [false, true] {
+        let (mut model, mut window, key, request, sampled) = pre_minimize_snap_sample();
+        window.minimized = true;
+        window.layout.visible = None;
+        model.snapshot(snapshot("B", 130, vec![window]));
+        model.settle(&key, request.sequence, 140, Outcome::Verified);
+        let mut captured = sampled.layout.clone();
+        captured.arranged = Some(arranged);
+        captured.visible = Some([25, 0, 1100, 1040]);
+        model.captured(&key, model.generation(), 180, captured.clone());
+        model.observed_arrangement(&request, &sampled.layout, 120);
+        model.click(
+            &key,
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        let next = model.take_requests(190).pop().unwrap();
+        assert_eq!(
+            next.retained_arrangement.as_deref(),
+            arranged.then_some(&captured)
+        );
+    }
+}
+
+#[test]
+fn equal_tick_native_snap_requires_unchanged_request_baseline_and_ignores_duplicate_samples() {
+    for observed_before_request in [false, true] {
+        let (mut model, mut window, key) = saved_destinations();
+        window.layout.visible = Some([125, 80, 725, 500]);
+        window.layout.arranged = Some(false);
+        model.snapshot(snapshot("A", 110, vec![window.clone()]));
+        if observed_before_request {
+            model.snapshot(snapshot("A", 120, vec![window.clone()]));
+        }
+        model.click(
+            &key,
+            Click {
+                minimized: false,
+                was_foreground: true,
+            },
+        );
+        let request = model.take_requests(120).pop().unwrap();
+        if !observed_before_request {
+            model.snapshot(snapshot("A", 120, vec![window.clone()]));
+        }
+        let mut sampled = window.layout.clone();
+        sampled.arranged = Some(true);
+        sampled.visible = Some([25, 0, 960, 1040]);
+        model.observed_arrangement(&request, &sampled, 120);
+        // A repeated report with contradictory bounds/state at the same tick
+        // cannot replace the first accepted evidence, even for a current ticket.
+        model.observed_arrangement(&request, &window.layout, 120);
+        model.accepted(
+            &key,
+            request.sequence,
+            Acceptance {
+                effect: Effect::Minimize,
+                target: Some(sampled.clone()),
+            },
+        );
+        model.settle(&key, request.sequence, 140, Outcome::Verified);
+        window.minimized = true;
+        window.layout.visible = None;
+        model.snapshot(snapshot("B", 150, vec![window]));
+        let next = model.take_requests(160).pop().unwrap();
+        assert_eq!(
+            next.retained_arrangement.as_deref(),
+            observed_before_request.then_some(&sampled)
+        );
+    }
+}
+
+#[test]
+fn native_snap_samples_cannot_follow_identity_replacement_or_removal() {
+    for mode in 0..4 {
+        let (mut model, mut window, key, request, sampled) = pre_minimize_snap_sample();
+        window.minimized = true;
+        window.layout.visible = None;
+        match mode {
+            0 => window.hwnd += 1,
+            1 => window.pid += 1,
+            _ => window.identity.token = "replacement".into(),
+        }
+        if mode == 3 {
+            // Definitively removed before a new identity appears.
+            model.snapshot(snapshot("B", 130, vec![]));
+            model.settle(&key, request.sequence, 140, Outcome::IdentityLost);
+            model.snapshot(snapshot("B", 150, vec![window.clone()]));
+        } else {
+            model.snapshot(snapshot("B", 130, vec![window.clone()]));
+        }
+        model.observed_arrangement(&request, &sampled.layout, 160);
+        if mode != 3 {
+            model.settle(&key, request.sequence, 170, Outcome::IdentityLost);
+        }
+        model.click(
+            &window.identity.key(),
+            Click {
+                minimized: true,
+                was_foreground: false,
+            },
+        );
+        let next = model
+            .take_requests(180)
+            .into_iter()
+            .find(|next| next.key == window.identity.key())
+            .unwrap();
+        assert!(next.retained_arrangement.is_none(), "mode {mode}");
+    }
+}
+
+#[test]
+fn snap_policy_changes_cancel_automatic_work_without_moving_windows_or_manual_intent() {
+    let (mut model, window, key) = saved_destinations();
+    model.snapshot(snapshot("B", 200, vec![window.clone()]));
+    let request = model.take_requests(200).pop().unwrap();
+    model.set_minimize_snapped_elsewhere(false);
+    assert_ne!(model.runtime(&key).unwrap().sequence(), request.sequence);
+    assert!(!model.runtime(&key).unwrap().window().minimized);
+    model.accepted(
+        &key,
+        request.sequence,
+        Acceptance {
+            effect: Effect::Minimize,
+            target: Some(window.layout.clone()),
+        },
+    );
+    let settled = model
+        .settle(&key, request.sequence, 210, Outcome::Verified)
+        .unwrap();
+    assert!(!settled.current_verified);
+    assert!(!settled.committed);
+    assert!(model.take_requests(220).is_empty());
+    model.click(
+        &key,
+        Click {
+            minimized: true,
+            was_foreground: false,
+        },
+    );
+    let manual = model.take_requests(230).pop().unwrap();
+    model.set_minimize_snapped_elsewhere(true);
+    assert_eq!(model.runtime(&key).unwrap().sequence(), manual.sequence);
+    assert!(model.runtime(&key).unwrap().pending().is_some());
+    model.pause(true);
+    model.snapshot(snapshot("A", 240, vec![window]));
+    assert!(model.runtime(&key).unwrap().desired().is_none());
+}
+
+#[test]
 fn manual_rail_restore_on_new_desktop_enables_later_automatic_restore() {
     let (mut model, mut window, key) = baseline();
     model.set_auto_restore(true);

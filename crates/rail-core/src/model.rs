@@ -11,6 +11,34 @@ pub struct ExternalRestore {
     pub since: Option<u64>,
 }
 
+#[derive(Clone, Debug)]
+struct ArrangementContext {
+    monitor: String,
+    monitor_rect: [i32; 4],
+    work_area: [i32; 4],
+    dpi: u32,
+}
+
+impl From<&Layout> for ArrangementContext {
+    fn from(layout: &Layout) -> Self {
+        Self {
+            monitor: layout.monitor.clone(),
+            monitor_rect: layout.monitor_rect,
+            work_area: layout.work_area,
+            dpi: layout.dpi,
+        }
+    }
+}
+
+impl ArrangementContext {
+    fn matches(&self, layout: &Layout) -> bool {
+        self.monitor == layout.monitor
+            && self.monitor_rect == layout.monitor_rect
+            && self.work_area == layout.work_area
+            && self.dpi == layout.dpi
+    }
+}
+
 /// Controller state for one live identity. Read-only outside the crate.
 #[derive(Clone, Debug)]
 pub struct Runtime {
@@ -27,12 +55,64 @@ pub struct Runtime {
     pub(crate) present: bool,
     pub(crate) external_restore: Option<ExternalRestore>,
     pub(crate) state_tick: u64,
+    retained_arrangement: Option<Layout>,
+    arrangement_tick: u64,
+    // Minimized observations do not contradict a pre-minimize visible sample.
+    // Known visible state and context/identity changes do fence older evidence.
+    arrangement_barrier_tick: u64,
+    arrangement_context: ArrangementContext,
+    arrangement_revision: u64,
 }
 
 impl Runtime {
+    fn observe_arrangement(&mut self, layout: &Layout, tick: u64) {
+        self.observe_arrangement_sample(layout, tick, false);
+    }
+
+    fn observe_arrangement_sample(&mut self, layout: &Layout, tick: u64, after_request: bool) {
+        if tick < self.arrangement_barrier_tick
+            || (tick == self.arrangement_barrier_tick && !after_request)
+        {
+            return;
+        }
+        let mut definitive = false;
+        let same_context = self.arrangement_context.matches(layout);
+        if tick < self.arrangement_tick || (tick == self.arrangement_tick && !after_request) {
+            // A delayed worker sample can fill evidence through newer minimized
+            // snapshots, but cannot reverse a newer display-context boundary.
+            if !same_context || layout.visible.is_none() {
+                return;
+            }
+        } else {
+            if !same_context {
+                self.retained_arrangement = None;
+                self.arrangement_barrier_tick = tick;
+                definitive = true;
+            }
+            self.arrangement_context = ArrangementContext::from(layout);
+            self.arrangement_tick = tick;
+        }
+        if layout.visible.is_some()
+            && let Some(arranged) = layout.arranged
+        {
+            self.retained_arrangement = arranged.then(|| layout.clone());
+            self.arrangement_barrier_tick = tick;
+            definitive = true;
+        }
+        if definitive {
+            self.arrangement_revision = self.arrangement_revision.saturating_add(1);
+        }
+    }
+
     /// Last accepted observation of the window.
     pub fn window(&self) -> &Window {
         &self.window
+    }
+    /// New observations must exceed accepted state, capture and action evidence.
+    pub fn observation_through(&self) -> u64 {
+        self.state_tick
+            .max(self.arrangement_tick)
+            .max(self.ignore_geometry_through)
     }
     pub fn sequence(&self) -> u64 {
         self.sequence
@@ -189,6 +269,20 @@ impl Model {
         self.saved.auto_restore = enabled;
         self.saved.bump_preferences();
         self.dirty = true;
+        self.cancel_automatic_intent();
+    }
+
+    pub fn set_minimize_snapped_elsewhere(&mut self, enabled: bool) {
+        if self.saved.minimize_snapped_elsewhere == enabled {
+            return;
+        }
+        self.saved.minimize_snapped_elsewhere = enabled;
+        self.saved.bump_preferences();
+        self.dirty = true;
+        self.cancel_automatic_intent();
+    }
+
+    fn cancel_automatic_intent(&mut self) {
         // A preference change does not move windows. Cancel queued automatic
         // intent; the next confirmed switch applies the new policy.
         for runtime in self.windows.values_mut() {
@@ -235,6 +329,10 @@ impl Model {
             runtime.restore_after_minimize = false;
             runtime.sequence += 1;
         }
+    }
+
+    pub fn last_snapshot_tick(&self) -> u64 {
+        self.last_snapshot_tick
     }
 
     pub fn snapshot(&mut self, snapshot: Snapshot) {
@@ -293,7 +391,33 @@ impl Model {
                 present: true,
                 external_restore: None,
                 state_tick: snapshot.tick,
+                retained_arrangement: (window.layout.visible.is_some()
+                    && window.layout.arranged == Some(true))
+                .then(|| window.layout.clone()),
+                arrangement_tick: snapshot.tick,
+                arrangement_barrier_tick: snapshot.tick,
+                arrangement_context: ArrangementContext::from(&window.layout),
+                arrangement_revision: 0,
             });
+            if snapshot.tick >= runtime.state_tick {
+                if runtime.window.hwnd != window.hwnd
+                    || runtime.window.pid != window.pid
+                    || runtime.window.identity != window.identity
+                {
+                    runtime.retained_arrangement = (window.layout.visible.is_some()
+                        && window.layout.arranged == Some(true))
+                    .then(|| window.layout.clone());
+                    runtime.arrangement_tick = snapshot.tick;
+                    runtime.arrangement_barrier_tick = snapshot.tick;
+                    runtime.arrangement_context = ArrangementContext::from(&window.layout);
+                    runtime.arrangement_revision = runtime.arrangement_revision.saturating_add(1);
+                }
+                // Initial observations also establish live evidence. Equal-tick
+                // repeats must not replace an already accepted observation.
+                if snapshot.tick > runtime.state_tick {
+                    runtime.observe_arrangement(&window.layout, snapshot.tick);
+                }
+            }
             // Stable external restores and geometry changes are user intent.
             // Startup/recovery and our own pending/late work are not.
             let admit =
@@ -385,7 +509,9 @@ impl Model {
                         || runtime.pending.as_ref().is_some_and(|pending| {
                             matches!(
                                 pending.request.action,
-                                Action::Restore(_) | Action::RestoreAutomatic(_)
+                                Action::Restore(_)
+                                    | Action::RestoreAutomatic(_)
+                                    | Action::RevealSnap(_)
                             )
                         })
                     {
@@ -498,13 +624,19 @@ impl Model {
             let Some(record) = self.saved.windows.get(key) else {
                 return;
             };
-            Action::Restore(
-                record
-                    .layouts
-                    .get(desktop)
-                    .unwrap_or(&record.last_usable)
-                    .clone(),
-            )
+            if self.saved.minimize_snapped_elsewhere
+                && let Some(arrangement) = &runtime.retained_arrangement
+            {
+                Action::RevealSnap(arrangement.clone())
+            } else {
+                Action::Restore(
+                    record
+                        .layouts
+                        .get(desktop)
+                        .unwrap_or(&record.last_usable)
+                        .clone(),
+                )
+            }
         } else if click.was_foreground {
             Action::Minimize { automatic: false }
         } else {
@@ -572,6 +704,9 @@ impl Model {
             && layout.reachable()
             && let Some(record) = self.saved.windows.get_mut(key)
         {
+            if tick > runtime.state_tick {
+                runtime.observe_arrangement(&layout, tick);
+            }
             record
                 .layouts
                 .insert(self.current.clone().unwrap(), layout.clone());
@@ -581,6 +716,36 @@ impl Model {
     }
 
     // Operation lifecycle.
+
+    /// Fresh identity-validated native layout, sampled before minimizing. This is
+    /// live evidence, not action completion or authority to commit desktop memory.
+    /// It remains useful when the originating intent is superseded or times out.
+    pub fn observed_arrangement(&mut self, request: &Request, layout: &Layout, tick: u64) {
+        if tick < request.tick {
+            return;
+        }
+        let window = &request.window;
+        let generation = self.generation;
+        if let Some(runtime) = self.windows.get_mut(&window.identity.key())
+            && runtime.window.identity == window.identity
+            && runtime.window.hwnd == window.hwnd
+            && runtime.window.pid == window.pid
+        {
+            // GetTickCount64 can give the snapshot and subsequent native query
+            // the same tick. The still-current pending request proves this sample
+            // followed its baseline; a superseded ticket cannot authorize that tie.
+            let after_request = generation == request.generation
+                && runtime.sequence == request.sequence
+                && runtime.arrangement_revision == request.arrangement_revision
+                && runtime.pending.as_ref().is_some_and(|pending| {
+                    pending.request.sequence == request.sequence
+                        && pending.request.generation == request.generation
+                })
+                && request.tick >= runtime.arrangement_barrier_tick
+                && tick >= request.tick;
+            runtime.observe_arrangement_sample(layout, tick, after_request);
+        }
+    }
 
     pub fn take_requests(&mut self, tick: u64) -> Vec<Request> {
         if self.current.is_none() {
@@ -602,6 +767,9 @@ impl Model {
                 let request = Request {
                     key: key.clone(),
                     window: runtime.window.clone(),
+                    retained_arrangement: runtime.retained_arrangement.clone().map(Box::new),
+                    arrangement_revision: runtime.arrangement_revision,
+                    minimize_snapped_elsewhere: self.saved.minimize_snapped_elsewhere,
                     generation: self.generation,
                     sequence: runtime.sequence,
                     action,
@@ -654,6 +822,14 @@ impl Model {
             && runtime.sequence == sequence
             && !late
             && request_generation == self.generation;
+        if current_verified
+            && effect != Some(crate::Effect::Minimize)
+            && let Some(layout) = execution
+                .as_ref()
+                .and_then(|execution| execution.target.as_ref())
+        {
+            runtime.observe_arrangement(layout, tick);
+        }
         let mut committed = false;
         if current_verified && let Some(record) = self.saved.windows.get_mut(key) {
             let desktop = self.current.as_ref().unwrap();
@@ -674,24 +850,27 @@ impl Model {
                     self.dirty |= record.minimized_desktops.insert(desktop.clone());
                     committed = true;
                 }
+                Action::RevealSnap(_) => {
+                    self.dirty |= record.minimized_desktops.remove(desktop);
+                    committed = true;
+                }
                 _ => {}
             }
         }
         let released = outcome.releases();
         if released {
             if verified {
-                match intent {
-                    Action::Minimize { .. } => runtime.window.minimized = true,
-                    Action::Restore(_) | Action::RestoreAutomatic(_) => {
+                match effect.unwrap_or_else(|| intent.effect()) {
+                    crate::Effect::Minimize => runtime.window.minimized = true,
+                    crate::Effect::Restore | crate::Effect::Raise => {
                         runtime.window.minimized = false
                     }
-                    Action::Raise => {}
                 }
             }
             runtime.pending = None;
             runtime.suppress_next_state = verified;
-            runtime.restore_after_minimize =
-                current_verified && matches!(intent, Action::Minimize { .. });
+            runtime.restore_after_minimize = current_verified
+                && effect.unwrap_or_else(|| intent.effect()) == crate::Effect::Minimize;
             runtime.state_tick = runtime.state_tick.max(tick);
             if !runtime.present {
                 self.windows.remove(key);
@@ -702,6 +881,7 @@ impl Model {
             pending.state = OperationState::Quarantined;
         }
         Some(Settled {
+            current_verified,
             intent,
             effect,
             late,

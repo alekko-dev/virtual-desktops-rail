@@ -1,4 +1,4 @@
-const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be verified in time. Its button remains disabled while that action is outstanding.";
+pub(crate) const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be verified in time. Its button remains disabled while that action is outstanding.";
 
 use crate::{
     EVENTS, Event, MAIN_WINDOW, OVERRUN, WAKE, actions, bridge, icons, native::*, notify, platform,
@@ -38,6 +38,7 @@ const RETRY: usize = 6002;
 const EXIT: usize = 6003;
 const DONE: usize = 6004;
 const AUTO_RESTORE: usize = 6005;
+const MINIMIZE_SNAPPED_ELSEWHERE: usize = 6006;
 const SAVE_REPORT: usize = 6105;
 const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
 const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
@@ -196,6 +197,7 @@ pub enum Command {
     AutomationUi { enabled: bool },
     ExperimentalIntegration { enabled: bool },
     AutoRestore { enabled: bool },
+    MinimizeSnappedElsewhere { enabled: bool },
 }
 
 struct App {
@@ -224,6 +226,7 @@ struct App {
     signature: String,
     status: String,
     notice: String,
+    snap_notice: crate::snap_notice::Lifecycle,
     loaded: bool,
     ready: bool,
     transition_received_us: Option<u64>,
@@ -415,6 +418,12 @@ impl App {
                     serde_json::json!({"event":"auto_restore_changed","enabled":enabled}),
                 ));
             }
+            Command::MinimizeSnappedElsewhere { enabled } => {
+                self.model.set_minimize_snapped_elsewhere(enabled);
+                let _ = self.storage.sender.try_send(store::Work::Trace(
+                    serde_json::json!({"event":"minimize_snapped_elsewhere_changed","enabled":enabled}),
+                ));
+            }
             Command::ExperimentalIntegration { enabled } => {
                 if self.model.set_experimental_integration(enabled) {
                     self.command(Command::Retry);
@@ -468,6 +477,7 @@ impl App {
                     "dispatch_latency":self.dispatch_latency,
                     "experimental_integration":saved.experimental_integration,
                     "auto_restore":saved.auto_restore,
+                    "minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
                     "desktops":self.model.desktops(),"windows":self.model.present().map(|(key,r)|serde_json::json!({
                         "key":key,"hwnd":r.window().hwnd,"pid":r.window().pid,"minimized":r.window().minimized,"blocked":r.blocked(),
                         "responsive":r.window().responsive,"pending":r.pending().is_some(),"layout":r.window().layout,
@@ -666,7 +676,10 @@ impl App {
                     } else if self.model.current().is_none() {
                         self.transition_received_us = None;
                     }
+                    self.snap_notice
+                        .observe(&self.model, &frame, &mut self.notice);
                     self.model.snapshot(frame);
+                    self.snap_notice.reconcile(&self.model, &mut self.notice);
                     for (key, _) in self.model.present() {
                         if !self.diagnostic_window_labels.contains_key(key)
                             && self.diagnostic_window_labels.len() < 512
@@ -713,6 +726,20 @@ impl App {
                         self.model.unavailable();
                     }
                 }
+                Event::SnapPreservation(notice) => {
+                    if self
+                        .snap_notice
+                        .rejected(*notice, &self.model, &mut self.notice)
+                    {
+                        let _ = self
+                            .storage
+                            .sender
+                            .try_send(store::Work::Log(self.notice.clone()));
+                        let _ = self.storage.sender.try_send(store::Work::Trace(
+                            serde_json::json!({"event":"user_notice","kind":"other"}),
+                        ));
+                    }
+                }
                 Event::Notice(notice) => {
                     let _ = self
                         .storage
@@ -722,6 +749,13 @@ impl App {
                     let _ = self.storage.sender.try_send(store::Work::Trace(
                         serde_json::json!({"event":"user_notice","kind":if self.notice==ACTION_TIMEOUT_NOTICE{"action_timeout"}else{"other"}}),
                     ));
+                }
+                Event::ObservedArrangement {
+                    request,
+                    layout,
+                    tick,
+                } => {
+                    self.model.observed_arrangement(&request, &layout, tick);
                 }
                 Event::Accepted {
                     key,
@@ -754,6 +788,13 @@ impl App {
                     outcome,
                 } => {
                     let settled = self.model.settle(&key, sequence, tick, outcome);
+                    self.snap_notice.settled(
+                        &self.model,
+                        (&key, sequence, tick, outcome),
+                        settled.as_ref(),
+                        &mut self.notice,
+                    );
+                    self.snap_notice.reconcile(&self.model, &mut self.notice);
                     let observed = self.model.runtime(&key).map(|runtime| {
                         let window = runtime.window();
                         serde_json::json!({
@@ -1232,7 +1273,7 @@ impl App {
                 200,
                 160,
                 scale(560),
-                scale(380),
+                scale(414),
                 self.window,
                 null_mut(),
                 GetModuleHandleW(null()),
@@ -1300,14 +1341,24 @@ impl App {
                 496,
                 28,
             ),
-            (6103, "STATIC", "Startup", 0x50000000, 24, 126, 496, 22),
+            (
+                MINIMIZE_SNAPPED_ELSEWHERE,
+                "BUTTON",
+                "Minimize snapped windows on other desktops",
+                0x50010003,
+                24,
+                116,
+                496,
+                28,
+            ),
+            (6103, "STATIC", "Startup", 0x50000000, 24, 160, 496, 22),
             (
                 STARTUP,
                 "BUTTON",
                 "Start with Windows",
                 0x50010003,
                 24,
-                154,
+                188,
                 496,
                 28,
             ),
@@ -1317,7 +1368,7 @@ impl App {
                 "Desktop integration",
                 0x50000000,
                 24,
-                198,
+                232,
                 496,
                 22,
             ),
@@ -1327,7 +1378,7 @@ impl App {
                 "Retry desktop integration",
                 0x50010000,
                 24,
-                226,
+                260,
                 212,
                 32,
             ),
@@ -1337,16 +1388,16 @@ impl App {
                 "Save diagnostic report…",
                 0x50010000,
                 248,
-                226,
+                260,
                 272,
                 32,
             ),
-            (6106, "STATIC", "", 0x50000010, 0, 274, 560, 1),
-            (DONE, "BUTTON", "Done", 0x50010001, 432, 290, 88, 34),
-            (6107, "STATIC", "●", 0x50000000, 24, 285, 10, 18),
-            (6100, "STATIC", "", 0x50000000, 36, 286, 372, 28),
+            (6106, "STATIC", "", 0x50000010, 0, 308, 560, 1),
+            (DONE, "BUTTON", "Done", 0x50010001, 432, 324, 88, 34),
+            (6107, "STATIC", "●", 0x50000000, 24, 319, 10, 18),
+            (6100, "STATIC", "", 0x50000000, 36, 320, 372, 28),
             // Selectable, scrollable details; it occupies no space while hidden.
-            (6109, "EDIT", "", 0x40a10844, 24, 310, 496, 0),
+            (6109, "EDIT", "", 0x40a10844, 24, 344, 496, 0),
         ] {
             let child = unsafe {
                 CreateWindowExW(
@@ -1381,7 +1432,7 @@ impl App {
                 wide(&label).as_ptr(),
                 0x50000000,
                 scale(36),
-                scale(314),
+                scale(348),
                 scale(372),
                 scale(14),
                 self.settings,
@@ -1449,7 +1500,7 @@ impl App {
                 SelectObject(dc, previous);
                 ReleaseDC(window, dc);
                 // The read-only edit keeps oversized details selectable and scrollable.
-                let available = (work[3] - work[1] - chrome - px(380)).max(px(24));
+                let available = (work[3] - work[1] - chrome - px(414)).max(px(24));
                 notice_height =
                     (bounds.bottom - bounds.top + px(12)).clamp(px(28), available.max(px(28)));
             }
@@ -1460,12 +1511,12 @@ impl App {
                 notice_height + px(12)
             };
             for (id, x, y, width, height) in [
-                (6109, px(24), px(310), px(496), notice_height),
-                (6108, px(36), px(314) + extra, px(372), px(14)),
+                (6109, px(24), px(344), px(496), notice_height),
+                (6108, px(36), px(348) + extra, px(372), px(14)),
                 (
                     DONE as i32,
                     px(432),
-                    if extra == 0 { px(290) } else { px(314) + extra },
+                    if extra == 0 { px(324) } else { px(348) + extra },
                     px(88),
                     px(34),
                 ),
@@ -1481,9 +1532,9 @@ impl App {
                 );
             }
             let height = if extra == 0 {
-                px(380)
+                px(414)
             } else {
-                px(380) + notice_height + chrome
+                px(414) + notice_height + chrome
             };
             let top = outer.top.clamp(work[1], (work[3] - height).max(work[1]));
             let left = outer
@@ -1515,7 +1566,7 @@ impl App {
         }
         let saved = self.model.saved();
         let signature = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.status,
             self.notice,
             saved.paused,
@@ -1523,7 +1574,8 @@ impl App {
             self.startup_busy,
             self.loaded,
             saved.experimental_integration,
-            saved.auto_restore
+            saved.auto_restore,
+            saved.minimize_snapped_elsewhere
         );
         if signature == self.settings_signature {
             return;
@@ -1531,6 +1583,7 @@ impl App {
         let paused = saved.paused;
         let startup = saved.startup;
         let auto_restore = saved.auto_restore;
+        let minimize_snapped_elsewhere = saved.minimize_snapped_elsewhere;
         self.settings_signature = signature;
         self.layout_settings_notice();
         unsafe {
@@ -1559,6 +1612,16 @@ impl App {
             );
             EnableWindow(
                 GetDlgItem(self.settings, AUTO_RESTORE as i32),
+                self.loaded as i32,
+            );
+            SendMessageW(
+                GetDlgItem(self.settings, MINIMIZE_SNAPPED_ELSEWHERE as i32),
+                0xf1,
+                minimize_snapped_elsewhere as usize,
+                0,
+            );
+            EnableWindow(
+                GetDlgItem(self.settings, MINIMIZE_SNAPPED_ELSEWHERE as i32),
                 self.loaded as i32,
             );
             EnableWindow(
@@ -1664,7 +1727,7 @@ impl App {
             "generated_unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis(),
             "application":crate::version::info(),
             "integration":{"status":self.status,"ready":self.ready},
-            "settings":{"paused":saved.paused,"auto_restore":saved.auto_restore,"startup":saved.startup},
+            "settings":{"paused":saved.paused,"auto_restore":saved.auto_restore,"minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,"startup":saved.startup},
             "desktops":desktops,
             "model":{"generation":self.model.generation(),"transition_serial":self.model.transition_serial(),"current_desktop":current_desktop},
             "dispatch_latency":self.dispatch_latency,
@@ -1700,7 +1763,7 @@ impl App {
         if let Some(error) = error {
             self.notice = format!("The save dialog could not be opened: {error}");
         } else if self.notice == REPORT_PICKER_NOTICE {
-            self.notice = draft.previous_notice;
+            self.notice = self.snap_notice.previous(draft.previous_notice);
         }
         self.update_settings();
     }
@@ -2329,7 +2392,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     ),
                 );
                 let dpi = GetDpiForWindow(window).max(96) as i32;
-                rect.top = (274 * dpi + 48) / 96;
+                rect.top = (308 * dpi + 48) / 96;
                 fill(
                     wparam as Handle,
                     &rect,
@@ -2579,6 +2642,17 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         } != 0;
                         app.command(Command::AutoRestore { enabled });
                     }
+                    MINIMIZE_SNAPPED_ELSEWHERE => {
+                        let enabled = unsafe {
+                            SendMessageW(
+                                GetDlgItem(window, MINIMIZE_SNAPPED_ELSEWHERE as i32),
+                                0xf0,
+                                0,
+                                0,
+                            )
+                        } != 0;
+                        app.command(Command::MinimizeSnappedElsewhere { enabled });
+                    }
                     DONE => unsafe {
                         app.settings = null_mut();
                         app.settings_signature.clear();
@@ -2672,6 +2746,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         signature: String::new(),
         status: "Loading saved layouts…".into(),
         notice: String::new(),
+        snap_notice: crate::snap_notice::Lifecycle::default(),
         loaded: false,
         ready: false,
         transition_received_us: None,

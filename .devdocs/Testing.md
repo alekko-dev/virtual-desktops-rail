@@ -74,6 +74,33 @@ See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-au
 
 ### Native Snap procedure
 
+The executor regressions distinguish live arranged state from stale cached state at
+minimize dispatch, require two matching visible observations after a placement-free
+reveal, and reject ordinary-placement and topology fallbacks that would replace
+saved/live Snap state. They also assert that an unrelated foreground is not targeted
+by explicit restoration and automatic restoration never requests foreground. These
+checks do not expose or certify native shell group membership.
+
+For manual and automatic Snap restores, accepted-but-unapplied native requests must
+leave the fake window iconic, time out without false verification, retain the
+outstanding slot, and reject another dispatch as busy. A late external restore must
+produce two matching visible observations before releasing that slot without focus.
+The Snap path shares the ordinary `SW_SHOWNOACTIVATE` native method and fake; there
+is no separate reveal implementation that assumes a different show command restores.
+
+The superseded-minimize regression starts with an ordinary controller snapshot,
+snaps only in the native fake, dispatches minimization and admits the destination's
+minimized/arranged=false snapshot before verification settles. Deliver the original
+native sample both before and after that snapshot. The destination request must
+retain the Snap evidence and issue zero placement/reveal/focus commands under either
+the default minimize policy or legacy decline policy, without stale memory/intent
+commits. Controller regressions also cover timeout/late delivery, newer unsnap/Snap
+observations and drag captures, display changes and return to the old topology,
+identity/HWND/PID replacement/removal, same-tick causal baselines and duplicate reports.
+An action's eventual completion timestamp must never make its old pre-minimize
+sample newer than a contradictory observation. See the cache admission contract in
+[Architecture](Architecture.md#native-snap-preservation).
+
 Use two group members and a separate owned unsnapped observer. Larger-group tests
 require explicit user scope; historical larger-group results below remain valid.
 Create a genuine group and confirm an explicit Task View Group thumbnail before
@@ -89,6 +116,75 @@ unpinned members separately. Verify the original drag-away size and shared-edge 
 Confirm group membership afterward. Native reveal tests do not substitute for product
 automatic switches or shell group actions. Remaining combinations belong in
 [Status](Status-and-Roadmap.md#planned-work).
+
+With **Minimize snapped windows on other desktops** disabled, Snap mismatch
+regressions must cover both explicit rail restoration and an automatic
+destination restore (without a user-minimized preference on that destination):
+
+1. Save an ordinary layout on the destination, then establish and visually confirm a
+   two-member Snap Group elsewhere. Let the rail observe the visible snapped member,
+   minimize it, and request the ordinary destination layout. Expect the existing Snap
+   notice, unchanged minimized state and placement, no pending/quarantined action,
+   and no show/placement dispatch. Restore through Windows afterward and confirm the
+   original Group thumbnail and shared-edge resize still work.
+2. Save a Snap layout, then maximize the same live window and minimize it. Confirm
+   `WPF_RESTORETOMAXIMIZED`, keeping the same normal restore bounds to isolate the
+   mismatch. Request the saved Snap layout. Expect rejection before any show/placement
+   dispatch, continued minimization and no pending/quarantined action after two seconds.
+   Confirm another rail action remains usable. With a user-minimized destination
+   preference, expect no automatic request at all.
+
+Use the separate owned unsnapped observer as the foreground anchor; inspect foreground
+before/after each rejected automatic request and after native minimize. Confirm Group
+membership through shell UI, not arranged flags or adjacent geometry. The executor fake
+checks the empty native-call log and released controller/executor slots for both
+request sources, but does not model `SW_MINIMIZE` activation effects or native Groups.
+
+Also verify a matching saved Snap layout still reveals without placement,
+manual reveal can focus only after verification, automatic reveal preserves the
+independent observer foreground, and the rail's own minimize preserves the Group.
+After visibly unsnapping the target, an ordinary saved restore must work again.
+Also snap immediately before rail minimization, before another inventory poll, and
+check that a subsequent incompatible ordinary restore is still declined.
+
+For the default-on **Minimize snapped windows on other desktops** preference, save an
+ordinary destination and establish native Snap on another desktop. With auto-restore
+on, returning to the ordinary destination must minimize without placement, foreground
+request, geometry/intent changes or a new mismatch notice. A matching saved Snap
+destination can still reveal. Test both visible and already-minimized starts, a snap
+newer than the last controller poll, and native restore bounds slightly outside the
+work area. Explicit rail reveal must preserve snapping and destination geometry;
+it clears only that desktop's minimized intent. After a confirmed visible unsnap,
+ordinary auto-restoration works again. Uncheck the option and repeat: incompatible
+automatic restoration is declined, leaving the current visible Snap unchanged.
+Settings changes apply at the next switch, do not move windows immediately and must
+cancel stale queued automatic work. Check default migration from configuration without
+the field, explicit opt-out persistence across restart and cross-session preference
+merges, pause/recovery, accepted-but-unverified minimization and late completion.
+
+For the zero-dispatch mismatch procedure, explicitly disable this
+preference when testing automatic requests; the new enabled policy deliberately
+requests minimization. Manual legacy decline scenarios likewise disable it. Native
+Group membership still requires shell UI evidence; arranged=true is not a Group pass.
+
+With Settings open, inspect the expanded Snap notice after either rejection. Restore
+or raise the affected member successfully through real rail input and inspect the
+notice disappearing and Settings returning to compact height. Repeat with a different
+member's successful action: the notice must remain. Native reveal into the same
+incompatible arrangement must also retain it. Restore the rejected saved arrangement
+through Windows and wait for a fresh observation: it may clear only under the precise
+[observation predicate](Architecture.md#native-snap-preservation). Close/unpin or
+replace the affected identity and confirm its notice clears without affecting other
+warnings. Keep an independent foreground anchor for automatic paths.
+
+Deterministic `snap_notice_*` executor/controller regressions cover explicit and
+automatic recovery, raise, API acceptance without completion, unrelated-window
+success, superseded generations/sequences, quarantined late results, stale/equal-tick
+snapshots and newer drag capture, visible but still incompatible geometry/state,
+confirmed ordinary unsnap, identity removal/replacement and temporary pending omission.
+They also preserve timeout/storage/report text and prevent report-picker cancellation
+from resurrecting a recovered notice. Existing mismatch tests still require zero
+native show/placement calls, unchanged memory and no pending/quarantined action.
 
 ### Minimized-intent procedure
 
@@ -258,6 +354,146 @@ cleanup-overlapped `rail-managed-idle-performance.json` / `rail-performance.json
 Representative physical-machine distributions and completion timing remain unmeasured.
 
 ### Integration smoke check
+
+On 2026-11-07, the superseded-minimize evidence correction to `71d41b4` passed
+`check-dev.ps1` with `CARGO_BUILD_JOBS=1`, incremental compilation off and writable
+checkout-local temporary files: formatting, warnings-denied Clippy, locked workspace
+tests, version contracts and release builds. The original controller probe failed
+on the reviewed source by losing the only native Snap sample after the switch;
+the permanent controller/executor regressions above now retain it without authorizing
+stale memory or focus and preserve newer evidence boundaries.
+
+Product SHA-256 `BF6BDEBC8180915DE2C7A80FDC06DCF41E268857C36F303525B38ABEF03393F1`
+was exercised in the local Windows 26300.9711 Explorer session at 2560×1440 / 120 DPI.
+An owned individually pinned fixture was snapped through real title-bar edge drags;
+controlled saved ordinary/native-Snap targets exercised automatic policy. A real rail
+dot click minimized it on the ordinary destination; a product-CLI return revealed
+the matching Snap bounds, with no notice, pending/blocked slot, saved-geometry or
+minimized-intent change. Settings screenshots and pointer Done passed. A Shift+Tab/
+Space attempt did not establish keyboard activation; no keyboard pass is claimed.
+The exposed rail became temporarily unusable to Computer Use on the away desktop,
+then reappeared on return, consistent with the documented automation visibility caveat.
+Original desktop selection/inventory and all original app-file hashes were verified;
+automation visibility was restored off and the owned pin/processes were removed.
+The exact sub-poll supersession race, native Group membership and independent
+automatic foreground anchoring were not live-certified by this smoke check.
+
+The merge of main's `90dc369` into the Snap branch at `487d8f9` retained removal
+of the local ZIP note while preserving the Snap checkbox and shifted footer geometry.
+On 2026-11-07, the resolved source passed `check-dev.ps1` with the same bounded build
+and writable temporary-directory settings below. Product SHA-256
+`E6AF092AED154B040CD9E4132DC43D7BC2E29AFEACA3D2F5D113F328ECACE3C4`
+passed actual Settings screenshot, checkbox pointer/Space toggling and Done checks
+in the local Windows 26300.9711 / 2560×1440 / 120-DPI session. The note was absent,
+and default-on Snap preference/status updates remained correct. The owned process
+exited, automation visibility was off and original app files were restored and
+hash-checked. No fixture or desktop transition was needed; this Settings merge check
+does not add native Snap Group or automatic-focus evidence.
+
+The default-on Snap desktop policy follow-up to `6b52682` passed `check-dev.ps1`
+on 2026-11-07 with `CARGO_BUILD_JOBS=1`, incremental compilation off and writable
+checkout-local temporary files: formatting, warnings-denied Clippy, locked workspace
+tests, version contracts and release builds. Deterministic coverage includes default
+migration/opt-out persistence and preference merges, fresh live Snap dispatch, visible
+and minimized conflicts, matching Snap targets with native restore bounds outside the
+work area, temporary explicit reveal without destination-memory replacement, queued
+preference invalidation, pause and accepted-but-unverified/late minimization. Legacy
+zero-show/placement mismatch tests explicitly exercise the disabled policy.
+
+In the local Windows 26300.9711 Explorer session at 2560×1440 / 120 DPI, an individually
+pinned owned native window reproduced the original behavior: a real title-bar native
+edge Snap followed by return to an ordinary saved destination remained visible and
+arranged, with a rejected restore notice and no pending action. The new policy build
+`57EF75BAA478BFE436D19FBD07BF05ED02BA2BC4EC1B14A6181E2A9803D068D8`
+used an actual native arrangement plus controlled saved ordinary/Snap targets.
+Existing configuration without the field displayed a checked Settings option.
+Product-CLI switches retained the visible matching Snap destination and minimized
+the ordinary destination with no new notice or pending/blocked action. Real rail
+pointer reveal preserved native arrangement and ordinary destination geometry.
+Real checkbox opt-out restored the prior visible-Snap/rejection behavior; Space
+re-enabled it without immediate movement, and the preference survived restart.
+
+The final footer refinement
+`97CE9211E88E2688E968A7FEF100E9E1E84D9AB8F4B67FDB84C5E7D6BA84E6CB`
+repeated Settings compact/expanded screenshots, real checkbox input and disabled
+cross-desktop rejection, correcting the footer background offset for the new row.
+No desktop was created, renamed or deleted; the original desktop selection/inventory
+was verified. Automation visibility was restored off, owned pin/processes removed,
+and all original app files restored and hash-checked. Native arranged state and
+visible geometry do not certify shell Snap Group membership; multi-member Groups,
+independent automatic foreground anchoring and other DPI/topology combinations
+remain unverified for this option. Process integrity was not independently recorded.
+
+On 2026-11-07, the Snap notice lifecycle follow-up on source `394ff73` plus changes
+passed `check-dev.ps1` with `CARGO_BUILD_JOBS=1` and incremental compilation off:
+formatting, warnings-denied Clippy, locked workspace tests, version contracts and
+release builds. The seven new `snap_notice_*` regressions supplement the unchanged
+zero-dispatch mismatch tests. An initial default-temp run encountered access denied
+creating an existing report test's temporary directory; redirecting `TMP`/`TEMP` to
+an ignored writable checkout directory resolved it without changing the test. Keep
+desktop fixtures stopped during release checks: Windows locks their executable files.
+
+Computer Use input worked in the local Windows 26300.9711 Explorer session at
+2560×1440 / 120 DPI; the prior `GetCursorPos` denial was not reproduced and its cause
+remains unknown. Tested product SHA-256:
+`9461B51F93134FAC339B7057815ECFE1D9F8C593B750036A314E2A686E4AFAA3`.
+With disposable app state and an individually pinned owned native fixture, a seeded
+incompatible saved Snap target exercised actual rail pointer rejection. Settings
+displayed the full wrapped notice, with the fixture minimized and no pending/blocked
+action. Native activation revealed the still-incompatible ordinary window; subsequent
+fresh observations retained the notice. A real rail pointer raise completed verified,
+cleared the notice and contracted Settings; screenshots and accessibility text covered
+both states, and Tab displayed focus on the pause checkbox after contraction.
+Automation visibility was restored off, the owned pin was removed, identity-verified
+test processes exited and every original app file was restored and hash-checked.
+No desktop was created or switched. This controlled saved-target test does not certify
+native Snap Group preservation, observation-based compatible recovery, automatic
+recovery UI or broad DPI/focus/relayout behavior; those remain deterministic-only or
+require the native procedure above. Process integrity was not independently recorded.
+
+The minimized-Snap edge-case follow-up is integrated on
+`codex/preserve-native-snap-groups` based on `ec21a14`. On 2026-11-07, `check-dev.ps1` passed with `CARGO_BUILD_JOBS=1`: formatting,
+Clippy, locked workspace tests (including all 22 executor regressions), version
+contracts and release builds. The integrated release executable SHA-256 is
+`93EE34D871786505257828C291FC910DBD80BDAB16CB5011F94AF7E5E34D0F85`.
+Manual and automatic regressions cover retained Snap evidence, restore-maximized
+mismatch rejection before show/placement, released pending slots, unchanged saved
+layouts, user-minimized destination suppression, and stale/identity/display evidence
+invalidation. The live minimize query also contributes evidence when a snap is newer
+than the controller snapshot.
+
+Earlier follow-up desktop checks used a main-derived executable that omitted the
+PR's two Snap commits; they do not validate this integration. Computer Use input
+worked again in that session, but no root cause for the earlier access denial was
+established. Desktop revalidation of this branch is deferred at the user's request;
+use the Native Snap procedure above. Exact zero-dispatch assertions are deterministic
+executor evidence, not native Group or foreground certification.
+
+The 2026-11-07 correction on source `0139d77` plus changes restored the minimized
+Snap path to `SW_SHOWNOACTIVATE` and removed the separate reveal fake that had
+treated `SW_SHOWNA` as restoration. `check-dev.ps1` passed with
+`CARGO_BUILD_JOBS=1`, including the manual/automatic accepted-but-still-minimized
+timeout, busy-slot and late-observation regression. Computer Use again failed to
+launch an owned native fixture with `GetCursorPos failed: Access is denied
+(0x80070005)`; a refreshed window inventory and process inspection confirmed no
+fixture was left running. No app state, pins, desktops or automation visibility
+were changed. Actual product rendering/input, independent focus and two-member
+Snap Group membership remain unavailable, not passed, for this correction.
+
+On 2026-11-07, source `1498b54` plus the Snap-preservation changes built the release
+executable with SHA-256
+`3CACDC66ACB3BC61A2CBF8C8518FFC1558780E71C4F4386B6CB99968FF6DDF5F`.
+The final source passed `check-dev.ps1` with `CARGO_BUILD_JOBS=1` (formatting,
+Clippy, locked workspace tests, version contracts and release builds).
+In the local Windows 26300.9711 session, product status reported integration ready
+with no managed windows. Computer Use did not expose the rail even with automation
+visibility enabled; its explicit app launch failed with `GetCursorPos failed: Access
+is denied (0x80070005)`. Actual rendering/input, independent foreground behavior and
+two-member Snap Group round trips were unavailable, not passed. No fixture or desktop
+was created. Automation visibility was restored off, the identity-verified test process
+exited, and both original state files were restored and hash-checked byte-for-byte.
+The executor regressions cover dispatch/verification only; fresh native membership
+and display/DPI evidence remain required by the Native Snap procedure above.
 
 On 2026-11-04, source `e1f8384` plus the native-caption synchronization fix passed
 `check-dev.ps1`, including version contracts and locked release builds. On Windows
