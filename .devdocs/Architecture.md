@@ -330,7 +330,7 @@ on a destination without a layout. Do not build an unbounded retry backlog or fi
 
 For ordinary placements, automatic restoration sets placement while minimized, preserves
 `WPF_RESTORETOMAXIMIZED`, then reveals with `SW_SHOWNOACTIVATE`; it never requests
-foreground. Explicit restoration may request focus only while its original user intent
+foreground. Because `SW_SHOWNOACTIVATE` inserts newly un-minimized windows at `HWND_TOP`, snapshots and pre-minimize observations record normal peers above the window (`GW_HWNDPREV`, including shell-cloaked windows on other virtual desktops), and `RestoreAutomatic` places the revealed window (and any modal popup) back behind the lowest live uncloaked destination peer from `z_above` via Z-order-only `SetWindowPos` (`SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS`), re-verifying once visible; explicit foreground actions and drag commits clear `z_above`. Explicit restoration may request focus only while its original user intent
 remains valid. A minimized HWND wins over stale foreground reports. Active owned dialogs
 are revealed/focused with the owner, never given separate layouts or buttons. Never
 bypass focus restrictions with synthetic Alt or thread-input attachment.

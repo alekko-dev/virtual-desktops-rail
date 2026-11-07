@@ -62,6 +62,8 @@ pub struct Runtime {
     arrangement_barrier_tick: u64,
     arrangement_context: ArrangementContext,
     arrangement_revision: u64,
+    z_above: Vec<usize>,
+    z_above_tick: u64,
 }
 
 impl Runtime {
@@ -135,6 +137,9 @@ impl Runtime {
     }
     pub fn external_restore(&self) -> Option<&ExternalRestore> {
         self.external_restore.as_ref()
+    }
+    pub fn z_above(&self) -> &[usize] {
+        &self.z_above
     }
     pub fn suppress_next_state(&self) -> bool {
         self.suppress_next_state
@@ -398,6 +403,12 @@ impl Model {
                 arrangement_barrier_tick: snapshot.tick,
                 arrangement_context: ArrangementContext::from(&window.layout),
                 arrangement_revision: 0,
+                z_above: if window.minimized {
+                    Vec::new()
+                } else {
+                    window.z_above.clone()
+                },
+                z_above_tick: snapshot.tick,
             });
             if snapshot.tick >= runtime.state_tick {
                 if runtime.window.hwnd != window.hwnd
@@ -411,11 +422,25 @@ impl Model {
                     runtime.arrangement_barrier_tick = snapshot.tick;
                     runtime.arrangement_context = ArrangementContext::from(&window.layout);
                     runtime.arrangement_revision = runtime.arrangement_revision.saturating_add(1);
+                    runtime.z_above = if window.minimized {
+                        Vec::new()
+                    } else {
+                        window.z_above.clone()
+                    };
+                    runtime.z_above_tick = snapshot.tick;
                 }
                 // Initial observations also establish live evidence. Equal-tick
                 // repeats must not replace an already accepted observation.
                 if snapshot.tick > runtime.state_tick {
                     runtime.observe_arrangement(&window.layout, snapshot.tick);
+                    if !window.minimized
+                        && runtime.pending.is_none()
+                        && snapshot.tick >= runtime.z_above_tick
+                        && (!changed || !window.z_above.is_empty())
+                    {
+                        runtime.z_above = window.z_above.clone();
+                        runtime.z_above_tick = snapshot.tick;
+                    }
                 }
             }
             // Stable external restores and geometry changes are user intent.
@@ -711,6 +736,8 @@ impl Model {
                 .layouts
                 .insert(self.current.clone().unwrap(), layout.clone());
             record.last_usable = layout;
+            runtime.z_above.clear();
+            runtime.z_above_tick = runtime.z_above_tick.max(tick);
             self.dirty = true;
         }
     }
@@ -747,6 +774,23 @@ impl Model {
         }
     }
 
+    /// Fresh identity-validated pre-minimize Z-order above the window.
+    pub fn observed_z_above(&mut self, request: &Request, z_above: Vec<usize>, tick: u64) {
+        if tick < request.tick {
+            return;
+        }
+        let window = &request.window;
+        if let Some(runtime) = self.windows.get_mut(&window.identity.key())
+            && runtime.window.identity == window.identity
+            && runtime.window.hwnd == window.hwnd
+            && runtime.window.pid == window.pid
+            && tick >= runtime.z_above_tick
+        {
+            runtime.z_above = z_above;
+            runtime.z_above_tick = tick;
+        }
+    }
+
     pub fn take_requests(&mut self, tick: u64) -> Vec<Request> {
         if self.current.is_none() {
             return vec![];
@@ -770,6 +814,7 @@ impl Model {
                     retained_arrangement: runtime.retained_arrangement.clone().map(Box::new),
                     arrangement_revision: runtime.arrangement_revision,
                     minimize_snapped_elsewhere: self.saved.minimize_snapped_elsewhere,
+                    z_above: runtime.z_above.clone(),
                     generation: self.generation,
                     sequence: runtime.sequence,
                     action,
@@ -829,6 +874,10 @@ impl Model {
                 .and_then(|execution| execution.target.as_ref())
         {
             runtime.observe_arrangement(layout, tick);
+            if !intent.automatic() {
+                runtime.z_above.clear();
+                runtime.z_above_tick = runtime.z_above_tick.max(tick);
+            }
         }
         let mut committed = false;
         if current_verified && let Some(record) = self.saved.windows.get_mut(key) {

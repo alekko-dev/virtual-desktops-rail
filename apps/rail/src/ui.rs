@@ -751,10 +751,14 @@ impl App {
                     ));
                 }
                 Event::ObservedArrangement {
+                    z_above,
                     request,
                     layout,
                     tick,
                 } => {
+                    if layout.visible.is_some() {
+                        self.model.observed_z_above(&request, z_above, tick);
+                    }
                     self.model.observed_arrangement(&request, &layout, tick);
                 }
                 Event::Accepted {

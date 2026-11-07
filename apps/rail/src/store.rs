@@ -745,6 +745,7 @@ mod tests {
                         responsive: true,
                         layout: fixture.last_usable.clone(),
                         popup: None,
+                        z_above: Vec::new(),
                     },
                     cached_layout: fixture.last_usable,
                     last_usable_layout: None,

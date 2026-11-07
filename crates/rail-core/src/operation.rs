@@ -63,6 +63,8 @@ pub struct Request {
     pub arrangement_revision: u64,
     /// Automatic restore may minimize instead of declining an incompatible live Snap.
     pub minimize_snapped_elsewhere: bool,
+    /// Pre-minimize top-level windows ordered from immediately above this window to highest.
+    pub z_above: Vec<usize>,
     pub generation: u64,
     pub sequence: u64,
     pub action: Action,

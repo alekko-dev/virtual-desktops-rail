@@ -13,8 +13,9 @@ use std::sync::{
 use std::time::Duration;
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowPlacement, IsIconic, IsWindowVisible, SW_MINIMIZE,
-    SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SetForegroundWindow,
-    SetWindowPlacement, ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT,
+    SW_SHOWMAXIMIZED, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SetForegroundWindow, SetWindowPlacement,
+    SetWindowPos, ShowWindowAsync, WINDOWPLACEMENT, WPF_ASYNCWINDOWPLACEMENT,
     WPF_RESTORETOMAXIMIZED,
 };
 
@@ -28,6 +29,7 @@ pub struct Job {
     pub transition_received_us: Option<u64>,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum Work {
     Action(Job),
     Capture {
@@ -74,6 +76,10 @@ pub trait Native {
     /// Current foreground `(hwnd, pid)`.
     fn foreground(&mut self) -> (usize, u32);
     fn set_foreground(&mut self, hwnd: usize) -> bool;
+    fn z_above(&mut self, hwnd: usize) -> Vec<usize>;
+    fn is_z_order_target(&mut self, hwnd: usize) -> bool;
+    fn is_below(&mut self, hwnd: usize, above: usize) -> bool;
+    fn place_behind(&mut self, hwnd: usize, above: usize) -> Result<(), String>;
 }
 
 struct Active {
@@ -82,6 +88,7 @@ struct Active {
     began_ms: u64,
     matches: u8,
     timed_out: bool,
+    z_reconciled: bool,
 }
 
 pub struct Executor<N> {
@@ -204,6 +211,7 @@ impl<N: Native> Executor<N> {
                         began_ms,
                         matches: 0,
                         timed_out: false,
+                        z_reconciled: false,
                     },
                 );
             }
@@ -242,6 +250,11 @@ impl<N: Native> Executor<N> {
                     return Err("Minimize superseded before dispatch".into());
                 }
                 out.push(Event::ObservedArrangement {
+                    z_above: if observed.visible.is_some() {
+                        self.native.z_above(hwnd)
+                    } else {
+                        Vec::new()
+                    },
                     request: Box::new(request.clone()),
                     layout: observed.clone(),
                     tick: observed_tick,
@@ -286,12 +299,20 @@ impl<N: Native> Executor<N> {
                 }
                 let observed = self.native.layout(hwnd)?;
                 if preserves_arrangement(&target, &observed) {
+                    let was_iconic = self.native.is_iconic(hwnd);
                     // A show request on a visible arranged window can unsnap it.
-                    if self.native.is_iconic(hwnd) {
+                    if was_iconic {
                         self.native.show_no_activate(hwnd)?;
                     }
-                    if let Some(popup) = self.native.popup(&request.window) {
+                    let popup = self.native.popup(&request.window);
+                    if let Some(popup) = popup {
                         let _ = self.native.show_no_activate(popup);
+                    }
+                    if matches!(request.action, Action::RestoreAutomatic(_))
+                        && let Some(above) = resolve_z_above(&mut self.native, request, job.rail)
+                        && (was_iconic || !self.native.is_below(hwnd, above))
+                    {
+                        place_window_behind(&mut self.native, hwnd, popup, above);
                     }
                     return Ok(Acceptance {
                         effect: Effect::Restore,
@@ -369,8 +390,14 @@ impl<N: Native> Executor<N> {
                     };
                     self.native.set_placement(hwnd, target.normal, stage)?;
                 }
-                if let Some(popup) = self.native.popup(&request.window) {
+                let popup = self.native.popup(&request.window);
+                if let Some(popup) = popup {
                     let _ = self.native.show_no_activate(popup);
+                }
+                if matches!(request.action, Action::RestoreAutomatic(_))
+                    && let Some(above) = resolve_z_above(&mut self.native, request, job.rail)
+                {
+                    place_window_behind(&mut self.native, hwnd, popup, above);
                 }
                 Ok(Acceptance {
                     effect: Effect::Restore,
@@ -470,7 +497,47 @@ fn valid(job: &Job) -> bool {
         && !(job.request.action.automatic() && job.paused.load(Ordering::Acquire))
 }
 
-fn verified<N: Native>(native: &mut N, active: &Active) -> bool {
+fn resolve_z_above<N: Native>(native: &mut N, request: &Request, rail: usize) -> Option<usize> {
+    let hwnd = request.window.hwnd;
+    let popup = request.window.popup;
+    request.z_above.iter().copied().find(|&candidate| {
+        candidate != 0
+            && candidate != hwnd
+            && candidate != rail
+            && Some(candidate) != popup
+            && native.is_z_order_target(candidate)
+    })
+}
+
+fn place_window_behind<N: Native>(native: &mut N, hwnd: usize, popup: Option<usize>, above: usize) {
+    if let Some(popup) = popup {
+        let _ = native.place_behind(popup, above);
+        let _ = native.place_behind(hwnd, popup);
+    } else {
+        let _ = native.place_behind(hwnd, above);
+    }
+}
+
+fn verified_z_order<N: Native>(native: &mut N, active: &mut Active) -> bool {
+    let request = &active.job.request;
+    if matches!(request.action, Action::RestoreAutomatic(_)) && valid(&active.job) {
+        let hwnd = request.window.hwnd;
+        if let Some(above) = resolve_z_above(native, request, active.job.rail)
+            && !native.is_below(hwnd, above)
+        {
+            if !active.timed_out && !active.z_reconciled {
+                active.z_reconciled = true;
+
+                let popup = native.popup(&request.window);
+                place_window_behind(native, hwnd, popup, above);
+            }
+            return false;
+        }
+    }
+    true
+}
+
+fn verified<N: Native>(native: &mut N, active: &mut Active) -> bool {
     let request = &active.job.request;
     let hwnd = request.window.hwnd;
     if native.disabled_without_popup(&request.window) {
@@ -497,6 +564,7 @@ fn verified<N: Native>(native: &mut N, active: &Active) -> bool {
                 && native
                     .popup(&request.window)
                     .is_none_or(|popup| native.is_visible(popup))
+                && verified_z_order(native, active)
         }
     }
 }
@@ -608,6 +676,29 @@ impl Native for Win32Native {
     }
     fn set_foreground(&mut self, hwnd: usize) -> bool {
         unsafe { SetForegroundWindow(platform::hwnd(hwnd)) }.as_bool()
+    }
+    fn z_above(&mut self, hwnd: usize) -> Vec<usize> {
+        platform::z_above(platform::hwnd(hwnd))
+    }
+    fn is_z_order_target(&mut self, hwnd: usize) -> bool {
+        platform::is_z_order_target(platform::hwnd(hwnd))
+    }
+    fn is_below(&mut self, hwnd: usize, above: usize) -> bool {
+        platform::is_below(platform::hwnd(hwnd), platform::hwnd(above))
+    }
+    fn place_behind(&mut self, hwnd: usize, above: usize) -> Result<(), String> {
+        unsafe {
+            SetWindowPos(
+                platform::hwnd(hwnd),
+                platform::hwnd(above),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS,
+            )
+        }
+        .map_err(|error| error.to_string())
     }
 }
 
@@ -737,6 +828,7 @@ mod tests {
             responsive: true,
             layout: layout(100),
             popup: None,
+            z_above: Vec::new(),
         }
     }
 
@@ -770,6 +862,10 @@ mod tests {
             stage: PlacementStage,
         },
         SetForeground(usize),
+        PlaceBehind {
+            hwnd: usize,
+            above: usize,
+        },
     }
 
     #[derive(Clone)]
@@ -786,6 +882,8 @@ mod tests {
         auto_apply: bool,
         placement_results: VecDeque<Result<(), String>>,
         show_results: VecDeque<Result<(), String>>,
+        z_above: Vec<usize>,
+        cloaked: bool,
     }
 
     impl FakeWindow {
@@ -802,6 +900,8 @@ mod tests {
                 auto_apply: true,
                 placement_results: VecDeque::new(),
                 show_results: VecDeque::new(),
+                z_above: window.z_above.clone(),
+                cloaked: false,
             }
         }
     }
@@ -926,6 +1026,7 @@ mod tests {
                 if live.auto_apply {
                     live.iconic = false;
                     live.visible = true;
+                    live.z_above.clear();
                 }
                 return Ok(());
             }
@@ -974,6 +1075,7 @@ mod tests {
                     PlacementStage::ShowNoActivate => {
                         live.iconic = false;
                         live.visible = true;
+                        live.z_above.clear();
                         if !live.layout.maximized {
                             live.layout.visible =
                                 Some([normal[0] + x, normal[1] + y, normal[2] + x, normal[3] + y]);
@@ -984,6 +1086,7 @@ mod tests {
                     PlacementStage::ShowMaximized => {
                         live.iconic = false;
                         live.visible = true;
+                        live.z_above.clear();
                         live.layout.maximized = true;
                         live.layout.visible = Some(live.layout.work_area);
                     }
@@ -997,6 +1100,47 @@ mod tests {
         fn set_foreground(&mut self, hwnd: usize) -> bool {
             self.calls.push(Call::SetForeground(hwnd));
             self.set_foreground_ok
+        }
+        fn z_above(&mut self, hwnd: usize) -> Vec<usize> {
+            self.windows
+                .get(&hwnd)
+                .filter(|live| !live.iconic)
+                .map(|live| live.z_above.clone())
+                .unwrap_or_default()
+        }
+        fn is_z_order_target(&mut self, hwnd: usize) -> bool {
+            self.windows
+                .get(&hwnd)
+                .is_some_and(|live| live.visible && !live.iconic && !live.cloaked)
+        }
+        fn is_below(&mut self, hwnd: usize, above: usize) -> bool {
+            self.windows
+                .get(&hwnd)
+                .is_some_and(|live| live.z_above.contains(&above))
+        }
+        fn place_behind(&mut self, hwnd: usize, above: usize) -> Result<(), String> {
+            self.calls.push(Call::PlaceBehind { hwnd, above });
+            let above_chain = self
+                .windows
+                .get(&above)
+                .map(|live| live.z_above.clone())
+                .unwrap_or_default();
+            if let Some(live) = self.windows.get_mut(&hwnd) {
+                if live.auto_apply {
+                    let mut z_above = vec![above];
+                    for peer in above_chain {
+                        if peer != hwnd && !z_above.contains(&peer) {
+                            z_above.push(peer);
+                        }
+                    }
+                    live.z_above = z_above;
+                }
+                return Ok(());
+            }
+            if self.windows.values().any(|live| live.popup == Some(hwnd)) {
+                return Ok(());
+            }
+            Err("Missing window".into())
         }
     }
 
@@ -1080,10 +1224,16 @@ mod tests {
             for event in events {
                 match event {
                     Event::ObservedArrangement {
+                        z_above,
                         request,
                         layout,
                         tick,
-                    } => self.model.observed_arrangement(&request, &layout, tick),
+                    } => {
+                        if layout.visible.is_some() {
+                            self.model.observed_z_above(&request, z_above, tick);
+                        }
+                        self.model.observed_arrangement(&request, &layout, tick);
+                    }
                     Event::Accepted {
                         key,
                         sequence,
@@ -2021,6 +2171,7 @@ mod tests {
     fn test_job(window: Window, action: Action) -> Job {
         Job {
             request: Request {
+                z_above: window.z_above.clone(),
                 minimize_snapped_elsewhere: false,
                 key: window.identity.key(),
                 window,
@@ -2441,6 +2592,269 @@ mod tests {
                 .native_mut()
                 .calls
                 .contains(&Call::SetForeground(10))
+        );
+    }
+
+    #[test]
+    fn automatic_snap_restore_places_window_back_behind_uncloaked_foreground_peer() {
+        let mut managed = window("managed", 10);
+        managed.layout = snapped();
+        managed.z_above = vec![30, 20];
+        let peer_a = window("peer-a", 20);
+        let peer_b = window("peer-b", 30);
+        let key = managed.identity.key();
+        let mut h = Harness::new(&managed);
+        h.executor.native_mut().insert(&peer_a);
+        h.executor.native_mut().insert(&peer_b);
+        h.executor.native_mut().window_mut(30).cloaked = true;
+        h.model.set_minimize_snapped_elsewhere(true);
+        h.model.set_auto_restore(true);
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("A".into(), snapped());
+
+        // Switch away to Desktop B: snapped managed window minimizes automatically.
+        h.model.snapshot(snapshot("B", 120, vec![managed.clone()]));
+        h.executor.native_mut().tick_ms = 120;
+        let work = h.issue();
+        h.step(work);
+        h.advance(20);
+        assert_eq!(
+            h.executor.native_mut().calls,
+            vec![Call::MinimizeArranged(10)]
+        );
+        assert!(h.model.runtime(&key).unwrap().window().minimized);
+
+        // Switch back to Desktop A: window 30 (from Desktop B) is cloaked, while
+        // window 20 (on Desktop A) is uncloaked and remains in front of window 10.
+        h.executor.native_mut().calls.clear();
+        managed.minimized = true;
+        managed.layout.visible = None;
+        managed.layout.arranged = Some(false);
+        h.model.snapshot(snapshot("A", 200, vec![managed]));
+        h.executor.native_mut().tick_ms = 200;
+        let work = h.issue();
+        h.step(work);
+        h.executor.native_mut().window_mut(10).layout = snapped();
+        h.advance(20);
+        h.advance(20);
+        assert!(!h.model.runtime(&key).unwrap().window().minimized);
+        assert!(h.model.runtime(&key).unwrap().pending().is_none());
+        assert_eq!(
+            h.executor.native_mut().calls,
+            vec![
+                Call::ShowNoActivate(10),
+                Call::PlaceBehind {
+                    hwnd: 10,
+                    above: 20,
+                }
+            ]
+        );
+        assert!(h.executor.native_mut().is_below(10, 20));
+    }
+
+    #[test]
+    fn delayed_async_snap_reveal_reapplies_background_z_order_once_visible() {
+        let mut managed = window("managed", 10);
+        let saved = snapped();
+        managed.layout = saved.clone();
+        managed.layout.visible = None;
+        managed.layout.arranged = Some(false);
+        managed.minimized = true;
+        managed.z_above = vec![20];
+        let peer_a = window("peer-a", 20);
+        let mut executor = Executor::new(FakeNative::new(100));
+        executor.native_mut().insert(&managed);
+        executor.native_mut().insert(&peer_a);
+        executor.native_mut().window_mut(10).auto_apply = false;
+
+        let mut events = Vec::new();
+        executor.step(
+            vec![Work::Action(test_job(
+                managed,
+                Action::RestoreAutomatic(saved.clone()),
+            ))],
+            &mut events,
+        );
+        assert_eq!(
+            executor.native_mut().calls,
+            vec![
+                Call::ShowNoActivate(10),
+                Call::PlaceBehind {
+                    hwnd: 10,
+                    above: 20,
+                }
+            ]
+        );
+
+        // Simulate target thread processing SW_SHOWNOACTIVATE asynchronously,
+        // which un-minimizes the window and resets its Win32 Z-order to HWND_TOP.
+        {
+            let live = executor.native_mut().window_mut(10);
+            live.auto_apply = true;
+            live.iconic = false;
+            live.visible = true;
+            live.layout = saved;
+            live.z_above.clear();
+        }
+        executor.step(vec![], &mut events);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+        assert!(executor.native_mut().is_below(10, 20));
+
+        // Two consecutive verified polls complete the operation in the background.
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+        assert_eq!(
+            executor.native_mut().calls,
+            vec![
+                Call::ShowNoActivate(10),
+                Call::PlaceBehind {
+                    hwnd: 10,
+                    above: 20,
+                },
+                Call::PlaceBehind {
+                    hwnd: 10,
+                    above: 20,
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn stalled_or_superseded_z_order_correction_respects_verification_and_authority() {
+        // 1. If the corrective PlaceBehind remains queued on a slow target thread,
+        // verification must not succeed while the window still covers its peer.
+        let mut managed = window("managed", 10);
+        let saved = snapped();
+        managed.layout = saved.clone();
+        managed.layout.visible = None;
+        managed.layout.arranged = Some(false);
+        managed.minimized = true;
+        managed.z_above = vec![20];
+        let peer_a = window("peer-a", 20);
+        let mut executor = Executor::new(FakeNative::new(100));
+        executor.native_mut().insert(&managed);
+        executor.native_mut().insert(&peer_a);
+        executor.native_mut().window_mut(10).auto_apply = false;
+
+        let mut events = Vec::new();
+        executor.step(
+            vec![Work::Action(test_job(
+                managed.clone(),
+                Action::RestoreAutomatic(saved.clone()),
+            ))],
+            &mut events,
+        );
+        {
+            let live = executor.native_mut().window_mut(10);
+            live.iconic = false;
+            live.visible = true;
+            live.layout = saved.clone();
+            live.z_above.clear();
+        }
+        // First poll dispatches the single corrective PlaceBehind, but auto_apply is still false.
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+        assert_eq!(
+            executor
+                .native_mut()
+                .calls
+                .iter()
+                .filter(|call| matches!(call, Call::PlaceBehind { .. }))
+                .count(),
+            2
+        );
+
+        // If the correction never takes effect before the deadline, it times out.
+        executor.native_mut().tick_ms = 2200;
+        executor.step(vec![], &mut events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::TimedOut,
+                ..
+            }
+        )));
+
+        // Once the queued Z-order change finally takes effect, two polls verify and release.
+        executor.native_mut().window_mut(10).z_above = vec![20];
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+
+        // 2. If the job is superseded (e.g. desktop generation changed) before the delayed
+        // reveal, late-completion polling stays observational and does not issue PlaceBehind.
+        let mut executor = Executor::new(FakeNative::new(100));
+        executor.native_mut().insert(&managed);
+        executor.native_mut().insert(&peer_a);
+        executor.native_mut().window_mut(10).auto_apply = false;
+        let job = test_job(managed, Action::RestoreAutomatic(saved.clone()));
+        let generation = job.generation.clone();
+        let mut events = Vec::new();
+        executor.step(vec![Work::Action(job)], &mut events);
+        assert_eq!(
+            executor
+                .native_mut()
+                .calls
+                .iter()
+                .filter(|call| matches!(call, Call::PlaceBehind { .. }))
+                .count(),
+            1
+        );
+        generation.store(2, Ordering::Release);
+        {
+            let live = executor.native_mut().window_mut(10);
+            live.iconic = false;
+            live.visible = true;
+            live.layout = saved;
+            live.z_above.clear();
+        }
+        executor.step(vec![], &mut events);
+        executor.step(vec![], &mut events);
+        assert!(events.iter().any(|event| matches!(
+            event,
+            Event::ActionResult {
+                outcome: Outcome::Verified,
+                ..
+            }
+        )));
+        assert_eq!(
+            executor
+                .native_mut()
+                .calls
+                .iter()
+                .filter(|call| matches!(call, Call::PlaceBehind { .. }))
+                .count(),
+            1
         );
     }
 

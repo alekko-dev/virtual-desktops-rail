@@ -107,6 +107,18 @@ Test actual two-icon restore/focus/second-click behavior, keyboard activation an
 completion after the user moves elsewhere. [Architecture](Architecture.md#layout-identity-storage-and-action-ordering)
 owns the focus and action-ordering invariants.
 
+## Auto-restored or snapped window appears above the focused foreground window without focus
+
+Win32 `ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE)` and `SetWindowPlacement` (`SW_SHOWNOACTIVATE`)
+insert an un-minimized window at `HWND_TOP` without activating it, leaving it visually on top
+of the destination desktop's active foreground window. Capture the window's pre-minimize
+`z_above` peer chain (`GW_HWNDPREV` across visible normal windows, allowing `DWM_CLOAKED_SHELL`
+peers on other desktops) during snapshots and immediately before `Effect::Minimize`, retain
+it across minimization, and on `Action::RestoreAutomatic` place the window behind the first
+live uncloaked destination peer (`DWMWA_CLOAKED == 0`) with Z-order-only `SetWindowPos`
+(`SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS`),
+re-reconciling during post-reveal verification if asynchronous reveal resets Z-order.
+
 ## Owner restores but its modal remains hidden
 
 `GetLastActivePopup` can return the owner once a dialog is hidden. Remember and
