@@ -75,7 +75,7 @@ fn dimensions(icon: HICON) -> Option<(i32, i32)> {
 }
 
 // Exact size first, then the smallest source large enough to downsample, then
-// the largest undersized source. Preserve window-specific artwork over EXE icons.
+// the largest undersized source.
 fn rank((width, height): (i32, i32), size: i32) -> (u8, i32) {
     if width == size && height == size {
         (0, 0)
@@ -169,47 +169,9 @@ fn from_pixels(size: i32, pixels: &[u8]) -> windows::core::Result<Icon> {
 fn load(window: &Window, dpi: u32, factory: Option<&IWICImagingFactory>) -> Option<Icon> {
     let handle = platform::hwnd(window.hwnd);
     let size = pixel_size(dpi);
-    let mut candidates = Vec::new();
-    for kind in [2, 0, 1] {
-        let mut icon = 0usize;
-        let result = unsafe {
-            SendMessageTimeoutW(
-                handle,
-                WM_GETICON,
-                WPARAM(kind),
-                LPARAM(dpi as isize),
-                SMTO_ABORTIFHUNG,
-                100,
-                Some(&mut icon),
-            )
-        };
-        if result.0 != 0 && icon != 0 {
-            candidates.push(HICON(icon as *mut _));
-        }
-    }
-    if candidates.is_empty() {
-        for field in [GCLP_HICONSM, GCLP_HICON] {
-            let icon = unsafe { GetClassLongPtrW(handle, field) };
-            if icon != 0 {
-                candidates.push(HICON(icon as *mut _));
-            }
-        }
-    }
-    // Copy borrowed handles before measuring/processing them; only owned copies
-    // are ever destroyed. Stable ordering retains the WM_GETICON preference on ties.
+    // Prefer executable artwork, then class icons, then WM_GETICON.
     let mut best = None;
-    let mut best_rank = (u8::MAX, i32::MAX);
-    for borrowed in candidates {
-        if let Ok(owned) = unsafe { CopyIcon(borrowed) } {
-            let owned = Icon(owned);
-            let candidate_rank = dimensions(owned.0).map(|d| rank(d, size)).unwrap_or((3, 0));
-            if candidate_rank < best_rank {
-                best_rank = candidate_rank;
-                best = Some(owned);
-            }
-        }
-    }
-    if best.is_none() {
+    {
         let mut icon = HICON::default();
         unsafe {
             SHDefExtractIconW(
@@ -223,6 +185,51 @@ fn load(window: &Window, dpi: u32, factory: Option<&IWICImagingFactory>) -> Opti
         }
         if !icon.is_invalid() {
             best = Some(Icon(icon));
+        }
+    }
+    for source in 0..2 {
+        if best.is_some() {
+            break;
+        }
+        let mut candidates = Vec::new();
+        if source == 0 {
+            for field in [GCLP_HICONSM, GCLP_HICON] {
+                let icon = unsafe { GetClassLongPtrW(handle, field) };
+                if icon != 0 {
+                    candidates.push(HICON(icon as *mut _));
+                }
+            }
+        } else {
+            for kind in [2, 0, 1] {
+                let mut icon = 0usize;
+                let result = unsafe {
+                    SendMessageTimeoutW(
+                        handle,
+                        WM_GETICON,
+                        WPARAM(kind),
+                        LPARAM(dpi as isize),
+                        SMTO_ABORTIFHUNG,
+                        100,
+                        Some(&mut icon),
+                    )
+                };
+                if result.0 != 0 && icon != 0 {
+                    candidates.push(HICON(icon as *mut _));
+                }
+            }
+        }
+        // Copy borrowed handles before measuring/processing them; only owned copies
+        // are ever destroyed. Stable ordering retains the small-icon preference on ties.
+        let mut best_rank = (u8::MAX, i32::MAX);
+        for borrowed in candidates {
+            if let Ok(owned) = unsafe { CopyIcon(borrowed) } {
+                let owned = Icon(owned);
+                let candidate_rank = dimensions(owned.0).map(|d| rank(d, size)).unwrap_or((3, 0));
+                if candidate_rank < best_rank {
+                    best_rank = candidate_rank;
+                    best = Some(owned);
+                }
+            }
         }
     }
     let icon = best?;
