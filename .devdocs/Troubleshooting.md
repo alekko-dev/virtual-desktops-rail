@@ -111,13 +111,20 @@ owns the focus and action-ordering invariants.
 
 Win32 `ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE)` and `SetWindowPlacement` (`SW_SHOWNOACTIVATE`)
 insert an un-minimized window at `HWND_TOP` without activating it, leaving it visually on top
-of the destination desktop's active foreground window. Capture the window's pre-minimize
-`z_above` peer chain (`GW_HWNDPREV` across visible normal windows, allowing `DWM_CLOAKED_SHELL`
-peers on other desktops) during snapshots and immediately before `Effect::Minimize`, retain
-it across minimization, and on `Action::RestoreAutomatic` place the window behind the first
-live uncloaked destination peer (`DWMWA_CLOAKED == 0`) with Z-order-only `SetWindowPos`
-(`SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS`),
-re-reconciling during post-reveal verification if asynchronous reveal resets Z-order.
+of the destination desktop's active foreground window. Per-desktop Z-order history and
+nonactivating placement behind the lowest eligible saved peer preserve background order.
+Choosing only the first saved peer is insufficient: that peer may itself be restoring.
+An independently completed member can be left above other windows when its anchor moves.
+
+The executor verifies current automatic restores together. The controller blocks Z-order
+learning while any managed action remains pending, and rejects snapshots captured at or
+before the last completion even if delivered afterward. Without this fence, intermediate
+order can become the next switch's reference and make the same window repeatedly win.
+Automatic post-switch minimize samples cannot establish outgoing-desktop history.
+An independent foreground fallback covers missing history without introducing a dependency
+cycle between actively restored managed windows. Equal timestamps are not fresh evidence.
+Regression coverage includes mixed Snap/ordinary ordering, delayed peer reveal, cohort
+completion, equal-tick snapshots and late delivery after completion.
 
 ## Owner restores but its modal remains hidden
 

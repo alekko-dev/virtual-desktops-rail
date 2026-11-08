@@ -330,7 +330,23 @@ on a destination without a layout. Do not build an unbounded retry backlog or fi
 
 For ordinary placements, automatic restoration sets placement while minimized, preserves
 `WPF_RESTORETOMAXIMIZED`, then reveals with `SW_SHOWNOACTIVATE`; it never requests
-foreground. Because `SW_SHOWNOACTIVATE` inserts newly un-minimized windows at `HWND_TOP`, snapshots and pre-minimize observations record normal peers above the window (`GW_HWNDPREV`, including shell-cloaked windows on other virtual desktops), and `RestoreAutomatic` places the revealed window (and any modal popup) back behind the lowest live uncloaked destination peer from `z_above` via Z-order-only `SetWindowPos` (`SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS`), re-verifying once visible; explicit foreground actions and drag commits clear `z_above`. Explicit restoration may request focus only while its original user intent
+foreground. Because `SW_SHOWNOACTIVATE` raises newly revealed windows, runtime
+Z-order memory is desktop-specific. Fresh idle snapshots and current explicit-minimize
+samples record peers above each window; automatic post-switch minimize samples do not
+replace the outgoing history. Learning is suspended across all pending managed actions,
+including quarantine, and resumes only with snapshots strictly newer than the last
+completion. Equal-timestamp observations cannot replace the order.
+
+Automatic restores place each window and its modal behind the lowest currently eligible
+saved peer, using Z-order-only nonactivating `SetWindowPos`. With no saved eligible peer,
+an independent foreground window is the fallback; an actively restored managed window
+cannot be a fallback dependency. The executor observes and reconciles the full current
+automatic-restore cohort before releasing any member, requiring two successful polls of
+the whole cohort. It retries a disturbed, previously observed correction but does not
+repeatedly enqueue the same unapplied correction. Timed-out/superseded work remains
+observational under the existing late-result rules. Explicit actions retain arrival
+ordering, and explicit foreground actions/drag commits clear only the current desktop's
+Z-order memory. Explicit restoration may request focus only while its original user intent
 remains valid. A minimized HWND wins over stale foreground reports. Active owned dialogs
 are revealed/focused with the owner, never given separate layouts or buttons. Never
 bypass focus restrictions with synthetic Alt or thread-input attachment.

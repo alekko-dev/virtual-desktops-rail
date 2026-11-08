@@ -62,7 +62,7 @@ pub struct Runtime {
     arrangement_barrier_tick: u64,
     arrangement_context: ArrangementContext,
     arrangement_revision: u64,
-    z_above: Vec<usize>,
+    z_above: BTreeMap<String, Vec<usize>>,
     z_above_tick: u64,
 }
 
@@ -138,8 +138,8 @@ impl Runtime {
     pub fn external_restore(&self) -> Option<&ExternalRestore> {
         self.external_restore.as_ref()
     }
-    pub fn z_above(&self) -> &[usize] {
-        &self.z_above
+    pub fn z_above(&self, desktop: &str) -> &[usize] {
+        self.z_above.get(desktop).map(Vec::as_slice).unwrap_or(&[])
     }
     pub fn suppress_next_state(&self) -> bool {
         self.suppress_next_state
@@ -167,6 +167,7 @@ pub struct Model {
     pub(crate) saved: Saved,
     pub(crate) desktops: Vec<Desktop>,
     pub(crate) current: Option<String>,
+    z_order_barrier_tick: u64,
     pub(crate) generation: u64,
     pub(crate) since: u64,
     pub(crate) windows: BTreeMap<String, Runtime>,
@@ -181,6 +182,7 @@ impl Model {
             saved,
             desktops: vec![],
             current: None,
+            z_order_barrier_tick: 0,
             generation: 0,
             since: 0,
             windows: BTreeMap::new(),
@@ -367,6 +369,13 @@ impl Model {
         for (key, runtime) in &mut self.windows {
             runtime.present = keys.contains(key);
         }
+        // Z-order is shared by every managed window. A completed member must
+        // not learn another member's intermediate restore/minimize position.
+        let z_order_stable = snapshot.tick > self.z_order_barrier_tick
+            && self
+                .windows
+                .values()
+                .all(|runtime| runtime.pending.is_none());
         for window in snapshot.windows {
             let key = window.identity.key();
             if !self.saved.windows.contains_key(&key) && self.saved.windows.len() >= 512 {
@@ -403,10 +412,10 @@ impl Model {
                 arrangement_barrier_tick: snapshot.tick,
                 arrangement_context: ArrangementContext::from(&window.layout),
                 arrangement_revision: 0,
-                z_above: if window.minimized {
-                    Vec::new()
+                z_above: if window.minimized || !z_order_stable {
+                    BTreeMap::new()
                 } else {
-                    window.z_above.clone()
+                    BTreeMap::from([(snapshot.current.clone(), window.z_above.clone())])
                 },
                 z_above_tick: snapshot.tick,
             });
@@ -422,10 +431,10 @@ impl Model {
                     runtime.arrangement_barrier_tick = snapshot.tick;
                     runtime.arrangement_context = ArrangementContext::from(&window.layout);
                     runtime.arrangement_revision = runtime.arrangement_revision.saturating_add(1);
-                    runtime.z_above = if window.minimized {
-                        Vec::new()
+                    runtime.z_above = if window.minimized || !z_order_stable {
+                        BTreeMap::new()
                     } else {
-                        window.z_above.clone()
+                        BTreeMap::from([(snapshot.current.clone(), window.z_above.clone())])
                     };
                     runtime.z_above_tick = snapshot.tick;
                 }
@@ -433,12 +442,18 @@ impl Model {
                 // repeats must not replace an already accepted observation.
                 if snapshot.tick > runtime.state_tick {
                     runtime.observe_arrangement(&window.layout, snapshot.tick);
-                    if !window.minimized
-                        && runtime.pending.is_none()
-                        && snapshot.tick >= runtime.z_above_tick
-                        && (!changed || !window.z_above.is_empty())
-                    {
-                        runtime.z_above = window.z_above.clone();
+                }
+                if !window.minimized && z_order_stable && snapshot.tick > runtime.z_above_tick {
+                    if !baseline && !changed && snapshot.tick > runtime.state_tick {
+                        runtime
+                            .z_above
+                            .insert(snapshot.current.clone(), window.z_above.clone());
+                        runtime.z_above_tick = snapshot.tick;
+                    } else if (baseline || changed) && !window.z_above.is_empty() {
+                        runtime
+                            .z_above
+                            .entry(snapshot.current.clone())
+                            .or_insert_with(|| window.z_above.clone());
                         runtime.z_above_tick = snapshot.tick;
                     }
                 }
@@ -577,6 +592,11 @@ impl Model {
             {
                 self.dirty = true;
             }
+        }
+        for runtime in self.windows.values_mut() {
+            runtime
+                .z_above
+                .retain(|id, _| known_desktops.contains(id.as_str()));
         }
     }
 
@@ -736,7 +756,9 @@ impl Model {
                 .layouts
                 .insert(self.current.clone().unwrap(), layout.clone());
             record.last_usable = layout;
-            runtime.z_above.clear();
+            if let Some(desktop) = &self.current {
+                runtime.z_above.insert(desktop.clone(), Vec::new());
+            }
             runtime.z_above_tick = runtime.z_above_tick.max(tick);
             self.dirty = true;
         }
@@ -776,7 +798,17 @@ impl Model {
 
     /// Fresh identity-validated pre-minimize Z-order above the window.
     pub fn observed_z_above(&mut self, request: &Request, z_above: Vec<usize>, tick: u64) {
-        if tick < request.tick {
+        if tick < request.tick
+            || request.action.automatic()
+            || request.generation != self.generation
+        {
+            return;
+        }
+        if self
+            .windows
+            .iter()
+            .any(|(key, runtime)| key != &request.key && runtime.pending.is_some())
+        {
             return;
         }
         let window = &request.window;
@@ -785,8 +817,9 @@ impl Model {
             && runtime.window.hwnd == window.hwnd
             && runtime.window.pid == window.pid
             && tick >= runtime.z_above_tick
+            && let Some(desktop) = &self.current
         {
-            runtime.z_above = z_above;
+            runtime.z_above.insert(desktop.clone(), z_above);
             runtime.z_above_tick = tick;
         }
     }
@@ -814,7 +847,11 @@ impl Model {
                     retained_arrangement: runtime.retained_arrangement.clone().map(Box::new),
                     arrangement_revision: runtime.arrangement_revision,
                     minimize_snapped_elsewhere: self.saved.minimize_snapped_elsewhere,
-                    z_above: runtime.z_above.clone(),
+                    z_above: self
+                        .current
+                        .as_deref()
+                        .map(|desktop| runtime.z_above(desktop).to_vec())
+                        .unwrap_or_default(),
                     generation: self.generation,
                     sequence: runtime.sequence,
                     action,
@@ -855,6 +892,7 @@ impl Model {
             .pending
             .as_ref()
             .filter(|pending| pending.request.sequence == sequence)?;
+        self.z_order_barrier_tick = self.z_order_barrier_tick.max(tick);
         let intent = pending.request.action.clone();
         let execution = pending.execution.clone();
         let effect = execution.as_ref().map(|execution| execution.effect);
@@ -875,7 +913,9 @@ impl Model {
         {
             runtime.observe_arrangement(layout, tick);
             if !intent.automatic() {
-                runtime.z_above.clear();
+                if let Some(desktop) = &self.current {
+                    runtime.z_above.insert(desktop.clone(), Vec::new());
+                }
                 runtime.z_above_tick = runtime.z_above_tick.max(tick);
             }
         }

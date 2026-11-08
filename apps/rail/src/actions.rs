@@ -88,7 +88,7 @@ struct Active {
     began_ms: u64,
     matches: u8,
     timed_out: bool,
-    z_reconciled: bool,
+    z_placed_behind: Option<usize>,
 }
 
 pub struct Executor<N> {
@@ -211,7 +211,7 @@ impl<N: Native> Executor<N> {
                         began_ms,
                         matches: 0,
                         timed_out: false,
-                        z_reconciled: false,
+                        z_placed_behind: None,
                     },
                 );
             }
@@ -250,7 +250,7 @@ impl<N: Native> Executor<N> {
                     return Err("Minimize superseded before dispatch".into());
                 }
                 out.push(Event::ObservedArrangement {
-                    z_above: if observed.visible.is_some() {
+                    z_above: if !request.action.automatic() && observed.visible.is_some() {
                         self.native.z_above(hwnd)
                     } else {
                         Vec::new()
@@ -309,7 +309,8 @@ impl<N: Native> Executor<N> {
                         let _ = self.native.show_no_activate(popup);
                     }
                     if matches!(request.action, Action::RestoreAutomatic(_))
-                        && let Some(above) = resolve_z_above(&mut self.native, request, job.rail)
+                        && let Some(above) =
+                            resolve_z_above(&mut self.native, request, job.rail, true)
                         && (was_iconic || !self.native.is_below(hwnd, above))
                     {
                         place_window_behind(&mut self.native, hwnd, popup, above);
@@ -395,7 +396,7 @@ impl<N: Native> Executor<N> {
                     let _ = self.native.show_no_activate(popup);
                 }
                 if matches!(request.action, Action::RestoreAutomatic(_))
-                    && let Some(above) = resolve_z_above(&mut self.native, request, job.rail)
+                    && let Some(above) = resolve_z_above(&mut self.native, request, job.rail, true)
                 {
                     place_window_behind(&mut self.native, hwnd, popup, above);
                 }
@@ -414,12 +415,29 @@ impl<N: Native> Executor<N> {
     }
 
     fn poll_active(&mut self, out: &mut Vec<Event>) {
-        let keys: Vec<String> = self.active.keys().cloned().collect();
-        for key in keys {
+        // Observe/reconcile the whole restore cohort before releasing any member.
+        // An independently completed member could otherwise use a peer whose
+        // asynchronous reveal or correction has not finished moving it yet.
+        let foreground = self.native.foreground().0;
+        let allow_foreground = !self.active.values().any(|active| {
+            active.job.request.window.hwnd == foreground
+                || active.job.request.window.popup == Some(foreground)
+        });
+        let mut observations = BTreeMap::new();
+        let mut restores_ready = true;
+        for (key, active) in &mut self.active {
+            let identity_valid = self.native.validate(&active.job.request.window);
+            let matches = identity_valid && verified(&mut self.native, active, allow_foreground);
+            if coordinated_restore(active) {
+                restores_ready &= matches;
+            }
+            observations.insert(key.clone(), (identity_valid, matches));
+        }
+        for (key, (identity_valid, matches)) in observations {
             let mut remove = false;
             if let Some(active) = self.active.get_mut(&key) {
                 let sequence = active.job.request.sequence;
-                if !self.native.validate(&active.job.request.window) {
+                if !identity_valid {
                     let tick = self.native.tick_ms();
                     out.push(Event::ActionResult {
                         key: key.clone(),
@@ -429,7 +447,7 @@ impl<N: Native> Executor<N> {
                     });
                     remove = true;
                 } else {
-                    if verified(&mut self.native, active) {
+                    if matches && (!coordinated_restore(active) || restores_ready) {
                         active.matches += 1;
                     } else {
                         active.matches = 0;
@@ -497,16 +515,43 @@ fn valid(job: &Job) -> bool {
         && !(job.request.action.automatic() && job.paused.load(Ordering::Acquire))
 }
 
-fn resolve_z_above<N: Native>(native: &mut N, request: &Request, rail: usize) -> Option<usize> {
+fn coordinated_restore(active: &Active) -> bool {
+    !active.timed_out
+        && valid(&active.job)
+        && matches!(active.job.request.action, Action::RestoreAutomatic(_))
+        && active.acceptance.effect == Effect::Restore
+}
+
+fn resolve_z_above<N: Native>(
+    native: &mut N,
+    request: &Request,
+    rail: usize,
+    allow_foreground: bool,
+) -> Option<usize> {
     let hwnd = request.window.hwnd;
     let popup = request.window.popup;
-    request.z_above.iter().copied().find(|&candidate| {
+    let is_valid = |native: &mut N, candidate: usize| {
         candidate != 0
             && candidate != hwnd
             && candidate != rail
             && Some(candidate) != popup
             && native.is_z_order_target(candidate)
-    })
+    };
+    let mut lowest: Option<usize> = None;
+    for &candidate in &request.z_above {
+        if is_valid(native, candidate)
+            && lowest.is_none_or(|current| native.is_below(candidate, current))
+        {
+            lowest = Some(candidate);
+        }
+    }
+    if lowest.is_none() && allow_foreground {
+        let (foreground, _) = native.foreground();
+        if is_valid(native, foreground) {
+            lowest = Some(foreground);
+        }
+    }
+    lowest
 }
 
 fn place_window_behind<N: Native>(native: &mut N, hwnd: usize, popup: Option<usize>, above: usize) {
@@ -518,26 +563,33 @@ fn place_window_behind<N: Native>(native: &mut N, hwnd: usize, popup: Option<usi
     }
 }
 
-fn verified_z_order<N: Native>(native: &mut N, active: &mut Active) -> bool {
+fn verified_z_order<N: Native>(
+    native: &mut N,
+    active: &mut Active,
+    allow_foreground: bool,
+) -> bool {
     let request = &active.job.request;
     if matches!(request.action, Action::RestoreAutomatic(_)) && valid(&active.job) {
         let hwnd = request.window.hwnd;
-        if let Some(above) = resolve_z_above(native, request, active.job.rail)
+        if let Some(above) = resolve_z_above(native, request, active.job.rail, allow_foreground)
             && !native.is_below(hwnd, above)
         {
-            if !active.timed_out && !active.z_reconciled {
-                active.z_reconciled = true;
-
+            if !active.timed_out && active.z_placed_behind != Some(above) {
+                active.z_placed_behind = Some(above);
                 let popup = native.popup(&request.window);
                 place_window_behind(native, hwnd, popup, above);
             }
             return false;
         }
+        // A confirmed correction may later be disturbed by another member's
+        // delayed reveal. Allow another correction then, but never flood an
+        // unresponsive target with repeated identical asynchronous requests.
+        active.z_placed_behind = None;
     }
     true
 }
 
-fn verified<N: Native>(native: &mut N, active: &mut Active) -> bool {
+fn verified<N: Native>(native: &mut N, active: &mut Active, allow_foreground: bool) -> bool {
     let request = &active.job.request;
     let hwnd = request.window.hwnd;
     if native.disabled_without_popup(&request.window) {
@@ -564,7 +616,7 @@ fn verified<N: Native>(native: &mut N, active: &mut Active) -> bool {
                 && native
                     .popup(&request.window)
                     .is_none_or(|popup| native.is_visible(popup))
-                && verified_z_order(native, active)
+                && verified_z_order(native, active, allow_foreground)
         }
     }
 }
@@ -1023,10 +1075,17 @@ mod tests {
                 if let Some(result) = live.show_results.pop_front() {
                     result?;
                 }
-                if live.auto_apply {
+                let auto_apply = live.auto_apply;
+                if auto_apply {
                     live.iconic = false;
                     live.visible = true;
                     live.z_above.clear();
+                    for (&other_hwnd, other) in &mut self.windows {
+                        if other_hwnd != hwnd {
+                            other.z_above.retain(|&peer| peer != hwnd);
+                            other.z_above.insert(0, hwnd);
+                        }
+                    }
                 }
                 return Ok(());
             }
@@ -1060,7 +1119,8 @@ mod tests {
             if let Some(result) = live.placement_results.pop_front() {
                 result?;
             }
-            if live.auto_apply {
+            let auto_apply = live.auto_apply;
+            if auto_apply {
                 live.layout.normal = normal;
                 let x = live.layout.work_area[0] - live.layout.monitor_rect[0];
                 let y = live.layout.work_area[1] - live.layout.monitor_rect[1];
@@ -1089,6 +1149,17 @@ mod tests {
                         live.z_above.clear();
                         live.layout.maximized = true;
                         live.layout.visible = Some(live.layout.work_area);
+                    }
+                }
+                if matches!(
+                    stage,
+                    PlacementStage::ShowNoActivate | PlacementStage::ShowMaximized
+                ) {
+                    for (&other_hwnd, other) in &mut self.windows {
+                        if other_hwnd != hwnd {
+                            other.z_above.retain(|&peer| peer != hwnd);
+                            other.z_above.insert(0, hwnd);
+                        }
                     }
                 }
             }
@@ -1120,20 +1191,31 @@ mod tests {
         }
         fn place_behind(&mut self, hwnd: usize, above: usize) -> Result<(), String> {
             self.calls.push(Call::PlaceBehind { hwnd, above });
-            let above_chain = self
-                .windows
-                .get(&above)
-                .map(|live| live.z_above.clone())
-                .unwrap_or_default();
-            if let Some(live) = self.windows.get_mut(&hwnd) {
-                if live.auto_apply {
+            if let Some(auto_apply) = self.windows.get(&hwnd).map(|live| live.auto_apply) {
+                if auto_apply {
+                    for other in self.windows.values_mut() {
+                        other.z_above.retain(|&peer| peer != hwnd);
+                    }
+                    let above_chain = self
+                        .windows
+                        .get(&above)
+                        .map(|live| live.z_above.clone())
+                        .unwrap_or_default();
                     let mut z_above = vec![above];
                     for peer in above_chain {
                         if peer != hwnd && !z_above.contains(&peer) {
                             z_above.push(peer);
                         }
                     }
-                    live.z_above = z_above;
+                    self.windows.get_mut(&hwnd).unwrap().z_above = z_above;
+                    for (&other_hwnd, other) in &mut self.windows {
+                        if other_hwnd != hwnd
+                            && other_hwnd != above
+                            && let Some(pos) = other.z_above.iter().position(|&peer| peer == above)
+                        {
+                            other.z_above.insert(pos + 1, hwnd);
+                        }
+                    }
                 }
                 return Ok(());
             }
@@ -2893,5 +2975,143 @@ mod tests {
             });
             assert_eq!(focused, expected);
         }
+    }
+
+    #[test]
+    fn multiple_managed_windows_restore_behind_foreground_in_relative_z_order() {
+        for snapped_on_top in [true, false] {
+            let mut m_snap = window("snap", 10);
+            m_snap.layout = snapped();
+            let mut m_norm = window("norm", 11);
+            m_norm.layout = layout(200);
+            let peer_f = window("foreground-peer", 20);
+            if snapped_on_top {
+                m_snap.z_above = vec![20];
+                m_norm.z_above = vec![20, 10];
+            } else {
+                m_norm.z_above = vec![20];
+                m_snap.z_above = vec![20, 11];
+            }
+            let key_snap = m_snap.identity.key();
+            let key_norm = m_norm.identity.key();
+            let mut h = Harness::new(&m_snap);
+            h.executor.native_mut().insert(&m_norm);
+            h.executor.native_mut().insert(&peer_f);
+            h.executor.native_mut().foreground = (20, 500);
+            h.model.set_minimize_snapped_elsewhere(true);
+            h.model.set_auto_restore(true);
+            h.model
+                .snapshot(snapshot("A", 110, vec![m_snap.clone(), m_norm.clone()]));
+            h.model
+                .record_mut(&key_snap)
+                .unwrap()
+                .layouts
+                .insert("A".into(), snapped());
+            h.model
+                .record_mut(&key_norm)
+                .unwrap()
+                .layouts
+                .insert("A".into(), layout(200));
+
+            // Switch to Desktop B: Windows cloaks Desktop A's unpinned foreground window (20)
+            // before automatic minimize runs. Neither managed window's Desktop A z_above may be
+            // overwritten with the post-switch cloaked Z-order.
+            h.executor.native_mut().window_mut(20).cloaked = true;
+            m_snap.z_above.clear();
+            m_norm.z_above.clear();
+            h.model
+                .snapshot(snapshot("B", 120, vec![m_snap.clone(), m_norm.clone()]));
+            h.executor.native_mut().tick_ms = 120;
+            let work = h.issue();
+            h.step(work);
+            h.advance(20);
+            assert!(h.model.runtime(&key_snap).unwrap().window().minimized);
+            assert!(h.model.runtime(&key_norm).unwrap().window().minimized);
+
+            // Switch back to Desktop A: window 20 is uncloaked and focused. Simulate delayed
+            // async reveal on the top managed window so the lower managed window must wait
+            // rather than anchoring to it while it sits at HWND_TOP.
+            h.executor.native_mut().window_mut(20).cloaked = false;
+            h.executor.native_mut().window_mut(20).z_above.clear();
+            let top_hwnd = if snapped_on_top { 10 } else { 11 };
+            let bot_hwnd = if snapped_on_top { 11 } else { 10 };
+            h.executor.native_mut().window_mut(top_hwnd).auto_apply = false;
+            m_snap.minimized = true;
+            m_snap.layout.visible = None;
+            m_snap.layout.arranged = Some(false);
+            m_norm.minimized = true;
+            m_norm.layout.visible = None;
+            h.model
+                .snapshot(snapshot("A", 200, vec![m_snap.clone(), m_norm.clone()]));
+            h.executor.native_mut().tick_ms = 200;
+            let work = h.issue();
+            h.step(work);
+            // The fast member must not finish while its peer's reveal is queued.
+            for _ in 0..4 {
+                h.advance(20);
+                assert!(h.model.runtime(&key_snap).unwrap().pending().is_some());
+                assert!(h.model.runtime(&key_norm).unwrap().pending().is_some());
+            }
+            {
+                let live = h.executor.native_mut().window_mut(top_hwnd);
+                live.auto_apply = true;
+                live.iconic = false;
+                live.visible = true;
+                live.layout = if snapped_on_top {
+                    snapped()
+                } else {
+                    layout(200)
+                };
+                live.z_above.clear();
+            }
+            h.executor.native_mut().window_mut(10).layout = snapped();
+            h.advance(20);
+            h.advance(20);
+            h.advance(20);
+            assert!(!h.model.runtime(&key_snap).unwrap().window().minimized);
+            assert!(!h.model.runtime(&key_norm).unwrap().window().minimized);
+            assert!(h.model.runtime(&key_snap).unwrap().pending().is_none());
+            assert!(h.model.runtime(&key_norm).unwrap().pending().is_none());
+            assert!(h.executor.native_mut().is_below(top_hwnd, 20));
+            assert!(h.executor.native_mut().is_below(bot_hwnd, 20));
+            assert!(h.executor.native_mut().is_below(bot_hwnd, top_hwnd));
+        }
+    }
+
+    #[test]
+    fn automatic_restore_with_empty_z_above_falls_back_behind_foreground_window() {
+        let mut managed = window("managed", 10);
+        managed.layout = snapped();
+        managed.z_above.clear();
+        let peer_f = window("foreground-peer", 20);
+        let key = managed.identity.key();
+        let mut h = Harness::new(&managed);
+        h.executor.native_mut().insert(&peer_f);
+        h.executor.native_mut().foreground = (20, 500);
+        h.model.set_minimize_snapped_elsewhere(true);
+        h.model.set_auto_restore(true);
+        h.model
+            .record_mut(&key)
+            .unwrap()
+            .layouts
+            .insert("A".into(), snapped());
+
+        h.model.snapshot(snapshot("B", 120, vec![managed.clone()]));
+        h.executor.native_mut().tick_ms = 120;
+        let work = h.issue();
+        h.step(work);
+        h.advance(20);
+
+        managed.minimized = true;
+        managed.layout.visible = None;
+        managed.layout.arranged = Some(false);
+        h.model.snapshot(snapshot("A", 200, vec![managed]));
+        h.executor.native_mut().tick_ms = 200;
+        let work = h.issue();
+        h.step(work);
+        h.executor.native_mut().window_mut(10).layout = snapped();
+        h.advance(20);
+        h.advance(20);
+        assert!(h.executor.native_mut().is_below(10, 20));
     }
 }
