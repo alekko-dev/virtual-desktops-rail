@@ -7,7 +7,7 @@ are tracked in [Status and roadmap](Status-and-Roadmap.md); completed evidence i
 ## Product contract and boundaries
 
 The utility is a native, per-user Windows 11 x64 application. A 25-DIP AppBar reserves
-the primary display's left edge. Desktop dots precede one icon-only button per eligible
+the primary display's left edge (releasing that work-area reservation on exit, where standard Win32 work-area updates may shift windows anchored to workspace coordinates). Desktop dots precede one icon-only button per eligible
 shared window. Settings and pause controls occupy the bottom, with a separate Exit
 button below Settings. The current desktop uses a larger filled dot; inactive desktops
 use colored outlines. Application icons have solid/outlined visibility indicators
@@ -172,7 +172,7 @@ Layout keys are desktop GUIDs; ordinal positions are display/navigation data onl
 At startup/reconnect, enumerate candidates; reconcile shell/window events, poll cached
 candidates once per second and perform a 30-second safety rescan. Pin queries are an
 OR, not exclusive states. Only **both** queries returning `WindowNotFound` means no
-shell ApplicationView and an unsupported candidate. Mixed/other errors remain failures;
+shell ApplicationView and an unsupported candidate. When `is_pinned_window` succeeds (`Ok(true)` or `Ok(false)`) and `is_pinned_app` returns `ComError(HRESULT(0x80070490))` (`ERROR_NOT_FOUND` from `GetAppIdForWindow` when a valid `IApplicationView` has no shell `AppUserModelId`, such as `MMCMainFrame`), the candidate is `Observed` as not application-pinned. Mixed/other errors remain failures;
 revalidate candidate lifetime after queries. Do not mask arbitrary COM errors.
 
 Ready/reconnecting/unavailable status is independent of pause. Untrusted desktop identity

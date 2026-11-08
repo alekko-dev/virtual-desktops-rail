@@ -57,7 +57,7 @@ or release certification; startup/reconnect must fail safely and retry from a ba
 ## Transient pin-query failures
 
 Only both pin queries returning `WindowNotFound` means no shell ApplicationView.
-Mixed/other errors remain failures. Do not mask transient `0x80070490` as an unsupported
+When `is_pinned_window` succeeds (`Ok(_)`) and `is_pinned_app` returns `ComError(HRESULT(0x80070490))` (`GetAppIdForWindow` `ERROR_NOT_FOUND` for a window with a valid `IApplicationView` but no shell `AppUserModelId`, such as `MMCMainFrame` in Hyper-V Manager), treat the candidate as `Observed` and not app-pinned. Other mixed errors remain failures; do not mask `0x80070490` when `is_pinned_window` also fails as an unsupported
 window. Revalidate candidate lifetime and attribute bounded observations to class,
 handle/process/lifetime and both query results without titles. Regression checks must
 distinguish unsupported candidates from mixed failures. Root-cause work belongs in [Status](Status-and-Roadmap.md).

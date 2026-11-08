@@ -28,8 +28,8 @@ owns completed validation and its limits. A scoped pass is not general release c
   changed topology are declined to avoid breaking native membership through placement.
 - Calculator frame/content duplicate eligibility and its reproduced timeout remain
   undiagnosed. They do not establish the cause of the user's exact intermittent edge/Snap conflict.
-- Transient pin-query `0x80070490` failures have no established root cause. Integration
-  fails closed and reconnects; no broad unsupported-window reclassification is justified.
+- Pin-query `app=Err(ComError(HRESULT(0x80070490)))` alongside `window=Ok(_)` (reproduced on `MMCMainFrame` when `GetAppIdForWindow` lacks an `AppUserModelId` for a valid `IApplicationView`) is handled as `Observed` without an application pin; other transient `0x80070490` combinations without a valid window-pin result still
+  fail closed and reconnect; no broad unsupported-window reclassification is justified.
 - Cancelled touchpad swipes without a desktop change have no supported reveal trigger;
   further gesture work is outside current scope.
 - Application restart reassociation is intentionally conservative. Elevated/unusual
