@@ -10,8 +10,8 @@ The utility is a native, per-user Windows 11 x64 application. A 25-DIP AppBar re
 the primary display's left edge. Desktop dots precede one icon-only button per eligible
 shared window. Settings and pause controls occupy the bottom, with a separate Exit
 button below Settings. The current desktop uses a larger filled dot; inactive desktops
-use colored outlines. Window icons remain unchanged, with solid/outlined visibility
-indicators beneath. There are no window-title labels/tooltips, context menus, pinning
+use colored outlines. Application icons have solid/outlined visibility indicators
+beneath. There are no window-title labels/tooltips, context menus, pinning
 controls, or overflow UI. The intended inventory is about two or three windows.
 
 Manage ordinary windows pinned individually OR covered by application-level pinning.
@@ -80,12 +80,12 @@ paths, desktop names/IDs and screenshots; it does not upload anything. Native Sn
 membership is not exposed to the app and therefore is not reported.
 
 Application icons are painted at 16 DIPs (16/20/24/32 pixels at 100/125/150/200%).
-The icon worker compares the window's small and large icons, choosing an exact-size
-image, otherwise the smallest image large enough, otherwise the largest available.
-Class icons are used only when the window provides none; size-specific executable
-extraction is the final fallback. Window-specific artwork takes precedence over
-executable artwork. WIC Fant filtering normalizes mismatched images once off the UI
-thread, preserving premultiplied alpha. Cache keys include window identity and DPI;
+The icon worker prefers size-specific executable extraction, then class icons,
+then window icons, with the generic UI icon as the final fallback. Within each
+runtime source it chooses an exact-size image, otherwise the smallest image large
+enough, otherwise the largest available. Icons are captured once per cache entry;
+there is no periodic refresh. WIC Fant filtering normalizes mismatched images once
+off the UI thread, preserving premultiplied alpha. Cache keys include window identity and DPI;
 extraction or WIC failure retains the existing fallback behavior. Applications that
 provide only small artwork can still require enlargement.
 
