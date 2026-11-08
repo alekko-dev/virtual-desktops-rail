@@ -1,6 +1,6 @@
 # Contributor troubleshooting
 
-User-facing recovery is in the [app README](../README.md). This document owns
+User-facing recovery is in the [User Guide](../docs/USER_GUIDE.md#troubleshooting-and-limitations). This document owns
 reusable symptoms, known mechanisms and proven fixes. Current contracts are in
 [Architecture](Architecture.md); validation procedures/results are in [Testing](Testing.md).
 For user evidence, use the local support report and its [privacy contract](Architecture.md#stack-and-source-map).

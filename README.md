@@ -1,192 +1,75 @@
 # Virtual Desktop Rail
 
-A lightweight Windows utility for keeping shared application windows useful across
-virtual desktops without leaving them visible everywhere. A narrow rail shows your
-desktops and shared windows, and remembers a separate window layout for each desktop.
+A tiny Windows 11 side rail for **windows pinned across all virtual desktops** — keeping them one click away everywhere without cluttering every screen.
 
-**Switch desktop → shared windows minimize → click an icon to restore that desktop's layout.**
+**Switch desktop → pinned windows get out of the way → switch back → get that desktop's exact layout back.**
 
-This is an unsigned development preview. Broader release validation is still in progress.
+![Virtual Desktop Rail overview screenshot](docs/images/desktop-with-rail.png)
 
-## Version and build identity
+> **Note:** This is an unsigned development preview.
 
-Settings shows the application version and source identity in small gray text below
-the integration status. To inspect an executable
-without starting the app, capture its output with PowerShell:
+## The problem it solves
 
-```powershell
-$p = Start-Process ./virtual-desktop-rail.exe -ArgumentList '--version' -NoNewWindow -Wait -PassThru -RedirectStandardOutput version.txt
-Get-Content ./version.txt
+When you use multiple virtual desktops (for example: one for coding, one for meetings, one for browsing), you usually have a few apps you want available on *every* desktop—like Obsidian, Slack, or Spotify.
+
+Windows has a built-in feature for this: right-clicking a window in Task View (`Win + Tab`) and choosing **Show this window on all desktops**. That sounds great until you actually use it:
+
+- **Screen clutter:** A window shown on all desktops stays open and visible everywhere, covering the work you are trying to do on other desktops.
+- **One layout for everything:** If you want your notes maximized on Desktop 1, tucked in a corner on Desktop 2, and out of sight on Desktop 3, Windows forces the exact same size and position everywhere.
+
+## How it works
+
+Virtual Desktop Rail adds a narrow bar to the left edge of your primary monitor:
+
+1. **Pin once in Windows:** Mark any window or app with **Show on all desktops** in Windows Task View (`Win + Tab`). Its icon shows up on the rail.
+2. **Arrange per desktop:** Position or resize the window however you like on the current desktop. The rail remembers that layout for this desktop only.
+3. **Switch desktops cleanly:** When you move to another desktop, the rail automatically minimizes those all-desktop windows so your new workspace stays clean (or optionally restores the layout you saved for that desktop).
+4. **One-click toggle:** Click an app icon on the rail to restore its layout for the current desktop, bring it to the front, or minimize it again.
+
+```mermaid
+flowchart LR
+    A["Pin window in Task View<br/>(Show on all desktops)"] --> B["Arrange it on Desktop 1<br/>(Rail saves Desktop 1 layout)"]
+    B --> C["Switch to Desktop 2<br/>(Window auto-minimizes)"]
+    C --> D["Click rail icon on Desktop 2<br/>(Arrange & save Desktop 2 layout)"]
+    D --> E["Switch back to Desktop 1<br/>(Restores Desktop 1 layout)"]
 ```
 
-Use `--version --json` for machine-readable version, full Git commit, and dirty state.
-Windows file Properties also includes File version and Product version. A `dirty`
-marker means source changes were present at build time; `unknown source` means Git
-provenance was unavailable. Neither marker changes the application release number.
-Portable packages include `BUILD.json` and `SHA256.json` to identify the exact
-executable. Diagnostic `--status` reports the running instance's build, whereas
-`--version` describes the executable being invoked.
+### Quick controls
 
-## Features
+- **Top dots:** Your virtual desktops. Click to switch; hover to see the desktop name.
+- **App icons:** Your all-desktop windows (solid bar underneath = visible; outlined bar = minimized). Click to restore, focus, or minimize.
+- **Bottom buttons:** **Pause/Resume** automatic window actions, open **Settings** (to enable automatic layout restore on desktop switch or start with Windows), or **Exit** the app.
 
-- A 25-DIP rail on the primary display's left edge reserves space beside maximized apps.
-- Desktop dots show the current desktop, reveal names on hover, and switch desktops on click.
-- Windows pinned through Task View appear automatically, including application-level pins.
-- Application icons use a consistent 16-DIP size with DPI-aware source selection and filtered resizing.
-- Each window remembers its position, size, and normal/maximized state per desktop.
-- Optional automatic restoration restores saved destination layouts without taking focus.
-- Pause/resume, optional startup with Windows, and local settings and layout storage.
-- **Save diagnostic report…** in Settings creates a local ZIP with the app/build context,
-  saved and freshly observed managed-window geometry/state, and recent diagnostic events.
-  It excludes window titles, document contents, process IDs, full executable paths,
-  desktop names/IDs and screenshots. Nothing is uploaded; review the archive before sharing.
-- Native Windows UI, no installer, no administrator privileges, and no network requirement for use.
-
-Native Windows Snap support is limited. New layouts save snapped visible bounds
-separately from the original drag-away size. The rail can preserve a matching live
-arrangement by minimizing and revealing it without rewriting its placement, and
-verifies the visible result. Automatic reveals preserve focus.
-Recreating lost or different native Snap groups is unsupported; incompatible saved
-arrangements and changed displays can be declined. Application-specific constraints
-remain unverified. Pause automatic actions when using unsupported arrangements.
-The rail leaves a known minimized Snap arrangement untouched when an ordinary saved
-layout would replace it, and declines saved Snap restoration from a minimized
-maximized state. By default, an automatic restore that conflicts with a live Snap
-arrangement minimizes the window instead. A declined restore's Snap notice clears
-after that window successfully restores or
-raises, or a fresh observation confirms the saved target is compatible again. Merely
-becoming visible does not clear an unresolved mismatch; removing the window clears
-its notice.
-Exact last-visit restoration, including windows left minimized, is still in progress.
+> *[Placeholder: Annotated diagram or close-up screenshot of the rail calling out: (1) Desktop dots, (2) Pinned app icons with solid/outlined visibility indicators, and (3) Pause/Resume, Settings, and Exit buttons at the bottom.]*
 
 ## Requirements
 
-- Windows 11 x64, 24H2 build **26100.2605 or newer**.
-- A signed-in Windows Explorer desktop session.
-- Ordinary application windows that Windows can show on all desktops.
-
-Meeting the minimum Windows build allows integration to initialize; it does not
-guarantee compatibility with every later Windows revision or application. Elevated
-applications and unusual shell/dialog surfaces are outside the validated scope.
-The C runtime is statically linked, so no separate Visual C++ runtime installation is needed.
+- **Windows 11 x64**, version 24H2 (build **26100.2605** or newer).
 
 ## Installation and updates
 
-1. Obtain a portable Windows x64 ZIP from the project's release assets, when available.
-   For the latest successful `main` build, open its Windows CI run and download the
-   `VirtualDesktopRail-windows-x64-<commit>` artifact. CI artifacts expire after 90 days.
-   Source archives are not runnable app packages.
-2. Extract the whole package into a permanent folder you can write to.
-3. Run `virtual-desktop-rail.exe`. Startup with Windows is off by default.
+1. Download the portable Windows x64 ZIP from the project's releases (or grab the `VirtualDesktopRail-windows-x64-<commit>` artifact from the latest `main` GitHub Actions run).
+2. Extract the ZIP into a folder.
+3. Run `virtual-desktop-rail.exe`.
 
-To update, exit the running app using the button below Settings, extract the new
-package, and launch its executable. Settings and layouts remain in your local app-data
-folder. If you move the executable after enabling startup, turn startup off and back
-on in Settings at the new location.
+**Updating:** Click **Exit** at the bottom of the rail, extract the new ZIP over your folder, and start `virtual-desktop-rail.exe` again. (If you moved the folder and use **Start with Windows**, toggle that setting off and back on in Settings.)
 
-To remove the app, turn startup off, exit, and delete its extracted folder. Optionally
-remove `%LOCALAPPDATA%\VirtualDesktopRail` to delete saved settings, layouts, and diagnostics.
+**Uninstalling:** Turn off **Start with Windows** in Settings, exit the app, and delete the folder. To also wipe saved layouts and settings, delete `%LOCALAPPDATA%\VirtualDesktopRail`.
 
 ## Getting started
 
-1. Open Windows Task View using the taskbar's Task View button.
-2. Right-click an application window and choose **Show this window on all desktops**, or
-   **Show windows from this app on all desktops**. Pinning to the taskbar is different.
-3. Its icon appears on the rail, normally within about a second.
-4. On one desktop, click the icon and arrange the window using its usual Windows controls.
-5. Switch to another desktop. The shared window minimizes. Click its icon and arrange
-   it for this desktop.
-6. Return to the first desktop and click the icon to restore its remembered layout.
+1. Press `Win + Tab` to open **Task View**.
+2. Right-click a window you want to share across desktops and select **Show this window on all desktops** (or **Show windows from this app on all desktops**).
+3. The window's icon appears on the left rail.
+4. Arrange the window on your current desktop.
+5. Switch to a second desktop. The window minimizes automatically. Click its icon on the rail and place it where you want it on this desktop.
+6. Switch back to the first desktop and click the icon—it returns to your first desktop's layout.
 
-Unpinning or closing a window removes its rail button. Each button represents one
-window, so multiple windows from the same application can have identical icons.
-
-## Using the rail
-
-| Control or state | Behavior |
-| --- | --- |
-| Desktop dot | Click to switch; hover for its name. The current desktop is a larger filled circle; others are colored outlines. |
-| Minimized window icon | Restore its current-desktop layout and request focus. |
-| Visible background window icon | Bring the window forward. |
-| Foreground window icon | Minimize the window. |
-| Under-icon indicator | Solid means visible; outlined means minimized. App icons keep their normal appearance. |
-| Play/Pause | Suspend or resume automatic window actions. Manual controls continue working. |
-| Sliders button | Open Settings. Done closes Settings. |
-| Save diagnostic report… | Choose a local ZIP destination for the redacted support report. |
-| Button below Settings | Exit the app and release the reserved screen space. |
-
-### Layouts and automatic restoration
-
-By default, switching desktops minimizes shared windows; returning does not reveal
-them until requested. With no saved layout, a manual rail restore uses the last usable
-layout adjusted to stay on an available display.
-
-Enable **Restore saved layouts on desktop switch** in Settings to restore windows
-that have a saved destination layout, without taking focus. Windows without a layout
-there still minimize. Manual rail restores and stable external Windows restores
-(such as taskbar restores) save the resulting layout for that desktop, except for the
-temporary Snap reveals described below. Move, resize,
-and maximize normally to update it. Automatic restoration preserves saved geometry;
-minimizing does not forget layouts.
-
-**Minimize snapped windows on other desktops** is enabled by default in Settings,
-including after upgrading an existing configuration. With automatic restoration on,
-a snapped window stays minimized on desktops whose saved layout does not match its
-live Snap arrangement, even if they have an ordinary saved position. A matching saved
-Snap layout can still restore. Turn the option off to retain the snapped window's
-visibility when an incompatible automatic restore is declined.
-
-You can explicitly reveal a preserved snapped window with its rail button on another
-desktop. This keeps its Snap placement and that desktop's existing saved layout;
-it does not make the temporary reveal an automatic restore preference there.
-
-Minimizing a shared window yourself, using its normal controls or the rail, remembers
-it as minimized on that desktop. It stays minimized when you return, including with
-automatic restoration enabled. Other desktops keep their own state. Restore it
-manually to allow automatic restoration there again. Rail's automatic minimization
-on switching desktops does not change this preference. These preferences survive rail
-restarts for the same live windows. Changes while Rail is stopped or desktop integration
-is unavailable cannot be reliably attributed to a desktop and are not inferred on recovery.
-
-Pause suspends both automatic minimization and restoration. Starting the app,
-resuming, recovering integration, or changing either window restoration setting does not
-immediately move windows; the next desktop switch applies the policy.
-
-Layouts survive rail restarts while their application windows remain running.
-Restarting an application gives its windows fresh identities rather than guessing
-which old layout belongs to which window.
-
-## Troubleshooting and limitations
-
-- **No desktop dots or window controls:** read the integration status in Settings.
-  Below-minimum Windows builds are blocked. For initialization or runtime failures,
-  use **Retry desktop integration**. An amber warning triangle replaces the normal
-  Play/Pause icon while integration is unavailable; its tooltip explains the status.
-- **Missing window:** check Task View pinning, including app-level pinning. Unsupported
-  or inaccessible windows are omitted. This preview expects about two or three shared
-  windows and has no scrolling or overflow controls.
-- **Layout not reused after an app restart:** this is the conservative identity policy
-  described above. Arrange the new window to establish new layouts.
-- **Startup uses an old path:** disable startup and enable it again from the new location.
-
-Configuration, previous-state backup, and bounded diagnostics live under
-`%LOCALAPPDATA%\VirtualDesktopRail`. Layout history is limited to 512 window identities
-and 64 remembered desktops per identity (layouts and minimized preferences combined);
-new identities are omitted at the identity limit.
-There is no history-management UI yet.
-
-The support report includes a bounded event history of desktop transitions, accepted and
-verified window actions, integration readiness and selected setting changes. It does not
-include native Snap Group membership because Windows does not expose that state to the app.
-
-Physical hardware, mixed DPI and monitor changes, actual Explorer restart,
-screen-reader/high-contrast review, and the full Obsidian workflow still need broader
-validation. The preview does not promise support for every application or privilege level.
-Third-party notices and license texts accompany portable packages.
+*Tip: Want your pinned windows to pop into place automatically when you switch desktops without clicking? Open **Settings** (the sliders icon on the rail) and turn on **Restore saved layouts on desktop switch**.*
 
 <!-- repository-links:start -->
-## Contributing
+## Documentation and contributing
 
-For building from source, architecture, testing, and implementation status, start with
-the [contributor documentation](.devdocs/README.md).
+- **Detailed usage & troubleshooting:** See the [User Guide](docs/USER_GUIDE.md) for all rail controls, Windows Snap behavior, troubleshooting tips, diagnostic reports, and build version inspection.
+- **Contributing:** For building from source, architecture, testing, and implementation status, start with the [contributor documentation](.devdocs/README.md).
 <!-- repository-links:end -->
