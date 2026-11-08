@@ -98,7 +98,7 @@ provide only small artwork can still require enlargement.
 | `apps/rail/src/appbar.rs` | Work-area reservation, fullscreen/z-order and shell recovery |
 | `apps/rail/src/platform.rs` | OS eligibility, window properties, candidates, identity and geometry |
 | `apps/rail/src/bridge.rs` | Shell COM subprocess, bounded protocol, watchdog, backoff and JobObject |
-| `apps/rail/src/actions.rs` | Async action executor over an injected native window/clock interface, verification, quarantine and guarded focus |
+| `apps/rail/src/actions.rs`, `actions/tests.rs` | Async action executor over an injected native window/clock interface, verification, quarantine, guarded focus and executor/controller harness regressions |
 | `apps/rail/src/store.rs` | Atomic storage, backup/recovery, session merges, bounded diagnostics/report archive and Startup shortcut |
 | `apps/rail/src/icons.rs`, `metrics.rs` | Off-UI icon extraction/cache and bounded dispatch statistics |
 | `apps/rail/src/singleton.rs`, `native.rs` | Session instance coordination and small raw Win32 declarations |
