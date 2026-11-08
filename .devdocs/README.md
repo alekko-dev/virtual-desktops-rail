@@ -1,6 +1,7 @@
 # Contributor documentation
 
-User installation and usage belong in the [app README](../README.md).
+User installation and quick-start usage belong in the [app README](../README.md), with
+detailed controls, Snap behavior, and user troubleshooting in the [User Guide](../docs/USER_GUIDE.md).
 For code or behavior changes, read Architecture and Status first, then the relevant
 development, testing and troubleshooting sections. Root [AGENTS.md](../AGENTS.md)
 contains the working instructions.
