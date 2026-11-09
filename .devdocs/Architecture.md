@@ -7,7 +7,7 @@ are tracked in [Status and roadmap](Status-and-Roadmap.md); completed evidence i
 ## Product contract and boundaries
 
 The utility is a native, per-user Windows 11 x64 application. A 25-DIP AppBar reserves
-the primary display's left edge. Desktop dots precede one icon-only button per eligible
+the primary display's left edge (releasing that work-area reservation on exit, where standard Win32 work-area updates may shift windows anchored to workspace coordinates). Desktop dots precede one icon-only button per eligible
 shared window. Settings and pause controls occupy the bottom, with a separate Exit
 button below Settings. The current desktop uses a larger filled dot; inactive desktops
 use colored outlines. Application icons have solid/outlined visibility indicators
@@ -98,7 +98,7 @@ provide only small artwork can still require enlargement.
 | `apps/rail/src/appbar.rs` | Work-area reservation, fullscreen/z-order and shell recovery |
 | `apps/rail/src/platform.rs` | OS eligibility, window properties, candidates, identity and geometry |
 | `apps/rail/src/bridge.rs` | Shell COM subprocess, bounded protocol, watchdog, backoff and JobObject |
-| `apps/rail/src/actions.rs` | Async action executor over an injected native window/clock interface, verification, quarantine and guarded focus |
+| `apps/rail/src/actions.rs`, `actions/tests.rs` | Async action executor over an injected native window/clock interface, verification, quarantine, guarded focus and executor/controller harness regressions |
 | `apps/rail/src/store.rs` | Atomic storage, backup/recovery, session merges, bounded diagnostics/report archive and Startup shortcut |
 | `apps/rail/src/icons.rs`, `metrics.rs` | Off-UI icon extraction/cache and bounded dispatch statistics |
 | `apps/rail/src/singleton.rs`, `native.rs` | Session instance coordination and small raw Win32 declarations |
@@ -172,7 +172,7 @@ Layout keys are desktop GUIDs; ordinal positions are display/navigation data onl
 At startup/reconnect, enumerate candidates; reconcile shell/window events, poll cached
 candidates once per second and perform a 30-second safety rescan. Pin queries are an
 OR, not exclusive states. Only **both** queries returning `WindowNotFound` means no
-shell ApplicationView and an unsupported candidate. Mixed/other errors remain failures;
+shell ApplicationView and an unsupported candidate. When `is_pinned_window` succeeds (`Ok(true)` or `Ok(false)`) and `is_pinned_app` returns `ComError(HRESULT(0x80070490))` (`ERROR_NOT_FOUND` from `GetAppIdForWindow` when a valid `IApplicationView` has no shell `AppUserModelId`, such as `MMCMainFrame`), the candidate is `Observed` as not application-pinned. Mixed/other errors remain failures;
 revalidate candidate lifetime after queries. Do not mask arbitrary COM errors.
 
 Ready/reconnecting/unavailable status is independent of pause. Untrusted desktop identity
@@ -330,7 +330,23 @@ on a destination without a layout. Do not build an unbounded retry backlog or fi
 
 For ordinary placements, automatic restoration sets placement while minimized, preserves
 `WPF_RESTORETOMAXIMIZED`, then reveals with `SW_SHOWNOACTIVATE`; it never requests
-foreground. Because `SW_SHOWNOACTIVATE` inserts newly un-minimized windows at `HWND_TOP`, snapshots and pre-minimize observations record normal peers above the window (`GW_HWNDPREV`, including shell-cloaked windows on other virtual desktops), and `RestoreAutomatic` places the revealed window (and any modal popup) back behind the lowest live uncloaked destination peer from `z_above` via Z-order-only `SetWindowPos` (`SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS`), re-verifying once visible; explicit foreground actions and drag commits clear `z_above`. Explicit restoration may request focus only while its original user intent
+foreground. Because `SW_SHOWNOACTIVATE` raises newly revealed windows, runtime
+Z-order memory is desktop-specific. Fresh idle snapshots and current explicit-minimize
+samples record peers above each window; automatic post-switch minimize samples do not
+replace the outgoing history. Learning is suspended across all pending managed actions,
+including quarantine, and resumes only with snapshots strictly newer than the last
+completion. Equal-timestamp observations cannot replace the order.
+
+Automatic restores place each window and its modal behind the lowest currently eligible
+saved peer, using Z-order-only nonactivating `SetWindowPos`. With no saved eligible peer,
+an independent foreground window is the fallback; an actively restored managed window
+cannot be a fallback dependency. The executor observes and reconciles the full current
+automatic-restore cohort before releasing any member, requiring two successful polls of
+the whole cohort. It retries a disturbed, previously observed correction but does not
+repeatedly enqueue the same unapplied correction. Timed-out/superseded work remains
+observational under the existing late-result rules. Explicit actions retain arrival
+ordering, and explicit foreground actions/drag commits clear only the current desktop's
+Z-order memory. Explicit restoration may request focus only while its original user intent
 remains valid. A minimized HWND wins over stale foreground reports. Active owned dialogs
 are revealed/focused with the owner, never given separate layouts or buttons. Never
 bypass focus restrictions with synthetic Alt or thread-input attachment.

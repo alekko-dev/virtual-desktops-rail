@@ -2054,17 +2054,25 @@ fn z_order_above_survives_minimization_and_clears_only_on_explicit_foreground_ac
         .layouts
         .insert("A".into(), snapped.clone());
     window.layout = snapped.clone();
+    window.z_above = vec![200];
+    model.snapshot(snapshot("A", 110, vec![window.clone()]));
+    assert_eq!(model.runtime(&key).unwrap().z_above("A"), &[200]);
+
+    // Equal-tick snapshots cannot establish a newer Z-order.
     window.z_above = vec![300, 200];
     model.snapshot(snapshot("A", 110, vec![window.clone()]));
-    assert_eq!(model.runtime(&key).unwrap().z_above(), &[300, 200]);
+    assert_eq!(model.runtime(&key).unwrap().z_above("A"), &[200]);
+    model.snapshot(snapshot("A", 111, vec![window.clone()]));
+    assert_eq!(model.runtime(&key).unwrap().z_above("A"), &[300, 200]);
 
-    // Switch to Desktop B: pre-minimize native sample updates Z-order and survives
-    // subsequent minimized observations across desktops.
+    // Switch to Desktop B: automatic minimize must not clobber Desktop A's Z-order
+    // with a post-switch empty sample (after Desktop A's windows are cloaked).
     window.z_above.clear();
     model.snapshot(snapshot("B", 120, vec![window.clone()]));
     let minimize = model.take_requests(120).pop().unwrap();
-    assert_eq!(minimize.z_above, vec![300, 200]);
-    model.observed_z_above(&minimize, vec![400, 300], 125);
+    assert!(minimize.z_above.is_empty());
+    assert_eq!(model.runtime(&key).unwrap().z_above("A"), &[300, 200]);
+    model.observed_z_above(&minimize, Vec::new(), 125);
     model.accepted(
         &key,
         minimize.sequence,
@@ -2077,9 +2085,9 @@ fn z_order_above_survives_minimization_and_clears_only_on_explicit_foreground_ac
     window.minimized = true;
     window.layout.visible = None;
     model.snapshot(snapshot("B", 140, vec![window.clone()]));
-    assert_eq!(model.runtime(&key).unwrap().z_above(), &[400, 300]);
+    assert_eq!(model.runtime(&key).unwrap().z_above("A"), &[300, 200]);
 
-    // Return to Desktop A: automatic restore carries the preserved background Z-order
+    // Return to Desktop A: automatic restore carries Desktop A's preserved Z-order
     // and keeps it after verified background completion.
     model.snapshot(snapshot("A", 150, vec![window.clone()]));
     let restore_auto = model.take_requests(150).pop().unwrap();
@@ -2087,7 +2095,7 @@ fn z_order_above_survives_minimization_and_clears_only_on_explicit_foreground_ac
         restore_auto.action,
         Action::RestoreAutomatic(snapped.clone())
     );
-    assert_eq!(restore_auto.z_above, vec![400, 300]);
+    assert_eq!(restore_auto.z_above, vec![300, 200]);
     model.accepted(
         &key,
         restore_auto.sequence,
@@ -2097,9 +2105,9 @@ fn z_order_above_survives_minimization_and_clears_only_on_explicit_foreground_ac
         },
     );
     model.settle(&key, restore_auto.sequence, 160, Outcome::Verified);
-    assert_eq!(model.runtime(&key).unwrap().z_above(), &[400, 300]);
+    assert_eq!(model.runtime(&key).unwrap().z_above("A"), &[300, 200]);
 
-    // Explicit user raise brings the window to the front and clears background Z-order.
+    // Explicit user raise brings the window to the front and clears Desktop A's Z-order.
     window.minimized = false;
     window.layout = snapped.clone();
     click(&mut model, &key, false);
@@ -2114,10 +2122,10 @@ fn z_order_above_survives_minimization_and_clears_only_on_explicit_foreground_ac
         },
     );
     model.settle(&key, raise.sequence, 180, Outcome::Verified);
-    assert!(model.runtime(&key).unwrap().z_above().is_empty());
+    assert!(model.runtime(&key).unwrap().z_above("A").is_empty());
     // Older pre-minimize samples cannot overwrite newer explicit state.
     model.observed_z_above(&minimize, vec![400, 300], 125);
-    assert!(model.runtime(&key).unwrap().z_above().is_empty());
+    assert!(model.runtime(&key).unwrap().z_above("A").is_empty());
 }
 
 #[test]
@@ -2129,4 +2137,74 @@ fn generated_event_sequences_preserve_controller_invariants() {
             panic!("seed {seed} failed ({failure}); minimal trace: {minimal:#?}");
         }
     }
+}
+
+#[test]
+fn z_order_does_not_learn_an_unsettled_peer_as_the_new_z_order() {
+    let (mut model, mut first, first_key) = saved_destinations();
+    let mut second = window("second");
+    second.hwnd = 124;
+    let second_key = second.identity.key();
+    first.z_above = vec![900];
+    second.z_above = vec![123, 900];
+    model.snapshot(snapshot("A", 110, vec![first.clone(), second.clone()]));
+    model
+        .record_mut(&second_key)
+        .unwrap()
+        .layouts
+        .insert("A".into(), layout(100));
+    model
+        .record_mut(&second_key)
+        .unwrap()
+        .layouts
+        .insert("B".into(), layout(700));
+    model.snapshot(snapshot("B", 120, vec![first.clone(), second.clone()]));
+    let requests = model.take_requests(120);
+    for request in &requests {
+        model.accepted(
+            &request.key,
+            request.sequence,
+            Acceptance {
+                effect: Effect::Restore,
+                target: Some(layout(700)),
+            },
+        );
+        model.settle(&request.key, request.sequence, 130, Outcome::Verified);
+    }
+    model.snapshot(snapshot("A", 140, vec![first.clone(), second.clone()]));
+    let requests = model.take_requests(140);
+    let first_request = requests.iter().find(|r| r.key == first_key).unwrap();
+    model.accepted(
+        &first_key,
+        first_request.sequence,
+        Acceptance {
+            effect: Effect::Restore,
+            target: Some(layout(100)),
+        },
+    );
+    model.settle(&first_key, first_request.sequence, 150, Outcome::Verified);
+    assert!(model.runtime(&second_key).unwrap().pending().is_some());
+    // The second restore is still pending and has temporarily risen above first.
+    first.z_above = vec![124, 900];
+    second.z_above.clear();
+    model.snapshot(snapshot("A", 160, vec![first.clone(), second.clone()]));
+    assert_eq!(model.runtime(&first_key).unwrap().z_above("A"), &[900]);
+    let second_request = requests.iter().find(|r| r.key == second_key).unwrap();
+    model.accepted(
+        &second_key,
+        second_request.sequence,
+        Acceptance {
+            effect: Effect::Restore,
+            target: Some(layout(100)),
+        },
+    );
+    model.settle(&second_key, second_request.sequence, 180, Outcome::Verified);
+    // Delivery after completion does not make an in-flight sample fresh.
+    for tick in [170, 180] {
+        model.snapshot(snapshot("A", tick, vec![first.clone(), second.clone()]));
+        assert_eq!(model.runtime(&first_key).unwrap().z_above("A"), &[900]);
+    }
+    // Fresh idle observations still learn deliberate changes.
+    model.snapshot(snapshot("A", 181, vec![first, second]));
+    assert_eq!(model.runtime(&first_key).unwrap().z_above("A"), &[124, 900]);
 }
