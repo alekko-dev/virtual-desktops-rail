@@ -467,10 +467,10 @@ impl App {
                 }
             }
             Command::Exit => {
-                self.stop();
-                unsafe {
+                crate::shutdown_trace::measure("stop", || self.stop());
+                crate::shutdown_trace::measure("DestroyWindow", || unsafe {
                     DestroyWindow(self.window);
-                }
+                });
                 return;
             }
             Command::Status { nonce } => {
@@ -1815,9 +1815,10 @@ impl App {
             return;
         }
         self.stopped = true;
+        crate::appbar::unregister(self.window);
         self.shell_switcher = None;
-        self.finish_reveal();
-        self.update_window_frame();
+        crate::shutdown_trace::measure("finish_reveal", || self.finish_reveal());
+        crate::shutdown_trace::measure("DWM_update_window_frame", || self.update_window_frame());
         if let Some(integration) = &self.integration {
             let _ = integration.try_send(bridge::CommandMessage::Stop);
         }
@@ -2931,12 +2932,14 @@ pub fn run(settings: bool) -> Result<(), String> {
         }
         let stopped = app.borrow().stopped;
         if !stopped {
-            DestroyWindow(window);
-            app.borrow_mut().stop();
+            crate::shutdown_trace::measure("stop_fallback", || app.borrow_mut().stop());
+            crate::shutdown_trace::measure("DestroyWindow_fallback", || DestroyWindow(window));
         }
         MAIN_WINDOW.store(0, Ordering::Release);
         if let Some(ack) = app.borrow_mut().shutdown_ack.take() {
-            let _ = ack.recv_timeout(std::time::Duration::from_secs(2));
+            let _ = crate::shutdown_trace::measure("storage_ack_wait", || {
+                ack.recv_timeout(std::time::Duration::from_secs(2))
+            });
         }
         for icon in app.borrow_mut().icon_cache.values() {
             if *icon != 0 {

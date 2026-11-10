@@ -143,6 +143,11 @@ flowchart LR
     I[Icon worker] --> U
 ```
 
+Explicit shutdown releases the AppBar before destroying its window;
+registration state is cleared before shell removal to suppress reentrant position
+negotiation, and shutdown prevents shell-restart re-registration. Destruction retains
+an idempotent removal fallback. Shell removal itself remains synchronous.
+
 The UI owns decisions and runs a blocking Win32 message loop. Callbacks enqueue work
 and return. Shell COM, disk I/O, icon extraction and blocking target messages stay off
 the UI thread. Queues, observations and diagnostics are bounded; geometry events are

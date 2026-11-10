@@ -8,6 +8,7 @@ mod icons;
 mod metrics;
 mod native;
 mod platform;
+mod shutdown_trace;
 mod singleton;
 mod snap_notice;
 mod store;
@@ -199,6 +200,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     }
     if let Some(_instance) = singleton::acquire()? {
         ui::run(settings)?;
+        shutdown_trace::flush();
     } else if settings {
         let _ = ui::remote(&ui::Command::Settings)?;
     }

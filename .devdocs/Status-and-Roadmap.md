@@ -20,6 +20,17 @@ owns completed validation and its limits. A scoped pass is not general release c
 
 ## Known defects and unmet behavior
 
+- Exit can reportedly stall cursor movement until the AppBar reservation clears.
+  A candidate fix releases the reservation before explicit window destruction and
+  disables reentrant AppBar negotiation/re-registration before removal. User testing
+  showed the same freeze, now before the rail disappears: ordering alone did not
+  resolve it. Temporary `DEBUG-exit` timings cover AppBar removal, DWM updates,
+  destruction and storage acknowledgment. They are buffered in memory and written
+  after UI teardown to `%TEMP%/VirtualDesktopRail-shutdown.json` (overwritten per
+  normal exit). Computer-control testing remains excluded by request.
+  One affected exit measured 639 ms in AppBar removal and 419 ms in window
+  destruction; storage did not account for the delay. Internal shell/window waits
+  remain unidentified; see [Testing](Testing.md#verification-layers).
 - Exact last-visit restoration across all Snap, topology and concurrent-action cases
   remains incomplete. Minimized intent is implemented; broader interactive race and
   physical-hardware verification remain open.

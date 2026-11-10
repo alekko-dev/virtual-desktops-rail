@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 const CALLBACK: u32 = 0x8001;
 static REGISTERED: AtomicBool = AtomicBool::new(false);
+static STOPPING: AtomicBool = AtomicBool::new(false);
 static NEGOTIATING: AtomicBool = AtomicBool::new(false);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
@@ -181,6 +182,9 @@ fn negotiate(window: Handle) -> Result<(), std::io::Error> {
 }
 
 pub fn register(window: Handle) -> Result<(), std::io::Error> {
+    if STOPPING.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     TASKBAR_CREATED.store(
         unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) },
         Ordering::Relaxed,
@@ -190,16 +194,30 @@ pub fn register(window: Handle) -> Result<(), std::io::Error> {
     }
     REGISTERED.store(true, Ordering::Relaxed);
     if let Err(error) = negotiate(window) {
+        REGISTERED.store(false, Ordering::Relaxed);
         unsafe {
             SHAppBarMessage(1, &mut data(window));
         }
-        REGISTERED.store(false, Ordering::Relaxed);
         return Err(error);
     }
     Ok(())
 }
 
+/// Release the reservation while the window is still alive. Shell calls can
+/// reenter our procedure: disable negotiation before notifying the shell.
+pub fn unregister(window: Handle) {
+    STOPPING.store(true, Ordering::Relaxed);
+    if REGISTERED.swap(false, Ordering::Relaxed) {
+        crate::shutdown_trace::measure("ABM_REMOVE", || unsafe {
+            SHAppBarMessage(1, &mut data(window));
+        });
+    }
+}
+
 pub fn message(window: Handle, message: u32, wparam: usize, lparam: isize) -> Option<isize> {
+    if STOPPING.load(Ordering::Relaxed) {
+        return None;
+    }
     let taskbar = TASKBAR_CREATED.load(Ordering::Relaxed);
     if taskbar != 0 && message == taskbar {
         REGISTERED.store(false, Ordering::Relaxed);
@@ -266,10 +284,7 @@ pub fn message(window: Handle, message: u32, wparam: usize, lparam: isize) -> Op
             None
         } // ACTIVATE.
         0x0002 => {
-            unsafe {
-                SHAppBarMessage(1, &mut data(window));
-            }
-            REGISTERED.store(false, Ordering::Relaxed);
+            unregister(window);
             None // Main fixture procedure still owns its normal destruction/exit.
         }
         _ => None,

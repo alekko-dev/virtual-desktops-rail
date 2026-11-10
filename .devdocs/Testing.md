@@ -6,6 +6,19 @@ in [Status and roadmap](Status-and-Roadmap.md).
 
 ## Verification layers
 
+The AppBar shutdown-ordering candidate passed `scripts/check-dev.ps1` on
+2026-11-10 (formatting, Clippy, workspace tests, version contracts and release build).
+User testing reported that the freeze persisted and the rail now disappeared only
+after the delay. The subsequent temporary `DEBUG-exit` instrumentation also passed
+the full check script. A user-triggered affected exit on 2026-11-10 with the dirty
+`94eb121` diagnostic build measured `ABM_REMOVE` at 639.33 ms, `DestroyWindow` at
+418.63 ms, reveal cleanup at 2.49 ms, DWM frame updates at 3.90 ms, and the storage
+acknowledgment wait at 0.002 ms. The enclosing `stop` span was 646.18 ms (includes
+AppBar removal); total elapsed through storage acknowledgment was about 1065 ms.
+This single sample localizes the elapsed delay to synchronous shell removal and
+window destruction, but does not identify their internal waits or independently
+measure cursor responsiveness. No computer-control testing was performed, as requested.
+
 For code changes, run `./scripts/check-dev.ps1`: formatting, warnings-denied Clippy,
 locked workspace tests, version contracts and release builds. Pure controller tests
 exercise ordering, identity reuse, geometry, cancellation, recovery and late actions
