@@ -353,6 +353,14 @@ bypass focus restrictions with synthetic Alt or thread-input attachment.
 
 ## Rail presentation
 
+The current desktop name is painted bottom-to-top above the utility divider in
+11-DIP, antialiased Segoe UI, optically centered across the rail with muted foreground color
+(system foreground in high contrast). A DPI-cached supersampled rasterizer and measured full
+text extents keep it clear of desktop/window buttons with 12-DIP gaps. If its full
+length or thickness cannot fit, or the current desktop is unknown, it is omitted
+without truncation. Empty names use the same numbered fallback as desktop tooltips.
+It shares the rail's invalidation and reveal transform and adds no input target.
+
 The default-off `desktop_tint` preference blends the active desktop dot color into
 the rail background (18% in dark theme, 14% in light theme), including owner-drawn
 button backgrounds and the header. The shared paint helper retains the neutral

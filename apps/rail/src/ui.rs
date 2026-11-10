@@ -202,11 +202,21 @@ pub enum Command {
     MinimizeSnappedElsewhere { enabled: bool },
 }
 
+#[derive(Default)]
+struct DesktopNameRaster {
+    name: String,
+    dpi: u32,
+    rail_width: i32,
+    height: i32,
+    mask: Vec<u8>,
+}
+
 struct App {
     window: Handle,
     settings: Handle,
     tooltip: Handle,
     font: Handle,
+    desktop_name_raster: DesktopNameRaster,
     font_dpi: u32,
     settings_fonts: Vec<usize>,
     settings_signature: String,
@@ -991,6 +1001,7 @@ impl App {
                     )
                 };
                 self.font_dpi = dpi;
+                self.desktop_name_raster = DesktopNameRaster::default();
                 if !old_font.is_null() {
                     unsafe {
                         DeleteObject(old_font);
@@ -2060,6 +2071,293 @@ fn smooth_shape(
     }
 }
 
+fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8>) {
+    use windows::Win32::{
+        Foundation::{COLORREF, HANDLE, SIZE},
+        Graphics::Gdi::{
+            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection,
+            DIB_RGB_COLORS, DeleteDC, DeleteObject, GetTextExtentPoint32W, GetTextMetricsW, HDC,
+            HGDIOBJ, SelectObject, SetBkMode, SetTextCharacterExtra, SetTextColor, TEXTMETRICW,
+            TRANSPARENT, TextOutW,
+        },
+    };
+
+    if name.is_empty() || rail_width <= 0 {
+        return (0, Vec::new());
+    }
+
+    const SS: i32 = 4;
+    let font_height = ((11 * dpi as i32 * SS) + 48) / 96;
+    let tracking = ((dpi as i32 * SS) + 144) / 288;
+    let text_utf16 = wide(name);
+    let len = text_utf16.len().saturating_sub(1);
+    if len == 0 {
+        return (0, Vec::new());
+    }
+
+    unsafe {
+        let mem_dc = CreateCompatibleDC(HDC::default());
+        if mem_dc.is_invalid() {
+            return (0, Vec::new());
+        }
+        let font = CreateFontW(
+            -font_height,
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            4,
+            0,
+            wide("Segoe UI").as_ptr(),
+        );
+        if font.is_null() {
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        }
+        let font_obj = HGDIOBJ(font as *mut _);
+        let old_font = SelectObject(mem_dc, font_obj);
+        let _ = SetTextCharacterExtra(mem_dc, tracking);
+
+        let mut size = SIZE::default();
+        if !GetTextExtentPoint32W(mem_dc, &text_utf16[..len], &mut size).as_bool()
+            || size.cx <= 0
+            || size.cy <= 0
+        {
+            SelectObject(mem_dc, old_font);
+            let _ = DeleteObject(font_obj);
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        }
+
+        let mut tm = TEXTMETRICW::default();
+        let _ = GetTextMetricsW(mem_dc, &mut tm);
+
+        let pad = SS * 2;
+        let w4 = size.cx + pad * 2;
+        let h4 = size.cy + pad * 2;
+
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w4,
+                biHeight: -h4,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        let dib = CreateDIBSection(
+            mem_dc,
+            &info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            HANDLE::default(),
+            0,
+        );
+        let Ok(dib) = dib else {
+            SelectObject(mem_dc, old_font);
+            let _ = DeleteObject(font_obj);
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        };
+        if bits.is_null() {
+            SelectObject(mem_dc, old_font);
+            let _ = DeleteObject(dib);
+            let _ = DeleteObject(font_obj);
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        }
+
+        std::ptr::write_bytes(bits as *mut u8, 0, (w4 * h4 * 4) as usize);
+        let old_dib = SelectObject(mem_dc, dib);
+        let _ = SetBkMode(mem_dc, TRANSPARENT);
+        let _ = SetTextColor(mem_dc, COLORREF(0x00FFFFFF));
+        let _ = TextOutW(mem_dc, pad, pad, &text_utf16[..len]);
+
+        let raw = std::slice::from_raw_parts(bits as *const u32, (w4 * h4) as usize);
+        let baseline_y4 = pad + tm.tmAscent;
+        let mut min_x = w4;
+        let mut max_x = -1;
+        let mut min_y = h4;
+        let mut max_y = -1;
+        let mut sum_y = 0.0;
+        let mut total_w = 0.0;
+
+        for y in 0..h4 {
+            let desc_weight = if y > baseline_y4 { 0.25 } else { 1.0 };
+            for x in 0..w4 {
+                let v = (raw[(y * w4 + x) as usize] & 0xFF) as f64;
+                if v > 0.0 {
+                    if x < min_x {
+                        min_x = x;
+                    }
+                    if x > max_x {
+                        max_x = x;
+                    }
+                    if y < min_y {
+                        min_y = y;
+                    }
+                    if y > max_y {
+                        max_y = y;
+                    }
+                    let w = v * desc_weight;
+                    sum_y += (y as f64 + 0.5) * w;
+                    total_w += w;
+                }
+            }
+        }
+
+        if max_x < min_x || max_y < min_y {
+            SelectObject(mem_dc, old_dib);
+            let _ = DeleteObject(dib);
+            SelectObject(mem_dc, old_font);
+            let _ = DeleteObject(font_obj);
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        }
+
+        let optical_y = if total_w > 0.0 {
+            sum_y / total_w
+        } else {
+            0.5 * (min_y + max_y + 1) as f64
+        };
+        let shift_y4 = (rail_width as f64 * SS as f64 * 0.5 - optical_y).round() as i32;
+
+        let span_x4 = max_x - min_x + 1;
+        let out_h = (span_x4 + SS - 1) / SS;
+        let mut mask = vec![0u8; (rail_width * out_h) as usize];
+
+        for vy in 0..out_h {
+            for vx in 0..rail_width {
+                let mut acc = 0u32;
+                for dy in 0..SS {
+                    let ux = max_x - (vy * SS + dy);
+                    if ux < min_x || ux > max_x {
+                        continue;
+                    }
+                    for dx in 0..SS {
+                        let uy = vx * SS + dx - shift_y4;
+                        if uy >= 0 && uy < h4 {
+                            acc += (raw[(uy * w4 + ux) as usize] & 0xFF) as u32;
+                        }
+                    }
+                }
+                mask[(vy * rail_width + vx) as usize] = ((acc + 8) / 16) as u8;
+            }
+        }
+
+        SelectObject(mem_dc, old_dib);
+        let _ = DeleteObject(dib);
+        SelectObject(mem_dc, old_font);
+        let _ = DeleteObject(font_obj);
+        let _ = DeleteDC(mem_dc);
+
+        (out_h, mask)
+    }
+}
+
+fn paint_desktop_name(
+    app: &mut App,
+    dc: Handle,
+    width: i32,
+    footer_top: i32,
+    colors: (u32, u32),
+    high_contrast: bool,
+) {
+    let (background, foreground) = colors;
+    let Some((index, desktop)) = app
+        .model
+        .desktops()
+        .iter()
+        .enumerate()
+        .find(|(_, desktop)| Some(desktop.id.as_str()) == app.model.current())
+    else {
+        return;
+    };
+    let dpi = app.font_dpi.max(96);
+    let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
+    let content_bottom = app
+        .buttons
+        .iter()
+        .filter(|button| matches!(button.kind, ButtonKind::Desktop(_) | ButtonKind::Window(_)))
+        .map(|button| button.y + button.cell)
+        .max()
+        .unwrap_or(scale(42));
+    let bottom = footer_top - scale(12);
+    let name = if desktop.name.is_empty() {
+        format!("Desktop {}", index + 1)
+    } else {
+        desktop.name.clone()
+    };
+
+    if app.desktop_name_raster.name != name
+        || app.desktop_name_raster.dpi != dpi
+        || app.desktop_name_raster.rail_width != width
+    {
+        let (height, mask) = rasterize_desktop_name(&name, dpi, width);
+        app.desktop_name_raster = DesktopNameRaster {
+            name,
+            dpi,
+            rail_width: width,
+            height,
+            mask,
+        };
+    }
+
+    let raster = &app.desktop_name_raster;
+    if raster.height <= 0
+        || raster.height > bottom - content_bottom - scale(12)
+        || raster.rail_width > width
+    {
+        return;
+    }
+
+    let top = bottom - raster.height;
+    let color = if high_contrast {
+        foreground
+    } else {
+        let mut muted = 0;
+        for shift in [0, 8, 16] {
+            let base = (background >> shift) & 255;
+            let text = (foreground >> shift) & 255;
+            muted |= ((base * 40 + text * 60) / 100) << shift;
+        }
+        muted
+    };
+
+    use windows::Win32::{
+        Foundation::COLORREF,
+        Graphics::Gdi::{HDC, SetPixelV},
+    };
+    for vy in 0..raster.height {
+        for vx in 0..raster.rail_width {
+            let alpha = raster.mask[(vy * raster.rail_width + vx) as usize];
+            if alpha == 0 {
+                continue;
+            }
+            let cov = (alpha as f64 / 255.0).powf(0.80);
+            let mut blended = 0u32;
+            for shift in [0, 8, 16] {
+                let a = ((background >> shift) & 255) as f64;
+                let b = ((color >> shift) & 255) as f64;
+                blended |= ((a + (b - a) * cov).round() as u32) << shift;
+            }
+            unsafe {
+                let _ = SetPixelV(HDC(dc), vx, top + vy, COLORREF(blended));
+            }
+        }
+    }
+}
+
 fn rounded_rect_sdf(x: f64, y: f64, half_w: f64, half_h: f64, radius: f64) -> f64 {
     let qx = x.abs() - (half_w - radius);
     let qy = y.abs() - (half_h - radius);
@@ -2606,6 +2904,14 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     border,
                 );
                 let footer_sep_y = client.bottom - scale(132);
+                paint_desktop_name(
+                    &mut app,
+                    dc,
+                    client.right - 1,
+                    footer_sep_y,
+                    (bg, text),
+                    text == accent,
+                );
                 if footer_sep_y > y + scale(16) {
                     fill(
                         dc,
@@ -2794,6 +3100,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         settings: null_mut(),
         tooltip: null_mut(),
         font: null_mut(),
+        desktop_name_raster: DesktopNameRaster::default(),
         font_dpi: 0,
         settings_fonts: Vec::new(),
         settings_signature: String::new(),
@@ -3042,6 +3349,46 @@ mod visual_tests {
                     assert!(difference > 150);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn desktop_name_rasterize_centers_and_fits_across_rail_widths() {
+        let (empty_h, empty_mask) = super::rasterize_desktop_name("", 96, 24);
+        assert_eq!(empty_h, 0);
+        assert!(empty_mask.is_empty());
+
+        for (dpi, rail_w) in [(96, 24), (120, 30), (144, 37), (192, 49)] {
+            let (h, mask) = super::rasterize_desktop_name("Desktop 02", dpi, rail_w);
+            assert!(h > 0);
+            assert_eq!(mask.len(), (rail_w * h) as usize);
+
+            // Verify alpha has smooth anti-aliased gradations:
+            let has_intermediate = mask.iter().any(|&a| a > 20 && a < 235);
+            assert!(
+                has_intermediate,
+                "Must contain smooth anti-aliased coverage"
+            );
+
+            // Verify optical centering:
+            let mut weighted_x = 0.0;
+            let mut total_weight = 0.0;
+            for vy in 0..h {
+                for vx in 0..rail_w {
+                    let a = mask[(vy * rail_w + vx) as usize] as f64;
+                    if a > 16.0 {
+                        weighted_x += (vx as f64 + 0.5) * a;
+                        total_weight += a;
+                    }
+                }
+            }
+            assert!(total_weight > 0.0);
+            let centroid_x = weighted_x / total_weight;
+            let target_center = rail_w as f64 * 0.5;
+            assert!(
+                (centroid_x - target_center).abs() < 0.75,
+                "DPI {dpi}: Centroid {centroid_x:.2} should be close to rail center {target_center:.2}"
+            );
         }
     }
 
