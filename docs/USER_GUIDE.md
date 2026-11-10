@@ -13,6 +13,7 @@ A narrow 25-DIP rail sits on the left edge of your primary display, reserving sp
 | Visible background window icon | Bring the window forward. |
 | Foreground window icon | Minimize the window. |
 | Under-icon indicator | Solid means visible; outlined means minimized. App icons keep their normal appearance. |
+| Light switch above Pause | Toggle Windows light/dark colors for both apps and the system. The tooltip names the next mode; from a custom mixed mode, the app color mode determines the next mode. Apps with their own theme override may keep their chosen appearance. |
 | Pause / Resume | Suspend or resume automatic window actions. Manual controls continue working. |
 | Sliders button | Open Settings. Done closes Settings. |
 | Save diagnostic report… | Choose a local ZIP destination for the redacted support report. |

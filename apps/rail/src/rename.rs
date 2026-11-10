@@ -106,7 +106,7 @@ impl Popover {
             if window.is_null() {
                 return None;
             }
-            let dark_mode = BOOL(i32::from(crate::ui::dark()));
+            let dark_mode = BOOL(i32::from(crate::theme::dark()));
             let corner = DWMWCP_ROUND;
             let _ = DwmSetWindowAttribute(
                 HWND(window),

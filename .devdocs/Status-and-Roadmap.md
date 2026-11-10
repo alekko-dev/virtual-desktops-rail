@@ -8,7 +8,7 @@ owns completed validation and its limits. A scoped pass is not general release c
 
 | Area | Implemented scope | Verification boundary |
 | --- | --- | --- |
-| Native rail | Primary-left AppBar, desktop dots/tooltips, icon-only shared-window controls, pause, Settings and Exit | Real input/rendering and passive fullscreen checks exist; broader display/accessibility coverage remains open |
+| Native rail | Primary-left AppBar, desktop dots/tooltips, icon-only shared-window controls, Windows light/dark switch, pause, Settings and Exit | User approved the sun/moon glyph and confirmed theme switching works; computer-control tests skipped at user request. Real input/rendering and passive fullscreen checks exist for earlier controls; broader display/accessibility coverage remains open |
 | Desktop naming | Right-click/F2 rename popover, keyboard save/cancel, GUID-targeted Windows rename with read-back confirmation, inline errors | Automated input validation and user-verified compact light-theme popover appearance covered; broader pointer/keyboard, error-expansion, dark/high-contrast and Task View synchronization checks remain open. |
 | Shared-window discovery | Individual OR app-level pins, minimized inventory, bounded cached reconciliation/rescans | Task View pin origin established on the initial tested revision; later API tests do not establish origin |
 | Layout management | Independent normal/maximized desktop layouts, clamped fallback, default minimize-on-switch and manual restore/focus | Owned A/B/A, duplicate, modal and restart cases passed locally |

@@ -8,7 +8,7 @@ are tracked in [Status and roadmap](Status-and-Roadmap.md); completed evidence i
 
 The utility is a native, per-user Windows 11 x64 application. A 25-DIP AppBar reserves
 the primary display's left edge (releasing that work-area reservation on exit, where standard Win32 work-area updates may shift windows anchored to workspace coordinates). Desktop dots precede one icon-only button per eligible
-shared window. Settings and pause controls occupy the bottom, with a separate Exit
+shared window. Light switch, pause and Settings controls occupy the bottom, with a separate Exit
 button below Settings. The current desktop uses a larger filled dot; inactive desktops
 use colored outlines. Application icons have solid/outlined visibility indicators
 beneath. There are no window-title labels/tooltips, context menus, pinning
@@ -95,6 +95,7 @@ provide only small artwork can still require enlargement.
 | `crates/rail-core/tests/controller.rs` | Named controller regression scenarios and seeded event-sequence invariant checks |
 | `apps/rail/src/main.rs` | GUI/CLI entry, command delivery and integration-worker mode |
 | `apps/rail/src/ui.rs` | Native controls, paint/input, WinEvents, settings and orchestration |
+| `apps/rail/src/theme.rs` | Per-user Windows app/system color-mode writes and off-UI change notification |
 | `apps/rail/src/appbar.rs` | Work-area reservation, fullscreen/z-order and shell recovery |
 | `apps/rail/src/platform.rs` | OS eligibility, window properties, candidates, identity and geometry |
 | `apps/rail/src/bridge.rs` | Shell COM subprocess, bounded protocol, watchdog, backoff and JobObject |
@@ -370,6 +371,17 @@ tokens prevent stale replies from dismissing a newer edit. Dismissal after submi
 does not cancel a shell operation already in progress. Names are owned by Windows,
 not duplicated in rail storage or diagnostic history.
 
+The bottom light switch sets both `AppsUseLightTheme` and `SystemUsesLightTheme`
+under the current user's Windows `Themes\Personalize` key, choosing the opposite
+of the current app mode. Its sun/moon glyph shows the destination mode, matching its
+tooltip and accessible name. No appearance preference is stored in rail state. A short-lived
+worker writes and reads back the values, then broadcasts `WM_SETTINGCHANGE` with
+`ImmersiveColorSet` using a per-recipient timeout. The button is disabled while busy;
+completion refreshes its accessible name/tooltip, and failures open the Settings notice.
+If the app-mode write fails after the system-mode write, the previous system mode is
+restored where possible. Registry readback establishes preference persistence, not
+that every running application rendered the new mode. High-contrast painting remains
+governed by system accessibility colors.
 
 The default-off `desktop_tint` preference blends the active desktop dot color into
 the rail background (18% in dark theme, 14% in light theme), including owner-drawn
@@ -380,8 +392,8 @@ The preference is backward-compatible in schema 1 and participates in revision-b
 cross-session preference merges; changing it does not alter controller actions.
 
 A reduced, muted 14-DIP header badge with a divider precedes the desktop dots; a bottom
-divider separates the window buttons from the compact muted utility icons (Play/Pause,
-Settings, Exit). Owner-drawn buttons track mouse hover (`TrackMouseEvent`), pressed
+divider separates the window buttons from the compact muted utility icons (Light switch,
+Play/Pause, Settings, Exit). Owner-drawn buttons track mouse hover (`TrackMouseEvent`), pressed
 state, and keyboard-only focus (`:focus-visible` behavior) to paint rounded highlight
 surfaces and brighten utility glyphs on interaction without leaving sticky focus rings
 after passive mouse clicks. Under-icon visibility indicators use DPI-scaled anti-aliased

@@ -2,7 +2,7 @@ pub(crate) const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be ver
 
 use crate::{
     EVENTS, Event, MAIN_WINDOW, OVERRUN, WAKE, actions, bridge, icons, native::*, notify, platform,
-    rename, store,
+    rename, store, theme, theme::dark,
 };
 use crossbeam_channel::{Receiver, Sender};
 use rail_core::{Model, Saved};
@@ -32,6 +32,7 @@ fn app_icon(size: i32) -> Handle {
 }
 const PAUSE: usize = 5000;
 const SETTINGS: usize = 5001;
+const LIGHT_SWITCH: usize = 5002;
 const SET_PAUSE: usize = 6000;
 const STARTUP: usize = 6001;
 const RETRY: usize = 6002;
@@ -86,6 +87,7 @@ enum ButtonKind {
     Desktop(String),
     Window(String),
     Pause,
+    LightSwitch,
     Settings,
     Exit,
 }
@@ -244,6 +246,7 @@ struct App {
     transition_received_us: Option<u64>,
     dispatch_latency: crate::metrics::DispatchLatency,
     startup_busy: bool,
+    theme_busy: bool,
     report_busy: bool,
     diagnostic_window_labels: BTreeMap<String, String>,
     diagnostic_desktop_labels: BTreeMap<String, String>,
@@ -956,6 +959,14 @@ impl App {
                         }
                     }
                 }
+                Event::Theme(result) => {
+                    self.theme_busy = false;
+                    if let Err(error) = result {
+                        self.notice = format!("Windows theme could not be changed: {error}");
+                        self.show_settings();
+                    }
+                    self.signature.clear();
+                }
                 Event::Icon(key, dpi, icon) => {
                     self.icon_pending.remove(&(key.clone(), dpi));
                     if self.model.runtime(&key).is_some_and(|r| r.present())
@@ -1032,7 +1043,7 @@ impl App {
         let dpi = unsafe { GetDpiForWindow(self.window) }.max(96);
         let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
         let signature = format!(
-            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}",
+            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}",
             self.model.desktops(),
             self.model.current(),
             self.ready,
@@ -1048,7 +1059,9 @@ impl App {
                 .collect::<Vec<_>>(),
             dpi,
             self.status,
-            self.model.saved().desktop_tint
+            self.model.saved().desktop_tint,
+            self.theme_busy,
+            dark()
         );
         if force || signature != self.signature {
             self.signature = signature;
@@ -1139,6 +1152,21 @@ impl App {
                 }
                 y += scale(45);
             }
+            specs.push((
+                LIGHT_SWITCH,
+                if self.theme_busy {
+                    "Changing Windows theme…"
+                } else if dark() {
+                    "Switch Windows to light theme"
+                } else {
+                    "Switch Windows to dark theme"
+                }
+                .into(),
+                bounds.bottom - scale(162),
+                scale(34),
+                ButtonKind::LightSwitch,
+                !self.theme_busy,
+            ));
             specs.push((
                 PAUSE,
                 format!(
@@ -1983,35 +2011,6 @@ fn save_report_dialog(owner: Handle) -> Result<Option<std::path::PathBuf>, Strin
     ))))
 }
 
-pub(crate) fn dark() -> bool {
-    #[link(name = "advapi32")]
-    unsafe extern "system" {
-        fn RegGetValueW(
-            key: isize,
-            subkey: *const u16,
-            value: *const u16,
-            flags: u32,
-            kind: *mut u32,
-            data: *mut u32,
-            size: *mut u32,
-        ) -> i32;
-    }
-    let mut value = 1u32;
-    let mut size = 4;
-    unsafe {
-        RegGetValueW(
-            0x80000001u32 as i32 as isize,
-            wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize").as_ptr(),
-            wide("AppsUseLightTheme").as_ptr(),
-            0x10,
-            null_mut(),
-            &mut value,
-            &mut size,
-        );
-    }
-    value == 0
-}
-
 unsafe fn fill(dc: Handle, rect: &Rect, color: u32) {
     unsafe {
         let brush = CreateSolidBrush(color);
@@ -2267,7 +2266,10 @@ fn draw(app: &App, item: &DrawItem) {
                         }
                     });
                 }
-                ButtonKind::Pause | ButtonKind::Settings | ButtonKind::Exit => {
+                ButtonKind::Pause
+                | ButtonKind::LightSwitch
+                | ButtonKind::Settings
+                | ButtonKind::Exit => {
                     let color = if matches!(button.kind, ButtonKind::Pause) && !app.ready {
                         unavailable
                     } else if hovered || pressed {
@@ -2284,6 +2286,30 @@ fn draw(app: &App, item: &DrawItem) {
                             let stem = segment_sdf(x, y, 0.0, -2.2, 0.0, 1.2, 0.65);
                             let dot = (x * x + (y - 3.4).powi(2)).sqrt() - 0.75;
                             outline.min(stem).min(dot)
+                        } else if matches!(button.kind, ButtonKind::LightSwitch) {
+                            // Show the destination mode: sun for light, crescent for dark.
+                            if is_dark {
+                                let disk = x.hypot(y) - 2.6;
+                                let mut rays = f64::INFINITY;
+                                for ray in 0..8 {
+                                    let angle = f64::from(ray) * std::f64::consts::FRAC_PI_4;
+                                    let (sin, cos) = angle.sin_cos();
+                                    rays = rays.min(segment_sdf(
+                                        x,
+                                        y,
+                                        cos * 4.2,
+                                        sin * 4.2,
+                                        cos * 5.8,
+                                        sin * 5.8,
+                                        0.6,
+                                    ));
+                                }
+                                disk.min(rays)
+                            } else {
+                                let disk = x.hypot(y) - 5.1;
+                                let cutout = (x - 2.6).hypot(y + 2.1) - 4.8;
+                                disk.max(-cutout)
+                            }
                         } else if matches!(button.kind, ButtonKind::Settings) {
                             let upper_left = segment_sdf(x, y, -5.2, -3.0, -4.4, -3.0, 0.65);
                             let upper_right = segment_sdf(x, y, -0.2, -3.0, 5.2, -3.0, 0.65);
@@ -2700,7 +2726,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     },
                     border,
                 );
-                let footer_sep_y = client.bottom - scale(132);
+                let footer_sep_y = client.bottom - scale(172);
                 if footer_sep_y > y + scale(16) {
                     fill(
                         dc,
@@ -2767,6 +2793,19 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                             app.command(command);
                         }
                         ButtonKind::Settings => app.command(Command::Settings),
+                        ButtonKind::LightSwitch => {
+                            if !app.theme_busy {
+                                match theme::start_toggle() {
+                                    Ok(()) => app.theme_busy = true,
+                                    Err(error) => {
+                                        app.notice =
+                                            format!("Windows theme could not be changed: {error}");
+                                        app.show_settings();
+                                    }
+                                }
+                                app.render(false);
+                            }
+                        }
                         ButtonKind::Exit => app.command(Command::Exit),
                     }
                 }
@@ -2917,6 +2956,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         transition_received_us: None,
         dispatch_latency: Default::default(),
         startup_busy: false,
+        theme_busy: false,
         report_busy: false,
         diagnostic_window_labels: BTreeMap::new(),
         diagnostic_desktop_labels: BTreeMap::new(),

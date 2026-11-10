@@ -12,6 +12,7 @@ mod rename;
 mod singleton;
 mod snap_notice;
 mod store;
+mod theme;
 mod ui;
 mod version;
 use native::{Handle, Point, Rect, wide};
@@ -69,6 +70,7 @@ enum Event {
     Stored(Result<(), String>),
     Report(Result<std::path::PathBuf, String>),
     Startup(bool, Result<(), String>),
+    Theme(Result<(), String>),
     Icon(String, u32, usize),
     NativeWindow(u32, usize, u64),
 }
