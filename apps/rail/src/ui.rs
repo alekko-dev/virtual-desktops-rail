@@ -41,6 +41,7 @@ const DONE: usize = 6004;
 const AUTO_RESTORE: usize = 6005;
 const MINIMIZE_SNAPPED_ELSEWHERE: usize = 6006;
 const DESKTOP_TINT: usize = 6007;
+const SHOW_DESKTOP_NAME: usize = 6008;
 const SAVE_REPORT: usize = 6105;
 const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
 const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
@@ -210,6 +211,7 @@ pub enum Command {
     ExperimentalIntegration { enabled: bool },
     AutoRestore { enabled: bool },
     DesktopTint { enabled: bool },
+    ShowDesktopName { enabled: bool },
     MinimizeSnappedElsewhere { enabled: bool },
 }
 
@@ -491,6 +493,9 @@ impl App {
             Command::DesktopTint { enabled } => {
                 self.model.set_desktop_tint(enabled);
             }
+            Command::ShowDesktopName { enabled } => {
+                self.model.set_show_desktop_name(enabled);
+            }
             Command::AutoRestore { enabled } => {
                 self.model.set_auto_restore(enabled);
                 let _ = self.storage.sender.try_send(store::Work::Trace(
@@ -558,6 +563,7 @@ impl App {
                     "auto_restore":saved.auto_restore,
                     "minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
                     "desktop_tint":saved.desktop_tint,
+                    "show_desktop_name":saved.show_desktop_name,
                     "desktops":self.model.desktops(),"windows":self.model.present().map(|(key,r)|serde_json::json!({
                         "key":key,"hwnd":r.window().hwnd,"pid":r.window().pid,"minimized":r.window().minimized,"blocked":r.blocked(),
                         "responsive":r.window().responsive,"pending":r.pending().is_some(),"layout":r.window().layout,
@@ -1053,7 +1059,7 @@ impl App {
         let dpi = unsafe { GetDpiForWindow(self.window) }.max(96);
         let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
         let signature = format!(
-            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}",
+            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}",
             self.model.desktops(),
             self.model.current(),
             self.ready,
@@ -1070,6 +1076,7 @@ impl App {
             dpi,
             self.status,
             self.model.saved().desktop_tint,
+            self.model.saved().show_desktop_name,
             self.theme_busy,
             dark()
         );
@@ -1406,7 +1413,7 @@ impl App {
                 200,
                 160,
                 scale(560),
-                scale(492),
+                scale(526),
                 self.window,
                 null_mut(),
                 GetModuleHandleW(null()),
@@ -1507,12 +1514,22 @@ impl App {
                 28,
             ),
             (
+                SHOW_DESKTOP_NAME,
+                "BUTTON",
+                "Show desktop name",
+                0x50010003,
+                24,
+                294,
+                496,
+                28,
+            ),
+            (
                 6104,
                 "STATIC",
                 "Desktop integration",
                 0x50000000,
                 24,
-                310,
+                344,
                 496,
                 22,
             ),
@@ -1522,7 +1539,7 @@ impl App {
                 "Retry desktop integration",
                 0x50010000,
                 24,
-                338,
+                372,
                 212,
                 32,
             ),
@@ -1532,16 +1549,16 @@ impl App {
                 "Save diagnostic report…",
                 0x50010000,
                 248,
-                338,
+                372,
                 272,
                 32,
             ),
-            (6106, "STATIC", "", 0x50000010, 0, 386, 560, 1),
-            (DONE, "BUTTON", "Done", 0x50010001, 432, 402, 88, 34),
-            (6107, "STATIC", "●", 0x50000000, 24, 397, 10, 18),
-            (6100, "STATIC", "", 0x50000000, 36, 398, 372, 28),
+            (6106, "STATIC", "", 0x50000010, 0, 420, 560, 1),
+            (DONE, "BUTTON", "Done", 0x50010001, 432, 436, 88, 34),
+            (6107, "STATIC", "●", 0x50000000, 24, 431, 10, 18),
+            (6100, "STATIC", "", 0x50000000, 36, 432, 372, 28),
             // Selectable, scrollable details; it occupies no space while hidden.
-            (6109, "EDIT", "", 0x40a10844, 24, 422, 496, 0),
+            (6109, "EDIT", "", 0x40a10844, 24, 456, 496, 0),
         ] {
             let child = unsafe {
                 CreateWindowExW(
@@ -1576,7 +1593,7 @@ impl App {
                 wide(&label).as_ptr(),
                 0x50000000,
                 scale(36),
-                scale(426),
+                scale(460),
                 scale(372),
                 scale(14),
                 self.settings,
@@ -1644,7 +1661,7 @@ impl App {
                 SelectObject(dc, previous);
                 ReleaseDC(window, dc);
                 // The read-only edit keeps oversized details selectable and scrollable.
-                let available = (work[3] - work[1] - chrome - px(492)).max(px(24));
+                let available = (work[3] - work[1] - chrome - px(526)).max(px(24));
                 notice_height =
                     (bounds.bottom - bounds.top + px(12)).clamp(px(28), available.max(px(28)));
             }
@@ -1655,12 +1672,12 @@ impl App {
                 notice_height + px(12)
             };
             for (id, x, y, width, height) in [
-                (6109, px(24), px(422), px(496), notice_height),
-                (6108, px(36), px(426) + extra, px(372), px(14)),
+                (6109, px(24), px(456), px(496), notice_height),
+                (6108, px(36), px(460) + extra, px(372), px(14)),
                 (
                     DONE as i32,
                     px(432),
-                    if extra == 0 { px(402) } else { px(426) + extra },
+                    if extra == 0 { px(436) } else { px(460) + extra },
                     px(88),
                     px(34),
                 ),
@@ -1676,9 +1693,9 @@ impl App {
                 );
             }
             let height = if extra == 0 {
-                px(492)
+                px(526)
             } else {
-                px(492) + notice_height + chrome
+                px(526) + notice_height + chrome
             };
             let top = outer.top.clamp(work[1], (work[3] - height).max(work[1]));
             let left = outer
@@ -1710,7 +1727,7 @@ impl App {
         }
         let saved = self.model.saved();
         let signature = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.status,
             self.notice,
             saved.paused,
@@ -1720,7 +1737,8 @@ impl App {
             saved.experimental_integration,
             saved.auto_restore,
             saved.minimize_snapped_elsewhere,
-            saved.desktop_tint
+            saved.desktop_tint,
+            saved.show_desktop_name
         );
         if signature == self.settings_signature {
             return;
@@ -1729,10 +1747,21 @@ impl App {
         let startup = saved.startup;
         let auto_restore = saved.auto_restore;
         let desktop_tint = saved.desktop_tint;
+        let show_desktop_name = saved.show_desktop_name;
         let minimize_snapped_elsewhere = saved.minimize_snapped_elsewhere;
         self.settings_signature = signature;
         self.layout_settings_notice();
         unsafe {
+            SendMessageW(
+                GetDlgItem(self.settings, SHOW_DESKTOP_NAME as i32),
+                0xf1,
+                show_desktop_name as usize,
+                0,
+            );
+            EnableWindow(
+                GetDlgItem(self.settings, SHOW_DESKTOP_NAME as i32),
+                self.loaded as i32,
+            );
             SendMessageW(
                 GetDlgItem(self.settings, DESKTOP_TINT as i32),
                 0xf1,
@@ -1884,7 +1913,7 @@ impl App {
             "application":crate::version::info(),
             "integration":{"status":self.status,"ready":self.ready},
             "settings":{"paused":saved.paused,"auto_restore":saved.auto_restore,"minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
-                    "desktop_tint":saved.desktop_tint,"startup":saved.startup},
+                    "desktop_tint":saved.desktop_tint,"show_desktop_name":saved.show_desktop_name,"startup":saved.startup},
             "desktops":desktops,
             "model":{"generation":self.model.generation(),"transition_serial":self.model.transition_serial(),"current_desktop":current_desktop},
             "dispatch_latency":self.dispatch_latency,
@@ -2359,6 +2388,9 @@ fn paint_desktop_name(
     colors: (u32, u32),
     high_contrast: bool,
 ) {
+    if !app.model.saved().show_desktop_name {
+        return;
+    }
     let (background, foreground) = colors;
     let Some((index, desktop)) = app
         .model
@@ -3144,6 +3176,12 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                             SendMessageW(GetDlgItem(window, DESKTOP_TINT as i32), 0xf0, 0, 0)
                         } != 0;
                         app.command(Command::DesktopTint { enabled });
+                    }
+                    SHOW_DESKTOP_NAME => {
+                        let enabled = unsafe {
+                            SendMessageW(GetDlgItem(window, SHOW_DESKTOP_NAME as i32), 0xf0, 0, 0)
+                        } != 0;
+                        app.command(Command::ShowDesktopName { enabled });
                     }
                     AUTO_RESTORE => {
                         let enabled = unsafe {

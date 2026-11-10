@@ -277,6 +277,14 @@ impl Model {
         }
     }
 
+    pub fn set_show_desktop_name(&mut self, enabled: bool) {
+        if self.saved.show_desktop_name != enabled {
+            self.saved.show_desktop_name = enabled;
+            self.saved.bump_preferences();
+            self.dirty = true;
+        }
+    }
+
     pub fn set_auto_restore(&mut self, enabled: bool) {
         if self.saved.auto_restore == enabled {
             return;
