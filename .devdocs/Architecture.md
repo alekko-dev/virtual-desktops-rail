@@ -361,6 +361,8 @@ text extents keep it clear of desktop/window buttons with 12-DIP gaps. If its fu
 length or thickness cannot fit, or the current desktop is unknown, it is omitted
 without truncation. Empty names use the same numbered fallback as desktop tooltips.
 It shares the rail's invalidation and reveal transform and adds no input target.
+The rasterizer flushes GDI drawing before reading DIB memory so queued text output
+cannot be sampled as an empty mask and cached as an invisible label.
 **Appearance → Show desktop name** controls visibility immediately. The default-on
 `show_desktop_name` preference defaults to true for older schema-1 files, persists
 explicit opt-outs, and participates in revision-based cross-session preference merges.

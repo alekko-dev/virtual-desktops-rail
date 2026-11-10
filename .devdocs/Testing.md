@@ -346,6 +346,13 @@ families under ignored `artifacts/` are supporting references only.
 | 2026-11-05; Windows 11 x64 | Rail visual refinements (14-DIP header badge with divider, DPI-scaled anti-aliased window status pills, owner-draw hover/pressed surface highlights, keyboard-only focus ring visibility, footer separator, and scaled-down rounded utility icons) passed `check-dev.ps1` (formatting, Clippy, workspace tests, version contracts, and locked release builds). Live visual and pointer behavior was inspected and verified by the user; automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was installed in the session. |
 | 2026-11-10; Windows 11 x64 | Vertical current-desktop name uses DPI-cached 4x supersampled rasterization and descender-compensated optical rail centering. Default-on Appearance visibility preference includes legacy-default, explicit opt-out round-trip and cross-session merge coverage. Passed `check-dev.ps1` (formatting, Clippy, workspace tests including raster coverage/centering at 96/120/144/192 DPI, version contracts, and locked release builds). Built into a separate target directory because the original release EXE was running. Computer-control tests were skipped by request; final rendering, Settings geometry/input and overflow hiding remain unverified live. |
 
+The desktop-name raster test also compares nonempty, identical masks with thread-local
+GDI batch limits of 1 and 4096 across 96/120/144/192 DPI, restoring the original limit
+even after assertion failure. It passed both before and after the explicit pre-read
+`GdiFlush` fix on this host, so it does not reproduce the reported scheduling failure.
+The flush enforces the documented DIB memory synchronization requirement; full
+`check-dev.ps1` checks passed for the follow-up. Live UI checks remain skipped by request.
+
 The actual-product `snap-next-*` run also passed pause/resume, post-completion retry,
 member close/unpin and fresh replacement identity without inherited layouts. Its
 shared-divider drag moved both boundaries by 125 pixels. These are scoped recovery

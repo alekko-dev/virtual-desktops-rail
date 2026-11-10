@@ -2191,9 +2191,9 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
         Foundation::{COLORREF, HANDLE, SIZE},
         Graphics::Gdi::{
             BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection,
-            DIB_RGB_COLORS, DeleteDC, DeleteObject, GetTextExtentPoint32W, GetTextMetricsW, HDC,
-            HGDIOBJ, SelectObject, SetBkMode, SetTextCharacterExtra, SetTextColor, TEXTMETRICW,
-            TRANSPARENT, TextOutW,
+            DIB_RGB_COLORS, DeleteDC, DeleteObject, GdiFlush, GetTextExtentPoint32W,
+            GetTextMetricsW, HDC, HGDIOBJ, SelectObject, SetBkMode, SetTextCharacterExtra,
+            SetTextColor, TEXTMETRICW, TRANSPARENT, TextOutW,
         },
     };
 
@@ -2297,6 +2297,8 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
         let _ = SetBkMode(mem_dc, TRANSPARENT);
         let _ = SetTextColor(mem_dc, COLORREF(0x00FFFFFF));
         let _ = TextOutW(mem_dc, pad, pad, &text_utf16[..len]);
+        // Synchronize batched drawing before accessing the CreateDIBSection bits.
+        let _ = GdiFlush();
 
         let raw = std::slice::from_raw_parts(bits as *const u32, (w4 * h4) as usize);
         let baseline_y4 = pad + tm.tmAscent;
@@ -3550,6 +3552,39 @@ mod visual_tests {
                         .sum();
                     assert!(difference > 150);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn desktop_name_raster_is_independent_of_gdi_batching() {
+        use windows::Win32::Graphics::Gdi::{GdiFlush, GdiSetBatchLimit};
+
+        struct RestoreBatchLimit(u32);
+        impl Drop for RestoreBatchLimit {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = GdiFlush();
+                    GdiSetBatchLimit(self.0);
+                }
+            }
+        }
+
+        // Batch limits are thread-local; restore even if an assertion fails.
+        let restore = RestoreBatchLimit(unsafe { GdiSetBatchLimit(1) });
+        assert_ne!(restore.0, 0);
+        for dpi in [96, 120, 144, 192] {
+            let width = (24 * dpi / 96) as i32;
+            unsafe { GdiSetBatchLimit(1) };
+            let immediate = super::rasterize_desktop_name("Desktop 02", dpi, width);
+            assert!(immediate.0 > 0);
+            unsafe { GdiSetBatchLimit(4096) };
+            for _ in 0..8 {
+                let batched = super::rasterize_desktop_name("Desktop 02", dpi, width);
+                assert_eq!(
+                    batched, immediate,
+                    "Raster changed with GDI batching at {dpi} DPI"
+                );
             }
         }
     }
