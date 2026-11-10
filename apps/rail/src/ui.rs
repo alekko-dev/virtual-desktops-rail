@@ -41,6 +41,7 @@ const DONE: usize = 6004;
 const AUTO_RESTORE: usize = 6005;
 const MINIMIZE_SNAPPED_ELSEWHERE: usize = 6006;
 const DESKTOP_TINT: usize = 6007;
+const SHOW_DESKTOP_NAME: usize = 6008;
 const SAVE_REPORT: usize = 6105;
 const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
 const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
@@ -210,7 +211,17 @@ pub enum Command {
     ExperimentalIntegration { enabled: bool },
     AutoRestore { enabled: bool },
     DesktopTint { enabled: bool },
+    ShowDesktopName { enabled: bool },
     MinimizeSnappedElsewhere { enabled: bool },
+}
+
+#[derive(Default)]
+struct DesktopNameRaster {
+    name: String,
+    dpi: u32,
+    rail_width: i32,
+    height: i32,
+    mask: Vec<u8>,
 }
 
 struct App {
@@ -219,6 +230,7 @@ struct App {
     rename: Option<rename::Popover>,
     tooltip: Handle,
     font: Handle,
+    desktop_name_raster: DesktopNameRaster,
     font_dpi: u32,
     settings_fonts: Vec<usize>,
     settings_signature: String,
@@ -481,6 +493,9 @@ impl App {
             Command::DesktopTint { enabled } => {
                 self.model.set_desktop_tint(enabled);
             }
+            Command::ShowDesktopName { enabled } => {
+                self.model.set_show_desktop_name(enabled);
+            }
             Command::AutoRestore { enabled } => {
                 self.model.set_auto_restore(enabled);
                 let _ = self.storage.sender.try_send(store::Work::Trace(
@@ -548,6 +563,7 @@ impl App {
                     "auto_restore":saved.auto_restore,
                     "minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
                     "desktop_tint":saved.desktop_tint,
+                    "show_desktop_name":saved.show_desktop_name,
                     "desktops":self.model.desktops(),"windows":self.model.present().map(|(key,r)|serde_json::json!({
                         "key":key,"hwnd":r.window().hwnd,"pid":r.window().pid,"minimized":r.window().minimized,"blocked":r.blocked(),
                         "responsive":r.window().responsive,"pending":r.pending().is_some(),"layout":r.window().layout,
@@ -1043,7 +1059,7 @@ impl App {
         let dpi = unsafe { GetDpiForWindow(self.window) }.max(96);
         let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
         let signature = format!(
-            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}",
+            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}",
             self.model.desktops(),
             self.model.current(),
             self.ready,
@@ -1060,6 +1076,7 @@ impl App {
             dpi,
             self.status,
             self.model.saved().desktop_tint,
+            self.model.saved().show_desktop_name,
             self.theme_busy,
             dark()
         );
@@ -1086,6 +1103,7 @@ impl App {
                     )
                 };
                 self.font_dpi = dpi;
+                self.desktop_name_raster = DesktopNameRaster::default();
                 if !old_font.is_null() {
                     unsafe {
                         DeleteObject(old_font);
@@ -1395,7 +1413,7 @@ impl App {
                 200,
                 160,
                 scale(560),
-                scale(492),
+                scale(526),
                 self.window,
                 null_mut(),
                 GetModuleHandleW(null()),
@@ -1496,12 +1514,22 @@ impl App {
                 28,
             ),
             (
+                SHOW_DESKTOP_NAME,
+                "BUTTON",
+                "Show desktop name",
+                0x50010003,
+                24,
+                294,
+                496,
+                28,
+            ),
+            (
                 6104,
                 "STATIC",
                 "Desktop integration",
                 0x50000000,
                 24,
-                310,
+                344,
                 496,
                 22,
             ),
@@ -1511,7 +1539,7 @@ impl App {
                 "Retry desktop integration",
                 0x50010000,
                 24,
-                338,
+                372,
                 212,
                 32,
             ),
@@ -1521,16 +1549,16 @@ impl App {
                 "Save diagnostic report…",
                 0x50010000,
                 248,
-                338,
+                372,
                 272,
                 32,
             ),
-            (6106, "STATIC", "", 0x50000010, 0, 386, 560, 1),
-            (DONE, "BUTTON", "Done", 0x50010001, 432, 402, 88, 34),
-            (6107, "STATIC", "●", 0x50000000, 24, 397, 10, 18),
-            (6100, "STATIC", "", 0x50000000, 36, 398, 372, 28),
+            (6106, "STATIC", "", 0x50000010, 0, 420, 560, 1),
+            (DONE, "BUTTON", "Done", 0x50010001, 432, 436, 88, 34),
+            (6107, "STATIC", "●", 0x50000000, 24, 431, 10, 18),
+            (6100, "STATIC", "", 0x50000000, 36, 432, 372, 28),
             // Selectable, scrollable details; it occupies no space while hidden.
-            (6109, "EDIT", "", 0x40a10844, 24, 422, 496, 0),
+            (6109, "EDIT", "", 0x40a10844, 24, 456, 496, 0),
         ] {
             let child = unsafe {
                 CreateWindowExW(
@@ -1565,7 +1593,7 @@ impl App {
                 wide(&label).as_ptr(),
                 0x50000000,
                 scale(36),
-                scale(426),
+                scale(460),
                 scale(372),
                 scale(14),
                 self.settings,
@@ -1633,7 +1661,7 @@ impl App {
                 SelectObject(dc, previous);
                 ReleaseDC(window, dc);
                 // The read-only edit keeps oversized details selectable and scrollable.
-                let available = (work[3] - work[1] - chrome - px(492)).max(px(24));
+                let available = (work[3] - work[1] - chrome - px(526)).max(px(24));
                 notice_height =
                     (bounds.bottom - bounds.top + px(12)).clamp(px(28), available.max(px(28)));
             }
@@ -1644,12 +1672,12 @@ impl App {
                 notice_height + px(12)
             };
             for (id, x, y, width, height) in [
-                (6109, px(24), px(422), px(496), notice_height),
-                (6108, px(36), px(426) + extra, px(372), px(14)),
+                (6109, px(24), px(456), px(496), notice_height),
+                (6108, px(36), px(460) + extra, px(372), px(14)),
                 (
                     DONE as i32,
                     px(432),
-                    if extra == 0 { px(402) } else { px(426) + extra },
+                    if extra == 0 { px(436) } else { px(460) + extra },
                     px(88),
                     px(34),
                 ),
@@ -1665,9 +1693,9 @@ impl App {
                 );
             }
             let height = if extra == 0 {
-                px(492)
+                px(526)
             } else {
-                px(492) + notice_height + chrome
+                px(526) + notice_height + chrome
             };
             let top = outer.top.clamp(work[1], (work[3] - height).max(work[1]));
             let left = outer
@@ -1699,7 +1727,7 @@ impl App {
         }
         let saved = self.model.saved();
         let signature = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.status,
             self.notice,
             saved.paused,
@@ -1709,7 +1737,8 @@ impl App {
             saved.experimental_integration,
             saved.auto_restore,
             saved.minimize_snapped_elsewhere,
-            saved.desktop_tint
+            saved.desktop_tint,
+            saved.show_desktop_name
         );
         if signature == self.settings_signature {
             return;
@@ -1718,10 +1747,21 @@ impl App {
         let startup = saved.startup;
         let auto_restore = saved.auto_restore;
         let desktop_tint = saved.desktop_tint;
+        let show_desktop_name = saved.show_desktop_name;
         let minimize_snapped_elsewhere = saved.minimize_snapped_elsewhere;
         self.settings_signature = signature;
         self.layout_settings_notice();
         unsafe {
+            SendMessageW(
+                GetDlgItem(self.settings, SHOW_DESKTOP_NAME as i32),
+                0xf1,
+                show_desktop_name as usize,
+                0,
+            );
+            EnableWindow(
+                GetDlgItem(self.settings, SHOW_DESKTOP_NAME as i32),
+                self.loaded as i32,
+            );
             SendMessageW(
                 GetDlgItem(self.settings, DESKTOP_TINT as i32),
                 0xf1,
@@ -1873,7 +1913,7 @@ impl App {
             "application":crate::version::info(),
             "integration":{"status":self.status,"ready":self.ready},
             "settings":{"paused":saved.paused,"auto_restore":saved.auto_restore,"minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
-                    "desktop_tint":saved.desktop_tint,"startup":saved.startup},
+                    "desktop_tint":saved.desktop_tint,"show_desktop_name":saved.show_desktop_name,"startup":saved.startup},
             "desktops":desktops,
             "model":{"generation":self.model.generation(),"transition_serial":self.model.transition_serial(),"current_desktop":current_desktop},
             "dispatch_latency":self.dispatch_latency,
@@ -2141,6 +2181,298 @@ fn smooth_shape(
             }
             unsafe {
                 let _ = SetPixelV(HDC(dc), x, y, COLORREF(blended));
+            }
+        }
+    }
+}
+
+fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8>) {
+    use windows::Win32::{
+        Foundation::{COLORREF, HANDLE, SIZE},
+        Graphics::Gdi::{
+            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection,
+            DIB_RGB_COLORS, DeleteDC, DeleteObject, GdiFlush, GetTextExtentPoint32W,
+            GetTextMetricsW, HDC, HGDIOBJ, SelectObject, SetBkMode, SetTextCharacterExtra,
+            SetTextColor, TEXTMETRICW, TRANSPARENT, TextOutW,
+        },
+    };
+
+    if name.is_empty() || rail_width <= 0 {
+        return (0, Vec::new());
+    }
+
+    const SS: i32 = 4;
+    let font_height = ((11 * dpi as i32 * SS) + 48) / 96;
+    let tracking = ((dpi as i32 * SS) + 144) / 288;
+    let text_utf16 = wide(name);
+    let len = text_utf16.len().saturating_sub(1);
+    if len == 0 {
+        return (0, Vec::new());
+    }
+
+    unsafe {
+        let mem_dc = CreateCompatibleDC(HDC::default());
+        if mem_dc.is_invalid() {
+            return (0, Vec::new());
+        }
+        let font = CreateFontW(
+            -font_height,
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            4,
+            0,
+            wide("Segoe UI").as_ptr(),
+        );
+        if font.is_null() {
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        }
+        let font_obj = HGDIOBJ(font as *mut _);
+        let old_font = SelectObject(mem_dc, font_obj);
+        let _ = SetTextCharacterExtra(mem_dc, tracking);
+
+        let mut size = SIZE::default();
+        if !GetTextExtentPoint32W(mem_dc, &text_utf16[..len], &mut size).as_bool()
+            || size.cx <= 0
+            || size.cy <= 0
+        {
+            SelectObject(mem_dc, old_font);
+            let _ = DeleteObject(font_obj);
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        }
+
+        let mut tm = TEXTMETRICW::default();
+        let _ = GetTextMetricsW(mem_dc, &mut tm);
+
+        let pad = SS * 2;
+        let w4 = size.cx + pad * 2;
+        let h4 = size.cy + pad * 2;
+
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w4,
+                biHeight: -h4,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        let dib = CreateDIBSection(
+            mem_dc,
+            &info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            HANDLE::default(),
+            0,
+        );
+        let Ok(dib) = dib else {
+            SelectObject(mem_dc, old_font);
+            let _ = DeleteObject(font_obj);
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        };
+        if bits.is_null() {
+            SelectObject(mem_dc, old_font);
+            let _ = DeleteObject(dib);
+            let _ = DeleteObject(font_obj);
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        }
+
+        std::ptr::write_bytes(bits as *mut u8, 0, (w4 * h4 * 4) as usize);
+        let old_dib = SelectObject(mem_dc, dib);
+        let _ = SetBkMode(mem_dc, TRANSPARENT);
+        let _ = SetTextColor(mem_dc, COLORREF(0x00FFFFFF));
+        let _ = TextOutW(mem_dc, pad, pad, &text_utf16[..len]);
+        // Synchronize batched drawing before accessing the CreateDIBSection bits.
+        let _ = GdiFlush();
+
+        let raw = std::slice::from_raw_parts(bits as *const u32, (w4 * h4) as usize);
+        let baseline_y4 = pad + tm.tmAscent;
+        let mut min_x = w4;
+        let mut max_x = -1;
+        let mut min_y = h4;
+        let mut max_y = -1;
+        let mut sum_y = 0.0;
+        let mut total_w = 0.0;
+
+        for y in 0..h4 {
+            let desc_weight = if y > baseline_y4 { 0.25 } else { 1.0 };
+            for x in 0..w4 {
+                let v = (raw[(y * w4 + x) as usize] & 0xFF) as f64;
+                if v > 0.0 {
+                    if x < min_x {
+                        min_x = x;
+                    }
+                    if x > max_x {
+                        max_x = x;
+                    }
+                    if y < min_y {
+                        min_y = y;
+                    }
+                    if y > max_y {
+                        max_y = y;
+                    }
+                    let w = v * desc_weight;
+                    sum_y += (y as f64 + 0.5) * w;
+                    total_w += w;
+                }
+            }
+        }
+
+        if max_x < min_x || max_y < min_y {
+            SelectObject(mem_dc, old_dib);
+            let _ = DeleteObject(dib);
+            SelectObject(mem_dc, old_font);
+            let _ = DeleteObject(font_obj);
+            let _ = DeleteDC(mem_dc);
+            return (0, Vec::new());
+        }
+
+        let optical_y = if total_w > 0.0 {
+            sum_y / total_w
+        } else {
+            0.5 * (min_y + max_y + 1) as f64
+        };
+        let shift_y4 = (rail_width as f64 * SS as f64 * 0.5 - optical_y).round() as i32;
+
+        let span_x4 = max_x - min_x + 1;
+        let out_h = (span_x4 + SS - 1) / SS;
+        let mut mask = vec![0u8; (rail_width * out_h) as usize];
+
+        for vy in 0..out_h {
+            for vx in 0..rail_width {
+                let mut acc = 0u32;
+                for dy in 0..SS {
+                    let ux = max_x - (vy * SS + dy);
+                    if ux < min_x || ux > max_x {
+                        continue;
+                    }
+                    for dx in 0..SS {
+                        let uy = vx * SS + dx - shift_y4;
+                        if uy >= 0 && uy < h4 {
+                            acc += (raw[(uy * w4 + ux) as usize] & 0xFF) as u32;
+                        }
+                    }
+                }
+                mask[(vy * rail_width + vx) as usize] = ((acc + 8) / 16) as u8;
+            }
+        }
+
+        SelectObject(mem_dc, old_dib);
+        let _ = DeleteObject(dib);
+        SelectObject(mem_dc, old_font);
+        let _ = DeleteObject(font_obj);
+        let _ = DeleteDC(mem_dc);
+
+        (out_h, mask)
+    }
+}
+
+fn paint_desktop_name(
+    app: &mut App,
+    dc: Handle,
+    width: i32,
+    footer_top: i32,
+    colors: (u32, u32),
+    high_contrast: bool,
+) {
+    if !app.model.saved().show_desktop_name {
+        return;
+    }
+    let (background, foreground) = colors;
+    let Some((index, desktop)) = app
+        .model
+        .desktops()
+        .iter()
+        .enumerate()
+        .find(|(_, desktop)| Some(desktop.id.as_str()) == app.model.current())
+    else {
+        return;
+    };
+    let dpi = app.font_dpi.max(96);
+    let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
+    let content_bottom = app
+        .buttons
+        .iter()
+        .filter(|button| matches!(button.kind, ButtonKind::Desktop(_) | ButtonKind::Window(_)))
+        .map(|button| button.y + button.cell)
+        .max()
+        .unwrap_or(scale(42));
+    let bottom = footer_top - scale(12);
+    let name = if desktop.name.is_empty() {
+        format!("Desktop {}", index + 1)
+    } else {
+        desktop.name.clone()
+    };
+
+    if app.desktop_name_raster.name != name
+        || app.desktop_name_raster.dpi != dpi
+        || app.desktop_name_raster.rail_width != width
+    {
+        let (height, mask) = rasterize_desktop_name(&name, dpi, width);
+        app.desktop_name_raster = DesktopNameRaster {
+            name,
+            dpi,
+            rail_width: width,
+            height,
+            mask,
+        };
+    }
+
+    let raster = &app.desktop_name_raster;
+    if raster.height <= 0
+        || raster.height > bottom - content_bottom - scale(12)
+        || raster.rail_width > width
+    {
+        return;
+    }
+
+    let top = bottom - raster.height;
+    let color = if high_contrast {
+        foreground
+    } else {
+        let mut muted = 0;
+        for shift in [0, 8, 16] {
+            let base = (background >> shift) & 255;
+            let text = (foreground >> shift) & 255;
+            muted |= ((base * 40 + text * 60) / 100) << shift;
+        }
+        muted
+    };
+
+    use windows::Win32::{
+        Foundation::COLORREF,
+        Graphics::Gdi::{HDC, SetPixelV},
+    };
+    for vy in 0..raster.height {
+        for vx in 0..raster.rail_width {
+            let alpha = raster.mask[(vy * raster.rail_width + vx) as usize];
+            if alpha == 0 {
+                continue;
+            }
+            let cov = (alpha as f64 / 255.0).powf(0.80);
+            let mut blended = 0u32;
+            for shift in [0, 8, 16] {
+                let a = ((background >> shift) & 255) as f64;
+                let b = ((color >> shift) & 255) as f64;
+                blended |= ((a + (b - a) * cov).round() as u32) << shift;
+            }
+            unsafe {
+                let _ = SetPixelV(HDC(dc), vx, top + vy, COLORREF(blended));
             }
         }
     }
@@ -2727,6 +3059,14 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     border,
                 );
                 let footer_sep_y = client.bottom - scale(172);
+                paint_desktop_name(
+                    &mut app,
+                    dc,
+                    client.right - 1,
+                    footer_sep_y,
+                    (bg, text),
+                    text == accent,
+                );
                 if footer_sep_y > y + scale(16) {
                     fill(
                         dc,
@@ -2839,6 +3179,12 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         } != 0;
                         app.command(Command::DesktopTint { enabled });
                     }
+                    SHOW_DESKTOP_NAME => {
+                        let enabled = unsafe {
+                            SendMessageW(GetDlgItem(window, SHOW_DESKTOP_NAME as i32), 0xf0, 0, 0)
+                        } != 0;
+                        app.command(Command::ShowDesktopName { enabled });
+                    }
                     AUTO_RESTORE => {
                         let enabled = unsafe {
                             SendMessageW(GetDlgItem(window, AUTO_RESTORE as i32), 0xf0, 0, 0)
@@ -2929,6 +3275,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         rename: None,
         tooltip: null_mut(),
         font: null_mut(),
+        desktop_name_raster: DesktopNameRaster::default(),
         font_dpi: 0,
         settings_fonts: Vec::new(),
         settings_signature: String::new(),
@@ -3206,6 +3553,79 @@ mod visual_tests {
                     assert!(difference > 150);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn desktop_name_raster_is_independent_of_gdi_batching() {
+        use windows::Win32::Graphics::Gdi::{GdiFlush, GdiSetBatchLimit};
+
+        struct RestoreBatchLimit(u32);
+        impl Drop for RestoreBatchLimit {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = GdiFlush();
+                    GdiSetBatchLimit(self.0);
+                }
+            }
+        }
+
+        // Batch limits are thread-local; restore even if an assertion fails.
+        let restore = RestoreBatchLimit(unsafe { GdiSetBatchLimit(1) });
+        assert_ne!(restore.0, 0);
+        for dpi in [96, 120, 144, 192] {
+            let width = (24 * dpi / 96) as i32;
+            unsafe { GdiSetBatchLimit(1) };
+            let immediate = super::rasterize_desktop_name("Desktop 02", dpi, width);
+            assert!(immediate.0 > 0);
+            unsafe { GdiSetBatchLimit(4096) };
+            for _ in 0..8 {
+                let batched = super::rasterize_desktop_name("Desktop 02", dpi, width);
+                assert_eq!(
+                    batched, immediate,
+                    "Raster changed with GDI batching at {dpi} DPI"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn desktop_name_rasterize_centers_and_fits_across_rail_widths() {
+        let (empty_h, empty_mask) = super::rasterize_desktop_name("", 96, 24);
+        assert_eq!(empty_h, 0);
+        assert!(empty_mask.is_empty());
+
+        for (dpi, rail_w) in [(96, 24), (120, 30), (144, 37), (192, 49)] {
+            let (h, mask) = super::rasterize_desktop_name("Desktop 02", dpi, rail_w);
+            assert!(h > 0);
+            assert_eq!(mask.len(), (rail_w * h) as usize);
+
+            // Verify alpha has smooth anti-aliased gradations:
+            let has_intermediate = mask.iter().any(|&a| a > 20 && a < 235);
+            assert!(
+                has_intermediate,
+                "Must contain smooth anti-aliased coverage"
+            );
+
+            // Verify optical centering:
+            let mut weighted_x = 0.0;
+            let mut total_weight = 0.0;
+            for vy in 0..h {
+                for vx in 0..rail_w {
+                    let a = mask[(vy * rail_w + vx) as usize] as f64;
+                    if a > 16.0 {
+                        weighted_x += (vx as f64 + 0.5) * a;
+                        total_weight += a;
+                    }
+                }
+            }
+            assert!(total_weight > 0.0);
+            let centroid_x = weighted_x / total_weight;
+            let target_center = rail_w as f64 * 0.5;
+            assert!(
+                (centroid_x - target_center).abs() < 0.75,
+                "DPI {dpi}: Centroid {centroid_x:.2} should be close to rail center {target_center:.2}"
+            );
         }
     }
 

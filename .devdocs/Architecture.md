@@ -120,7 +120,7 @@ support archive.
 The Settings footer places the integration indicator and status above a
 10-DIP version label in the system gray text color. The label aligns with the status
 text; Done is centered beside the combined group. The compact Settings window is
-492 DIP high, including the Appearance preference. Status and notices use separate controls. A measured read-only notice area
+526 DIP high, including both Appearance preferences. Status and notices use separate controls. A measured read-only notice area
 expands the window only while populated; oversized details remain selectable and
 vertically scrollable. Relayout preserves controls/focus, clamps to the work area,
 and redraws children. The timeout notice clears when no quarantined action remains.
@@ -353,6 +353,19 @@ are revealed/focused with the owner, never given separate layouts or buttons. Ne
 bypass focus restrictions with synthetic Alt or thread-input attachment.
 
 ## Rail presentation
+
+The current desktop name is painted bottom-to-top above the utility divider in
+11-DIP, antialiased Segoe UI, optically centered across the rail with muted foreground color
+(system foreground in high contrast). A DPI-cached supersampled rasterizer and measured full
+text extents keep it clear of desktop/window buttons with 12-DIP gaps. If its full
+length or thickness cannot fit, or the current desktop is unknown, it is omitted
+without truncation. Empty names use the same numbered fallback as desktop tooltips.
+It shares the rail's invalidation and reveal transform and adds no input target.
+The rasterizer flushes GDI drawing before reading DIB memory so queued text output
+cannot be sampled as an empty mask and cached as an invisible label.
+**Appearance → Show desktop name** controls visibility immediately. The default-on
+`show_desktop_name` preference defaults to true for older schema-1 files, persists
+explicit opt-outs, and participates in revision-based cross-session preference merges.
 
 Desktop dots retain left-click switching. Right-click (or F2 on a focused dot) opens
 a modeless 280-DIP rename popover beside that dot, clamped to its monitor work area,
