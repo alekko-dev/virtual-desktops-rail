@@ -34,6 +34,8 @@ flowchart LR
     D --> E["Switch back to Desktop 1<br/>(Restores Desktop 1 layout)"]
 ```
 
+Enable **Tint rail with active desktop color** in Settings for a subtle background tint matching the current desktop dot. It is off by default.
+
 ### Quick controls
 
 - **Top dots:** Your virtual desktops. Click to switch; hover to see the desktop name.

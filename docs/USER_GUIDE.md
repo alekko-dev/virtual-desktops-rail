@@ -18,6 +18,8 @@ A narrow 25-DIP rail sits on the left edge of your primary display, reserving sp
 | Save diagnostic report… | Choose a local ZIP destination for the redacted support report. |
 | Button below Settings | Exit the app and release the reserved screen space. |
 
+In Settings, enable **Tint rail with active desktop color** to give the whole rail a subtle tint matching the current desktop dot. The option is off by default, applies immediately, and survives restart. Light and dark themes use a muted blend; Windows high-contrast mode keeps system colors.
+
 ## Layouts and automatic restoration
 
 By default, switching desktops minimizes shared windows; returning does not reveal them until requested. With no saved layout, a manual rail restore uses the last usable layout adjusted to stay on an available display.

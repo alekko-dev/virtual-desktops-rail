@@ -1029,11 +1029,19 @@ fn legacy_configuration_does_not_opt_into_unvalidated_revisions() {
         .unwrap()
         .remove("experimental_integration");
     value.as_object_mut().unwrap().remove("auto_restore");
+    value.as_object_mut().unwrap().remove("desktop_tint");
     let saved = Saved::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
     assert!(!saved.experimental_integration);
+    assert!(!saved.desktop_tint);
     assert!(!saved.auto_restore);
     let mut enabled = saved;
     enabled.experimental_integration = true;
+    enabled.desktop_tint = true;
+    assert!(
+        Saved::decode(&serde_json::to_vec(&enabled).unwrap())
+            .unwrap()
+            .desktop_tint
+    );
     assert!(
         Saved::decode(&serde_json::to_vec(&enabled).unwrap())
             .unwrap()

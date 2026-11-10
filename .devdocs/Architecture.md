@@ -119,7 +119,7 @@ support archive.
 The Settings footer places the integration indicator and status above a
 10-DIP version label in the system gray text color. The label aligns with the status
 text; Done is centered beside the combined group. The compact Settings window is
-414 DIP high, including the Snap minimization preference. Status and notices use separate controls. A measured read-only notice area
+492 DIP high, including the Appearance preference. Status and notices use separate controls. A measured read-only notice area
 expands the window only while populated; oversized details remain selectable and
 vertically scrollable. Relayout preserves controls/focus, clamps to the work area,
 and redraws children. The timeout notice clears when no quarantined action remains.
@@ -352,6 +352,14 @@ are revealed/focused with the owner, never given separate layouts or buttons. Ne
 bypass focus restrictions with synthetic Alt or thread-input attachment.
 
 ## Rail presentation
+
+The default-off `desktop_tint` preference blends the active desktop dot color into
+the rail background (18% in dark theme, 14% in light theme), including owner-drawn
+button backgrounds and the header. The shared paint helper retains the neutral
+background when no current desktop is known and preserves system high-contrast
+colors. Desktop changes and preference changes invalidate the rail and its buttons.
+The preference is backward-compatible in schema 1 and participates in revision-based
+cross-session preference merges; changing it does not alter controller actions.
 
 A reduced, muted 14-DIP header badge with a divider precedes the desktop dots; a bottom
 divider separates the window buttons from the compact muted utility icons (Play/Pause,
