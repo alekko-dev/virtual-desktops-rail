@@ -38,7 +38,7 @@ Enable **Tint rail with active desktop color** in Settings for a subtle backgrou
 
 ### Quick controls
 
-- **Top dots:** Your virtual desktops. Click to switch; hover to see the desktop name.
+- **Top dots:** Your virtual desktops. Click to switch; hover to see the desktop name. Right-click a dot to rename it without switching desktops (or press **F2** while the dot has keyboard focus). Enter saves; Escape or clicking outside cancels. Names are shared with Windows Task View.
 - **App icons:** Your all-desktop windows (solid bar underneath = visible; outlined bar = minimized). Click to restore, focus, or minimize.
 - **Bottom buttons:** **Pause/Resume** automatic window actions, open **Settings** (to enable automatic layout restore on desktop switch or start with Windows), or **Exit** the app.
 

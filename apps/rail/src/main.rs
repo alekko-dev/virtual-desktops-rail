@@ -8,6 +8,7 @@ mod icons;
 mod metrics;
 mod native;
 mod platform;
+mod rename;
 mod singleton;
 mod snap_notice;
 mod store;
@@ -27,6 +28,10 @@ static OVERRUN: AtomicBool = AtomicBool::new(false);
 
 enum Event {
     Command(ui::Command),
+    Renamed {
+        token: u64,
+        result: Result<(), String>,
+    },
     Frame(Snapshot, Option<u64>, bool),
     Minimized(rail_core::MinimizeObservation),
     DispatchLatency(u64),

@@ -2,7 +2,7 @@ pub(crate) const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be ver
 
 use crate::{
     EVENTS, Event, MAIN_WINDOW, OVERRUN, WAKE, actions, bridge, icons, native::*, notify, platform,
-    store,
+    rename, store,
 };
 use crossbeam_channel::{Receiver, Sender};
 use rail_core::{Model, Saved};
@@ -122,6 +122,15 @@ unsafe extern "system" fn button_procedure(
     wparam: usize,
     lparam: isize,
 ) -> isize {
+    if message == 0x007b || (message == 0x0100 && wparam == 0x71) {
+        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{GetParent, PostMessageW};
+        if let Ok(parent) = unsafe { GetParent(HWND(window)) } {
+            let _ =
+                unsafe { PostMessageW(parent, rename::OPEN, WPARAM(window as usize), LPARAM(0)) };
+        }
+        return 0;
+    }
     match message {
         0x0014 => return 1,
         0x0201 | 0x0203 if KEYBOARD_FOCUS.swap(false, Ordering::AcqRel) => unsafe {
@@ -205,6 +214,7 @@ pub enum Command {
 struct App {
     window: Handle,
     settings: Handle,
+    rename: Option<rename::Popover>,
     tooltip: Handle,
     font: Handle,
     font_dpi: u32,
@@ -256,6 +266,57 @@ struct ReportDraft {
 }
 
 impl App {
+    fn open_rename(&mut self, anchor: Handle) {
+        if !self.ready {
+            return;
+        }
+        let Some(button) = self.buttons.iter().find(|button| button.hwnd == anchor) else {
+            return;
+        };
+        let ButtonKind::Desktop(guid) = &button.kind else {
+            return;
+        };
+        let Some((index, desktop)) = self
+            .model
+            .desktops()
+            .iter()
+            .enumerate()
+            .find(|(_, desktop)| desktop.id == *guid)
+        else {
+            return;
+        };
+        let name = if desktop.name.is_empty() {
+            format!("Desktop {}", index + 1)
+        } else {
+            desktop.name.clone()
+        };
+        let guid = guid.clone();
+        self.rename.take();
+        self.rename = rename::Popover::show(self.window, anchor, guid, &name);
+    }
+
+    fn save_rename(&mut self, source: Handle) {
+        let Some(popover) = self
+            .rename
+            .as_mut()
+            .filter(|popover| popover.window == source)
+        else {
+            return;
+        };
+        let Some((guid, name, token)) = popover.request() else {
+            return;
+        };
+        if !self.ready
+            || !self.integration.as_ref().is_some_and(|sender| {
+                sender
+                    .try_send(bridge::CommandMessage::Rename { guid, name, token })
+                    .is_ok()
+            })
+        {
+            popover.fail("Desktop integration is unavailable. Try again.");
+        }
+    }
+
     fn reconcile_shell_switcher(&mut self) {
         let switcher = platform::shell_switcher_visible(self.shell_switcher);
         if switcher == self.shell_switcher {
@@ -610,6 +671,20 @@ impl App {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 Event::Command(command) => self.command(command),
+                Event::Renamed { token, result } => {
+                    if let Some(popover) = self
+                        .rename
+                        .as_mut()
+                        .filter(|popover| popover.token == token)
+                    {
+                        match result {
+                            Ok(()) => {
+                                self.rename.take();
+                            }
+                            Err(error) => popover.fail(&error),
+                        }
+                    }
+                }
                 Event::Loaded {
                     saved,
                     path,
@@ -725,6 +800,13 @@ impl App {
                         serde_json::json!({"event":"integration_status","ready":ready}),
                     ));
                     if !ready {
+                        if let Some(popover) =
+                            self.rename.as_mut().filter(|popover| popover.pending())
+                        {
+                            popover.fail(
+                                "Could not confirm the rename. Check the name and try again.",
+                            );
+                        }
                         self.shell_switcher = None;
                         self.finish_reveal();
                         self.update_window_frame();
@@ -1023,6 +1105,7 @@ impl App {
                 } else {
                     name
                 };
+                let caption = format!("{caption}; click to switch; right-click to rename");
                 specs.push((
                     100 + index,
                     caption,
@@ -1811,6 +1894,7 @@ impl App {
     }
 
     fn stop(&mut self) {
+        self.rename.take();
         if self.stopped {
             return;
         }
@@ -1899,7 +1983,7 @@ fn save_report_dialog(owner: Handle) -> Result<Option<std::path::PathBuf>, Strin
     ))))
 }
 
-fn dark() -> bool {
+pub(crate) fn dark() -> bool {
     #[link(name = "advapi32")]
     unsafe extern "system" {
         fn RegGetValueW(
@@ -1936,8 +2020,7 @@ unsafe fn fill(dc: Handle, rect: &Rect, color: u32) {
     }
 }
 
-fn palette() -> (u32, u32, u32, u32) {
-    use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor};
+pub(crate) fn high_contrast() -> bool {
     use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
     use windows::Win32::UI::WindowsAndMessaging::{
         SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
@@ -1946,7 +2029,7 @@ fn palette() -> (u32, u32, u32, u32) {
         cbSize: size_of::<HIGHCONTRASTW>() as u32,
         ..Default::default()
     };
-    if unsafe {
+    unsafe {
         SystemParametersInfoW(
             SPI_GETHIGHCONTRAST,
             contrast.cbSize,
@@ -1956,7 +2039,11 @@ fn palette() -> (u32, u32, u32, u32) {
     }
     .is_ok()
         && contrast.dwFlags.0 & HCF_HIGHCONTRASTON.0 != 0
-    {
+}
+
+fn palette() -> (u32, u32, u32, u32) {
+    use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor};
+    if high_contrast() {
         // A shape also distinguishes the active desktop.
         // Use the user's foreground/background pair for guaranteed contrast.
         let background = unsafe { GetSysColor(COLOR_WINDOW) };
@@ -2470,6 +2557,14 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     };
     match message {
+        rename::OPEN if main => {
+            app.open_rename(wparam as Handle);
+            0
+        }
+        rename::SAVE if main => {
+            app.save_rename(wparam as Handle);
+            0
+        }
         WAKE if main => {
             app.drain();
             0
@@ -2792,6 +2887,7 @@ pub fn run(settings: bool) -> Result<(), String> {
     let app = Box::new(RefCell::new(App {
         window: null_mut(),
         settings: null_mut(),
+        rename: None,
         tooltip: null_mut(),
         font: null_mut(),
         font_dpi: 0,
@@ -2906,6 +3002,34 @@ pub fn run(settings: bool) -> Result<(), String> {
             let tooltip = app.borrow().tooltip;
             if !tooltip.is_null() && (0x200..=0x20e).contains(&message.message) {
                 SendMessageW(tooltip, 0x407, 0, &message as *const _ as isize);
+            }
+            let rename_window = app.borrow().rename.as_ref().map(|popover| popover.window);
+            if let Some(rename_window) = rename_window {
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{IsChild, IsWindowVisible};
+                if IsWindowVisible(HWND(rename_window)).as_bool()
+                    && matches!(message.message, 0x0201 | 0x0204 | 0x0207 | 0x00a1 | 0x00a4)
+                    && message.window != rename_window
+                    && !IsChild(HWND(rename_window), HWND(message.window)).as_bool()
+                {
+                    ShowWindow(rename_window, 0);
+                }
+                if IsWindowVisible(HWND(rename_window)).as_bool()
+                    && (message.window == rename_window
+                        || IsChild(HWND(rename_window), HWND(message.window)).as_bool())
+                {
+                    if message.message == 0x0100 && message.wparam == 0x1b {
+                        ShowWindow(rename_window, 0);
+                        continue;
+                    }
+                    if IsDialogMessageW(rename_window, &mut message) != 0 {
+                        continue;
+                    }
+                }
+            }
+            if message.message == 0x0100 && message.wparam == 0x71 {
+                app.borrow_mut().open_rename(message.window);
+                continue;
             }
             let settings = app.borrow().settings;
             if settings.is_null()
