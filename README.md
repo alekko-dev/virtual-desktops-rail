@@ -40,9 +40,9 @@ Enable **Tint rail with active desktop color** in Settings for a subtle backgrou
 
 - **Top dots:** Your virtual desktops. Click to switch; hover to see the desktop name.
 - **App icons:** Your all-desktop windows (solid bar underneath = visible; outlined bar = minimized). Click to restore, focus, or minimize.
-- **Bottom buttons:** **Pause/Resume** automatic window actions, open **Settings** (to enable automatic layout restore on desktop switch or start with Windows), or **Exit** the app.
+- **Bottom buttons:** Use the **light switch** above Pause to toggle Windows light/dark colors for apps and the system, **Pause/Resume** automatic window actions, open **Settings** (to enable automatic layout restore on desktop switch or start with Windows), or **Exit** the app.
 
-> *[Placeholder: Annotated diagram or close-up screenshot of the rail calling out: (1) Desktop dots, (2) Pinned app icons with solid/outlined visibility indicators, and (3) Pause/Resume, Settings, and Exit buttons at the bottom.]*
+> *[Placeholder: Annotated diagram or close-up screenshot of the rail calling out: (1) Desktop dots, (2) Pinned app icons with solid/outlined visibility indicators, and (3) Light switch, Pause/Resume, Settings, and Exit buttons at the bottom.]*
 
 ## Requirements
 
