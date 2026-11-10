@@ -22,6 +22,8 @@ pub struct Saved {
     pub experimental_integration: bool,
     #[serde(default)]
     pub auto_restore: bool,
+    #[serde(default)]
+    pub desktop_tint: bool,
     /// On automatic desktop restoration, minimize incompatible live Snap arrangements.
     #[serde(default = "enabled_by_default")]
     pub minimize_snapped_elsewhere: bool,
@@ -38,6 +40,7 @@ impl Default for Saved {
             startup: false,
             experimental_integration: false,
             auto_restore: false,
+            desktop_tint: false,
             minimize_snapped_elsewhere: true,
             preferences_revision: 0,
             windows: BTreeMap::new(),
