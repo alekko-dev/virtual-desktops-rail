@@ -14,6 +14,11 @@ pub enum CommandMessage {
         expected_current: String,
         expected_serial: u64,
     },
+    Rename {
+        guid: String,
+        name: String,
+        token: u64,
+    },
     Refresh,
     ObserveMinimize(Box<rail_core::MinimizeObservation>),
     Retry {
@@ -26,6 +31,10 @@ pub enum CommandMessage {
 enum Wire {
     Frame(Snapshot, Option<u64>),
     Failure(String),
+    Renamed {
+        token: u64,
+        result: Result<(), String>,
+    },
     Minimized(rail_core::MinimizeObservation),
 }
 
@@ -114,7 +123,16 @@ pub fn worker(parent: u32, experimental: bool) -> Result<(), String> {
                 let _ = commands.send(command);
                 return;
             }
-            let _ = commands.try_send(command);
+            if matches!(command, CommandMessage::Rename { .. }) {
+                // Do not silently drop an explicit edit when observation traffic
+                // fills the queue. This stdin reader is off the UI thread and
+                // the existing subprocess watchdog bounds a stalled worker.
+                if commands.send(command).is_err() {
+                    return;
+                }
+            } else {
+                let _ = commands.try_send(command);
+            }
         }
         let _ = commands.send(CommandMessage::Stop);
     });
@@ -194,6 +212,15 @@ pub fn worker(parent: u32, experimental: bool) -> Result<(), String> {
                 }
             }
         }
+        for message in &messages {
+            if let CommandMessage::Rename { guid, name, token } = message {
+                let result = rename_desktop(guid, name);
+                emit(Wire::Renamed {
+                    token: *token,
+                    result,
+                })?;
+            }
+        }
         // Collapse rapid explicit desktop requests to the latest intent.
         if let Some(command) = messages
             .iter()
@@ -228,6 +255,26 @@ pub fn worker(parent: u32, experimental: bool) -> Result<(), String> {
             last_scan = Instant::now();
         }
     }
+}
+
+fn rename_desktop(guid: &str, name: &str) -> Result<(), String> {
+    let name = crate::rename::validated_name(name)?;
+    let target = parse_guid(guid).ok_or("This desktop is no longer available.")?;
+    let desktop = winvd::get_desktop(target);
+    // Resolve by identity, never by its potentially changed index.
+    desktop
+        .get_id()
+        .map_err(|_| "This desktop is no longer available.")?;
+    desktop
+        .set_name(&name)
+        .map_err(|_| "Windows could not rename this desktop. Try again.")?;
+    let observed = desktop
+        .get_name()
+        .map_err(|_| "Could not confirm the desktop name. Try again.")?;
+    if observed != name {
+        return Err("Windows has not confirmed the new name. Try again.".into());
+    }
+    Ok(())
 }
 
 pub fn start(experimental: bool) -> Sender<CommandMessage> {
@@ -300,6 +347,7 @@ fn supervise(commands: Receiver<CommandMessage>, mut experimental: bool) {
                     },
                     recv(frames) -> frame => match frame {
                         Ok(Ok(Wire::Frame(frame, received))) => { latest = Instant::now(); stale = false; backoff = 1; notify(Event::Frame(frame, received, experimental)); },
+                        Ok(Ok(Wire::Renamed { token, result })) => notify(Event::Renamed { token, result }),
                         Ok(Ok(Wire::Minimized(observation))) => notify(Event::Minimized(observation)),
                         Ok(Ok(Wire::Failure(error))) | Ok(Err(error)) => break Err(error),
                         Err(_) => break Err("Integration output disconnected".into()),

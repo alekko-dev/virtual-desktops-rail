@@ -354,6 +354,23 @@ bypass focus restrictions with synthetic Alt or thread-input attachment.
 
 ## Rail presentation
 
+Desktop dots retain left-click switching. Right-click (or F2 on a focused dot) opens
+a modeless 280-DIP rename popover beside that dot, clamped to its monitor work area,
+without switching desktops. The existing name is selected; Enter/Rename submits,
+Escape/Cancel/deactivation dismisses, and native dialog navigation supplies Tab.
+The editor uses DWM rounded corners, native system colors, and a collapsible status row
+that expands the popover only while showing progress or an error. It does not expand the AppBar.
+
+The UI validates a trimmed, nonempty, single-line name bounded to 256 UTF-16 code
+units and sends a GUID-targeted rename to the isolated integration subprocess.
+The worker validates again, invokes `winvd::Desktop::set_name`, and reads the name
+back before returning success. No shell call runs on the UI thread. The next frame
+refreshes desktop tooltips and accessible button names, including external renames.
+Errors preserve the entered text; queue/integration failures are retryable. Per-request
+tokens prevent stale replies from dismissing a newer edit. Dismissal after submission
+does not cancel a shell operation already in progress. Names are owned by Windows,
+not duplicated in rail storage or diagnostic history.
+
 The bottom light switch sets both `AppsUseLightTheme` and `SystemUsesLightTheme`
 under the current user's Windows `Themes\Personalize` key, choosing the opposite
 of the current app mode. Its sun/moon glyph shows the destination mode, matching its

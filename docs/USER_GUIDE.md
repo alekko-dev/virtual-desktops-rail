@@ -8,7 +8,7 @@ A narrow 25-DIP rail sits on the left edge of your primary display, reserving sp
 
 | Control or state | Behavior |
 | --- | --- |
-| Desktop dot | Click to switch; hover for its name. The current desktop is a larger filled circle; others are colored outlines. |
+| Desktop dot | Click to switch; hover for its name. Right-click to rename without switching, or press F2 on a focused dot. The current desktop is a larger filled circle; others are colored outlines. |
 | Minimized window icon | Restore its current-desktop layout and request focus. |
 | Visible background window icon | Bring the window forward. |
 | Foreground window icon | Minimize the window. |
@@ -18,6 +18,15 @@ A narrow 25-DIP rail sits on the left edge of your primary display, reserving sp
 | Sliders button | Open Settings. Done closes Settings. |
 | Save diagnostic report… | Choose a local ZIP destination for the redacted support report. |
 | Button below Settings | Exit the app and release the reserved screen space. |
+
+Right-clicking a desktop dot opens a small rename editor beside the rail with the current
+name selected. **Enter** or **Rename** saves; **Escape**, **Cancel**, or clicking outside
+dismisses an unsaved edit. Use **Tab** to move between the field and buttons. Names
+are trimmed and must be nonempty, on one line, and within the field's length limit.
+Unicode and duplicate names are supported. Renaming updates the Windows desktop name, including
+Task View. If the operation fails or cannot be confirmed, the editor keeps your text
+and shows an error so you can retry. A submitted rename may complete after the editor
+is dismissed; dismissal does not undo a submitted change.
 
 In Settings, enable **Tint rail with active desktop color** to give the whole rail a subtle tint matching the current desktop dot. The option is off by default, applies immediately, and survives restart. Light and dark themes use a muted blend; Windows high-contrast mode keeps system colors.
 
