@@ -61,6 +61,39 @@ See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-au
 
 ## Interactive regression matrix
 
+The desktop rename implementation (2026-11-10, working changes) passed
+`check-dev.ps1`: formatting, warnings-denied Clippy, workspace tests, version
+contracts and locked release builds. Automated name validation covers whitespace-only,
+embedded control characters, Unicode and UTF-16 length boundaries. User screenshots
+confirmed the compact light-theme popover appearance (rounded DWM frame, muted heading,
+centered selected text, and clean button corners after handling `WM_CTLCOLORSTATIC` and
+`WM_CTLCOLORBTN` and collapsing the idle status row); full interactive keyboard/pointer,
+error-expansion, dark/high-contrast and live shell rename/read-back checks remain open.
+
+Desktop rename acceptance (computer-control testing deferred to the user):
+
+- Right-click an inactive dot: the editor opens beside it, with its name selected,
+  without switching desktops or changing application-window layouts.
+- Type a name, save with Enter and with Rename, and verify the rail tooltip,
+  accessibility name and Windows Task View name agree. Restore original names.
+- Verify F2 on a keyboard-focused dot, Tab/Shift+Tab navigation, Escape, Cancel,
+  outside clicks (including the passive rail), and reopening after dismissal.
+- Verify whitespace-only input, Unicode and long names, duplicate names, and an
+  unavailable/deleted desktop or integration failure: text remains editable with
+  a useful error. Dismiss/reopen during a pending operation; stale results must
+  not close a newer editor. Dismissal after submission does not undo the rename.
+- Check light/dark/high-contrast appearance, screen-edge clamping and DPI scaling.
+
+The Windows light/dark switch and sun/moon destination glyph passed
+`check-dev.ps1` on 2026-11-10: formatting, warnings-denied Clippy, locked workspace
+tests, version contracts and release builds. The user visually approved the final
+sun/moon glyph and confirmed the theme switch works in their local Windows session.
+Computer-control tests were skipped at the user's request. Keyboard activation,
+high contrast, additional DPI configurations and repaint across other applications
+remain unverified; the manual confirmation does not establish those broader cases.
+The final release executable SHA-256 is
+`3093A2FB437256680FECB6B2FCC0825F7E6616C0847278579F6EA8CD0CF55A30`.
+
 The executable-first icon change (`faa5cbf` plus changes, 2026-11-07) passed
 `check-dev.ps1`, including locked release builds. The sandbox denied an existing
 atomic-file replacement test; the complete check passed outside the sandbox.

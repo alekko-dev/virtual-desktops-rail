@@ -2,7 +2,7 @@ pub(crate) const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be ver
 
 use crate::{
     EVENTS, Event, MAIN_WINDOW, OVERRUN, WAKE, actions, bridge, icons, native::*, notify, platform,
-    store,
+    rename, store, theme, theme::dark,
 };
 use crossbeam_channel::{Receiver, Sender};
 use rail_core::{Model, Saved};
@@ -32,6 +32,7 @@ fn app_icon(size: i32) -> Handle {
 }
 const PAUSE: usize = 5000;
 const SETTINGS: usize = 5001;
+const LIGHT_SWITCH: usize = 5002;
 const SET_PAUSE: usize = 6000;
 const STARTUP: usize = 6001;
 const RETRY: usize = 6002;
@@ -86,6 +87,7 @@ enum ButtonKind {
     Desktop(String),
     Window(String),
     Pause,
+    LightSwitch,
     Settings,
     Exit,
 }
@@ -122,6 +124,15 @@ unsafe extern "system" fn button_procedure(
     wparam: usize,
     lparam: isize,
 ) -> isize {
+    if message == 0x007b || (message == 0x0100 && wparam == 0x71) {
+        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{GetParent, PostMessageW};
+        if let Ok(parent) = unsafe { GetParent(HWND(window)) } {
+            let _ =
+                unsafe { PostMessageW(parent, rename::OPEN, WPARAM(window as usize), LPARAM(0)) };
+        }
+        return 0;
+    }
     match message {
         0x0014 => return 1,
         0x0201 | 0x0203 if KEYBOARD_FOCUS.swap(false, Ordering::AcqRel) => unsafe {
@@ -214,6 +225,7 @@ struct DesktopNameRaster {
 struct App {
     window: Handle,
     settings: Handle,
+    rename: Option<rename::Popover>,
     tooltip: Handle,
     font: Handle,
     desktop_name_raster: DesktopNameRaster,
@@ -244,6 +256,7 @@ struct App {
     transition_received_us: Option<u64>,
     dispatch_latency: crate::metrics::DispatchLatency,
     startup_busy: bool,
+    theme_busy: bool,
     report_busy: bool,
     diagnostic_window_labels: BTreeMap<String, String>,
     diagnostic_desktop_labels: BTreeMap<String, String>,
@@ -266,6 +279,57 @@ struct ReportDraft {
 }
 
 impl App {
+    fn open_rename(&mut self, anchor: Handle) {
+        if !self.ready {
+            return;
+        }
+        let Some(button) = self.buttons.iter().find(|button| button.hwnd == anchor) else {
+            return;
+        };
+        let ButtonKind::Desktop(guid) = &button.kind else {
+            return;
+        };
+        let Some((index, desktop)) = self
+            .model
+            .desktops()
+            .iter()
+            .enumerate()
+            .find(|(_, desktop)| desktop.id == *guid)
+        else {
+            return;
+        };
+        let name = if desktop.name.is_empty() {
+            format!("Desktop {}", index + 1)
+        } else {
+            desktop.name.clone()
+        };
+        let guid = guid.clone();
+        self.rename.take();
+        self.rename = rename::Popover::show(self.window, anchor, guid, &name);
+    }
+
+    fn save_rename(&mut self, source: Handle) {
+        let Some(popover) = self
+            .rename
+            .as_mut()
+            .filter(|popover| popover.window == source)
+        else {
+            return;
+        };
+        let Some((guid, name, token)) = popover.request() else {
+            return;
+        };
+        if !self.ready
+            || !self.integration.as_ref().is_some_and(|sender| {
+                sender
+                    .try_send(bridge::CommandMessage::Rename { guid, name, token })
+                    .is_ok()
+            })
+        {
+            popover.fail("Desktop integration is unavailable. Try again.");
+        }
+    }
+
     fn reconcile_shell_switcher(&mut self) {
         let switcher = platform::shell_switcher_visible(self.shell_switcher);
         if switcher == self.shell_switcher {
@@ -620,6 +684,20 @@ impl App {
         while let Ok(event) = self.events.try_recv() {
             match event {
                 Event::Command(command) => self.command(command),
+                Event::Renamed { token, result } => {
+                    if let Some(popover) = self
+                        .rename
+                        .as_mut()
+                        .filter(|popover| popover.token == token)
+                    {
+                        match result {
+                            Ok(()) => {
+                                self.rename.take();
+                            }
+                            Err(error) => popover.fail(&error),
+                        }
+                    }
+                }
                 Event::Loaded {
                     saved,
                     path,
@@ -735,6 +813,13 @@ impl App {
                         serde_json::json!({"event":"integration_status","ready":ready}),
                     ));
                     if !ready {
+                        if let Some(popover) =
+                            self.rename.as_mut().filter(|popover| popover.pending())
+                        {
+                            popover.fail(
+                                "Could not confirm the rename. Check the name and try again.",
+                            );
+                        }
                         self.shell_switcher = None;
                         self.finish_reveal();
                         self.update_window_frame();
@@ -884,6 +969,14 @@ impl App {
                         }
                     }
                 }
+                Event::Theme(result) => {
+                    self.theme_busy = false;
+                    if let Err(error) = result {
+                        self.notice = format!("Windows theme could not be changed: {error}");
+                        self.show_settings();
+                    }
+                    self.signature.clear();
+                }
                 Event::Icon(key, dpi, icon) => {
                     self.icon_pending.remove(&(key.clone(), dpi));
                     if self.model.runtime(&key).is_some_and(|r| r.present())
@@ -960,7 +1053,7 @@ impl App {
         let dpi = unsafe { GetDpiForWindow(self.window) }.max(96);
         let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
         let signature = format!(
-            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}",
+            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}",
             self.model.desktops(),
             self.model.current(),
             self.ready,
@@ -976,7 +1069,9 @@ impl App {
                 .collect::<Vec<_>>(),
             dpi,
             self.status,
-            self.model.saved().desktop_tint
+            self.model.saved().desktop_tint,
+            self.theme_busy,
+            dark()
         );
         if force || signature != self.signature {
             self.signature = signature;
@@ -1034,6 +1129,7 @@ impl App {
                 } else {
                     name
                 };
+                let caption = format!("{caption}; click to switch; right-click to rename");
                 specs.push((
                     100 + index,
                     caption,
@@ -1067,6 +1163,21 @@ impl App {
                 }
                 y += scale(45);
             }
+            specs.push((
+                LIGHT_SWITCH,
+                if self.theme_busy {
+                    "Changing Windows theme…"
+                } else if dark() {
+                    "Switch Windows to light theme"
+                } else {
+                    "Switch Windows to dark theme"
+                }
+                .into(),
+                bounds.bottom - scale(162),
+                scale(34),
+                ButtonKind::LightSwitch,
+                !self.theme_busy,
+            ));
             specs.push((
                 PAUSE,
                 format!(
@@ -1822,6 +1933,7 @@ impl App {
     }
 
     fn stop(&mut self) {
+        self.rename.take();
         if self.stopped {
             return;
         }
@@ -1910,35 +2022,6 @@ fn save_report_dialog(owner: Handle) -> Result<Option<std::path::PathBuf>, Strin
     ))))
 }
 
-fn dark() -> bool {
-    #[link(name = "advapi32")]
-    unsafe extern "system" {
-        fn RegGetValueW(
-            key: isize,
-            subkey: *const u16,
-            value: *const u16,
-            flags: u32,
-            kind: *mut u32,
-            data: *mut u32,
-            size: *mut u32,
-        ) -> i32;
-    }
-    let mut value = 1u32;
-    let mut size = 4;
-    unsafe {
-        RegGetValueW(
-            0x80000001u32 as i32 as isize,
-            wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize").as_ptr(),
-            wide("AppsUseLightTheme").as_ptr(),
-            0x10,
-            null_mut(),
-            &mut value,
-            &mut size,
-        );
-    }
-    value == 0
-}
-
 unsafe fn fill(dc: Handle, rect: &Rect, color: u32) {
     unsafe {
         let brush = CreateSolidBrush(color);
@@ -1947,8 +2030,7 @@ unsafe fn fill(dc: Handle, rect: &Rect, color: u32) {
     }
 }
 
-fn palette() -> (u32, u32, u32, u32) {
-    use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor};
+pub(crate) fn high_contrast() -> bool {
     use windows::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
     use windows::Win32::UI::WindowsAndMessaging::{
         SPI_GETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
@@ -1957,7 +2039,7 @@ fn palette() -> (u32, u32, u32, u32) {
         cbSize: size_of::<HIGHCONTRASTW>() as u32,
         ..Default::default()
     };
-    if unsafe {
+    unsafe {
         SystemParametersInfoW(
             SPI_GETHIGHCONTRAST,
             contrast.cbSize,
@@ -1967,7 +2049,11 @@ fn palette() -> (u32, u32, u32, u32) {
     }
     .is_ok()
         && contrast.dwFlags.0 & HCF_HIGHCONTRASTON.0 != 0
-    {
+}
+
+fn palette() -> (u32, u32, u32, u32) {
+    use windows::Win32::Graphics::Gdi::{COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor};
+    if high_contrast() {
         // A shape also distinguishes the active desktop.
         // Use the user's foreground/background pair for guaranteed contrast.
         let background = unsafe { GetSysColor(COLOR_WINDOW) };
@@ -2478,7 +2564,10 @@ fn draw(app: &App, item: &DrawItem) {
                         }
                     });
                 }
-                ButtonKind::Pause | ButtonKind::Settings | ButtonKind::Exit => {
+                ButtonKind::Pause
+                | ButtonKind::LightSwitch
+                | ButtonKind::Settings
+                | ButtonKind::Exit => {
                     let color = if matches!(button.kind, ButtonKind::Pause) && !app.ready {
                         unavailable
                     } else if hovered || pressed {
@@ -2495,6 +2584,30 @@ fn draw(app: &App, item: &DrawItem) {
                             let stem = segment_sdf(x, y, 0.0, -2.2, 0.0, 1.2, 0.65);
                             let dot = (x * x + (y - 3.4).powi(2)).sqrt() - 0.75;
                             outline.min(stem).min(dot)
+                        } else if matches!(button.kind, ButtonKind::LightSwitch) {
+                            // Show the destination mode: sun for light, crescent for dark.
+                            if is_dark {
+                                let disk = x.hypot(y) - 2.6;
+                                let mut rays = f64::INFINITY;
+                                for ray in 0..8 {
+                                    let angle = f64::from(ray) * std::f64::consts::FRAC_PI_4;
+                                    let (sin, cos) = angle.sin_cos();
+                                    rays = rays.min(segment_sdf(
+                                        x,
+                                        y,
+                                        cos * 4.2,
+                                        sin * 4.2,
+                                        cos * 5.8,
+                                        sin * 5.8,
+                                        0.6,
+                                    ));
+                                }
+                                disk.min(rays)
+                            } else {
+                                let disk = x.hypot(y) - 5.1;
+                                let cutout = (x - 2.6).hypot(y + 2.1) - 4.8;
+                                disk.max(-cutout)
+                            }
                         } else if matches!(button.kind, ButtonKind::Settings) {
                             let upper_left = segment_sdf(x, y, -5.2, -3.0, -4.4, -3.0, 0.65);
                             let upper_right = segment_sdf(x, y, -0.2, -3.0, 5.2, -3.0, 0.65);
@@ -2768,6 +2881,14 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     };
     match message {
+        rename::OPEN if main => {
+            app.open_rename(wparam as Handle);
+            0
+        }
+        rename::SAVE if main => {
+            app.save_rename(wparam as Handle);
+            0
+        }
         WAKE if main => {
             app.drain();
             0
@@ -2903,7 +3024,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     },
                     border,
                 );
-                let footer_sep_y = client.bottom - scale(132);
+                let footer_sep_y = client.bottom - scale(172);
                 paint_desktop_name(
                     &mut app,
                     dc,
@@ -2978,6 +3099,19 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                             app.command(command);
                         }
                         ButtonKind::Settings => app.command(Command::Settings),
+                        ButtonKind::LightSwitch => {
+                            if !app.theme_busy {
+                                match theme::start_toggle() {
+                                    Ok(()) => app.theme_busy = true,
+                                    Err(error) => {
+                                        app.notice =
+                                            format!("Windows theme could not be changed: {error}");
+                                        app.show_settings();
+                                    }
+                                }
+                                app.render(false);
+                            }
+                        }
                         ButtonKind::Exit => app.command(Command::Exit),
                     }
                 }
@@ -3098,6 +3232,7 @@ pub fn run(settings: bool) -> Result<(), String> {
     let app = Box::new(RefCell::new(App {
         window: null_mut(),
         settings: null_mut(),
+        rename: None,
         tooltip: null_mut(),
         font: null_mut(),
         desktop_name_raster: DesktopNameRaster::default(),
@@ -3128,6 +3263,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         transition_received_us: None,
         dispatch_latency: Default::default(),
         startup_busy: false,
+        theme_busy: false,
         report_busy: false,
         diagnostic_window_labels: BTreeMap::new(),
         diagnostic_desktop_labels: BTreeMap::new(),
@@ -3213,6 +3349,34 @@ pub fn run(settings: bool) -> Result<(), String> {
             let tooltip = app.borrow().tooltip;
             if !tooltip.is_null() && (0x200..=0x20e).contains(&message.message) {
                 SendMessageW(tooltip, 0x407, 0, &message as *const _ as isize);
+            }
+            let rename_window = app.borrow().rename.as_ref().map(|popover| popover.window);
+            if let Some(rename_window) = rename_window {
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{IsChild, IsWindowVisible};
+                if IsWindowVisible(HWND(rename_window)).as_bool()
+                    && matches!(message.message, 0x0201 | 0x0204 | 0x0207 | 0x00a1 | 0x00a4)
+                    && message.window != rename_window
+                    && !IsChild(HWND(rename_window), HWND(message.window)).as_bool()
+                {
+                    ShowWindow(rename_window, 0);
+                }
+                if IsWindowVisible(HWND(rename_window)).as_bool()
+                    && (message.window == rename_window
+                        || IsChild(HWND(rename_window), HWND(message.window)).as_bool())
+                {
+                    if message.message == 0x0100 && message.wparam == 0x1b {
+                        ShowWindow(rename_window, 0);
+                        continue;
+                    }
+                    if IsDialogMessageW(rename_window, &mut message) != 0 {
+                        continue;
+                    }
+                }
+            }
+            if message.message == 0x0100 && message.wparam == 0x71 {
+                app.borrow_mut().open_rename(message.window);
+                continue;
             }
             let settings = app.borrow().settings;
             if settings.is_null()
