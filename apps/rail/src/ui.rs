@@ -227,6 +227,7 @@ pub(crate) struct DesktopNameRaster {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DesktopNameLayout {
     pub rect: Rect,
+    pub text_top: i32,
     pub desktop_id: String,
     pub name: String,
 }
@@ -246,6 +247,7 @@ pub(crate) fn compute_desktop_name_layout(
     let (id, raw_name, index) = current_desktop?;
     let dpi = font_dpi.max(96);
     let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
+    let pad = scale(4);
     let bottom = footer_top - scale(12);
     let name = if raw_name.is_empty() {
         format!("Desktop {}", index + 1)
@@ -264,14 +266,15 @@ pub(crate) fn compute_desktop_name_layout(
         };
     }
 
+    let total_height = raster.height + pad * 2;
     if raster.height <= 0
-        || raster.height > bottom - content_bottom - scale(12)
+        || total_height > bottom - content_bottom - scale(12)
         || raster.rail_width > rail_width
     {
         return None;
     }
 
-    let top = bottom - raster.height;
+    let top = bottom - total_height;
     Some(DesktopNameLayout {
         rect: Rect {
             left: 0,
@@ -279,6 +282,7 @@ pub(crate) fn compute_desktop_name_layout(
             right: rail_width,
             bottom,
         },
+        text_top: top + pad,
         desktop_id: id.to_string(),
         name,
     })
@@ -291,6 +295,7 @@ struct App {
     tooltip: Handle,
     font: Handle,
     desktop_name_raster: DesktopNameRaster,
+    desktop_name_hovered: bool,
     desktop_name_pressed: bool,
     font_dpi: u32,
     settings_fonts: Vec<usize>,
@@ -2547,9 +2552,58 @@ fn paint_desktop_name(
         return;
     };
     let (background, foreground) = colors;
-    let top = layout.rect.top;
     let raster = &app.desktop_name_raster;
-    let color = if high_contrast {
+    let hovered = app.desktop_name_hovered;
+    let pressed = app.desktop_name_pressed;
+    let is_dark = crate::theme::dark();
+
+    let dpi = app.font_dpi.max(96);
+    let scale = dpi as f64 / 96.0;
+
+    use windows::Win32::{
+        Foundation::COLORREF,
+        Graphics::Gdi::{GetPixel, HDC, SetPixelV},
+    };
+
+    if (hovered || pressed) && !high_contrast {
+        let surface = if is_dark {
+            if pressed { 0x00484342 } else { 0x003a3534 }
+        } else if pressed {
+            0x00e0dcdc
+        } else {
+            0x00ece8e7
+        };
+        let pill_h = layout.rect.bottom - layout.rect.top;
+        let half_w = (raster.rail_width as f64 / scale) * 0.5 - 2.0;
+        let half_h = (pill_h as f64 / scale) * 0.5 - 2.5;
+        let center_x = raster.rail_width as f64 / 2.0;
+        let center_y = (layout.rect.top + layout.rect.bottom) as f64 / 2.0;
+
+        for vy in 0..pill_h {
+            let py = layout.rect.top + vy;
+            let dy = (py as f64 + 0.5 - center_y) / scale;
+            for vx in 0..raster.rail_width {
+                let dx = (vx as f64 + 0.5 - center_x) / scale;
+                let d = rounded_rect_sdf(dx, dy, half_w.max(2.0), half_h.max(2.0), 4.0);
+                let coverage = (0.5 - d * scale).clamp(0.0, 1.0);
+                if coverage == 0.0 {
+                    continue;
+                }
+                let base = unsafe { GetPixel(HDC(dc), vx, py).0 };
+                let mut blended = 0u32;
+                for shift in [0, 8, 16] {
+                    let a = ((base >> shift) & 255) as f64;
+                    let b = ((surface >> shift) & 255) as f64;
+                    blended |= ((a + (b - a) * coverage).round() as u32) << shift;
+                }
+                unsafe {
+                    let _ = SetPixelV(HDC(dc), vx, py, COLORREF(blended));
+                }
+            }
+        }
+    }
+
+    let color = if high_contrast || hovered || pressed {
         foreground
     } else {
         let mut muted = 0;
@@ -2561,25 +2615,23 @@ fn paint_desktop_name(
         muted
     };
 
-    use windows::Win32::{
-        Foundation::COLORREF,
-        Graphics::Gdi::{HDC, SetPixelV},
-    };
     for vy in 0..raster.height {
+        let py = layout.text_top + vy;
         for vx in 0..raster.rail_width {
             let alpha = raster.mask[(vy * raster.rail_width + vx) as usize];
             if alpha == 0 {
                 continue;
             }
             let cov = (alpha as f64 / 255.0).powf(0.80);
+            let base = unsafe { GetPixel(HDC(dc), vx, py).0 };
             let mut blended = 0u32;
             for shift in [0, 8, 16] {
-                let a = ((background >> shift) & 255) as f64;
+                let a = ((base >> shift) & 255) as f64;
                 let b = ((color >> shift) & 255) as f64;
                 blended |= ((a + (b - a) * cov).round() as u32) << shift;
             }
             unsafe {
-                let _ = SetPixelV(HDC(dc), vx, top + vy, COLORREF(blended));
+                let _ = SetPixelV(HDC(dc), vx, py, COLORREF(blended));
             }
         }
     }
@@ -3060,12 +3112,54 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             drop(app);
             unsafe { DefWindowProcW(window, message, wparam, lparam) }
         }
+        0x0200 if main => {
+            let x = (lparam & 0xffff) as i16 as i32;
+            let y = ((lparam >> 16) & 0xffff) as i16 as i32;
+            let is_over = app
+                .current_desktop_name_layout()
+                .is_some_and(|layout| layout.rect.contains(x, y));
+            if is_over != app.desktop_name_hovered {
+                app.desktop_name_hovered = is_over;
+                if is_over {
+                    let mut track = TrackMouseEventData {
+                        size: size_of::<TrackMouseEventData>() as u32,
+                        flags: 0x0000_0002, // TME_LEAVE
+                        track: window,
+                        hover_time: 0,
+                    };
+                    unsafe {
+                        TrackMouseEvent(&mut track);
+                    }
+                }
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        0x02a3 if main => {
+            if app.desktop_name_hovered {
+                app.desktop_name_hovered = false;
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
         0x0201 if main => {
             let x = (lparam & 0xffff) as i16 as i32;
             let y = ((lparam >> 16) & 0xffff) as i16 as i32;
-            app.desktop_name_pressed = app
+            let is_over = app
                 .current_desktop_name_layout()
                 .is_some_and(|layout| layout.rect.contains(x, y));
+            if app.desktop_name_pressed != is_over {
+                app.desktop_name_pressed = is_over;
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
             drop(app);
             unsafe { DefWindowProcW(window, message, wparam, lparam) }
         }
@@ -3073,11 +3167,15 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             let x = (lparam & 0xffff) as i16 as i32;
             let y = ((lparam >> 16) & 0xffff) as i16 as i32;
             let was_pressed = std::mem::replace(&mut app.desktop_name_pressed, false);
-            if was_pressed
-                && app
-                    .current_desktop_name_layout()
-                    .is_some_and(|layout| layout.rect.contains(x, y))
-            {
+            let is_over = app
+                .current_desktop_name_layout()
+                .is_some_and(|layout| layout.rect.contains(x, y));
+            if was_pressed {
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+            if was_pressed && is_over {
                 app.open_rename_desktop_name();
                 return 0;
             }
@@ -3127,6 +3225,13 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             // Keyboard/assistive activation can precede mouse delivery. Preserve
             // the application active before the rail, rather than toggling based
             // on the rail becoming foreground during input routing.
+            if app.desktop_name_hovered || app.desktop_name_pressed {
+                app.desktop_name_hovered = false;
+                app.desktop_name_pressed = false;
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
             if wparam & 0xffff != 0 && lparam != 0 {
                 app.pre_foreground = Some(lparam as usize);
             } else if wparam & 0xffff == 0 && KEYBOARD_FOCUS.swap(false, Ordering::AcqRel) {
@@ -3465,6 +3570,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         tooltip: null_mut(),
         font: null_mut(),
         desktop_name_raster: DesktopNameRaster::default(),
+        desktop_name_hovered: false,
         desktop_name_pressed: false,
         font_dpi: 0,
         settings_fonts: Vec::new(),
@@ -3889,7 +3995,9 @@ mod visual_tests {
         assert_eq!(layout.name, "My Work");
         assert_eq!(layout.rect.left, 0);
         assert_eq!(layout.rect.right, 24);
-        assert!(layout.rect.top < layout.rect.bottom);
+        assert!(layout.rect.top < layout.text_top);
+        assert_eq!(layout.text_top, layout.rect.top + 4);
+        assert_eq!(layout.rect.bottom - layout.text_top, raster.height + 4);
 
         // Hit testing:
         assert!(layout.rect.contains(0, layout.rect.top));
