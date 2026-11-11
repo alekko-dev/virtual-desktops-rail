@@ -127,12 +127,18 @@ pub struct Point {
     pub y: i32,
 }
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct Rect {
     pub left: i32,
     pub top: i32,
     pub right: i32,
     pub bottom: i32,
+}
+
+impl Rect {
+    pub fn contains(&self, x: i32, y: i32) -> bool {
+        x >= self.left && x <= self.right && y >= self.top && y < self.bottom
+    }
 }
 #[repr(C)]
 pub struct Message {

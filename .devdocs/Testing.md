@@ -61,20 +61,24 @@ See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-au
 
 ## Interactive regression matrix
 
-The desktop rename implementation (2026-11-10, working changes) passed
+The desktop rename implementation (2026-11-10/2026-11-11, working changes) passed
 `check-dev.ps1`: formatting, warnings-denied Clippy, workspace tests, version
-contracts and locked release builds. Automated name validation covers whitespace-only,
-embedded control characters, Unicode and UTF-16 length boundaries. User screenshots
-confirmed the compact light-theme popover appearance (rounded DWM frame, muted heading,
-centered selected text, and clean button corners after handling `WM_CTLCOLORSTATIC` and
-`WM_CTLCOLORBTN` and collapsing the idle status row); full interactive keyboard/pointer,
-error-expansion, dark/high-contrast and live shell rename/read-back checks remain open.
+contracts and locked release builds. Automated tests cover desktop name bounding,
+single-line Unicode validation, and desktop name layout and hit-testing for both
+visible and overflow/hidden states. User screenshots confirmed the compact light-theme
+popover appearance (rounded DWM frame, muted heading, centered selected text, and
+clean button corners after handling `WM_CTLCOLORSTATIC` and `WM_CTLCOLORBTN` and
+collapsing the idle status row); full interactive keyboard/pointer, error-expansion,
+dark/high-contrast and live shell rename/read-back checks remain open.
 
 Desktop rename acceptance (computer-control testing deferred to the user):
 
 - Right-click an inactive dot: the editor opens beside it, with its name selected,
   without switching desktops or changing application-window layouts.
+- Click the vertical desktop name on the rail when shown: the editor opens beside
+  the name with the current desktop name selected.
 - Type a name, save with Enter and with Rename, and verify the rail tooltip,
+  accessibility name and Windows Task View name agree. Restore original names.
   accessibility name and Windows Task View name agree. Restore original names.
 - Verify F2 on a keyboard-focused dot, Tab/Shift+Tab navigation, Escape, Cancel,
   outside clicks (including the passive rail), and reopening after dismissal.
