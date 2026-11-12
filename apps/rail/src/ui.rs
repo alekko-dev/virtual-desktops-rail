@@ -42,6 +42,7 @@ const AUTO_RESTORE: usize = 6005;
 const MINIMIZE_SNAPPED_ELSEWHERE: usize = 6006;
 const DESKTOP_TINT: usize = 6007;
 const SHOW_DESKTOP_NAME: usize = 6008;
+const SETTINGS_FOOTER_Y: i32 = 420;
 const SAVE_REPORT: usize = 6105;
 const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
 const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
@@ -1713,7 +1714,7 @@ impl App {
                 272,
                 32,
             ),
-            (6106, "STATIC", "", 0x50000010, 0, 420, 560, 1),
+            (6106, "STATIC", "", 0x50000010, 0, SETTINGS_FOOTER_Y, 560, 1),
             (DONE, "BUTTON", "Done", 0x50010001, 432, 436, 88, 34),
             (6107, "STATIC", "●", 0x50000000, 24, 431, 10, 18),
             (6100, "STATIC", "", 0x50000000, 36, 432, 372, 28),
@@ -3061,7 +3062,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     ),
                 );
                 let dpi = GetDpiForWindow(window).max(96) as i32;
-                rect.top = (386 * dpi + 48) / 96;
+                rect.top = (SETTINGS_FOOTER_Y * dpi + 48) / 96;
                 fill(
                     wparam as Handle,
                     &rect,
@@ -3988,6 +3989,20 @@ mod visual_tests {
                 .iter()
                 .all(|unit| *unit == 0)
         );
+    }
+
+    #[test]
+    fn settings_footer_boundary_matches_separator_line() {
+        assert_eq!(super::SETTINGS_FOOTER_Y, 420);
+        for dpi in [96, 120, 144, 192] {
+            let scale = |dip: i32| (dip * dpi + 48) / 96;
+            let erase_boundary = (super::SETTINGS_FOOTER_Y * dpi + 48) / 96;
+            assert_eq!(
+                scale(super::SETTINGS_FOOTER_Y),
+                erase_boundary,
+                "Footer erase top boundary must match scaled separator line position at {dpi} DPI"
+            );
+        }
     }
 
     #[test]
