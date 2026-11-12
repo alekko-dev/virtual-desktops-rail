@@ -436,6 +436,8 @@ impl App {
         if !self.ready {
             return;
         }
+        self.desktop_name_hovered = false;
+        self.desktop_name_pressed = false;
         let Some(layout) = self.current_desktop_name_layout() else {
             return;
         };
@@ -3120,6 +3122,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             let is_over = app
                 .current_desktop_name_layout()
                 .is_some_and(|layout| layout.rect.contains(x, y));
+            let mut invalidate = false;
             if is_over != app.desktop_name_hovered {
                 app.desktop_name_hovered = is_over;
                 if is_over {
@@ -3133,6 +3136,19 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         TrackMouseEvent(&mut track);
                     }
                 }
+                invalidate = true;
+            }
+            let has_capture = unsafe { GetCapture() } == window;
+            if has_capture {
+                if app.desktop_name_pressed != is_over {
+                    app.desktop_name_pressed = is_over;
+                    invalidate = true;
+                }
+            } else if app.desktop_name_pressed {
+                app.desktop_name_pressed = false;
+                invalidate = true;
+            }
+            if invalidate {
                 unsafe {
                     InvalidateRect(window, null(), 0);
                 }
@@ -3141,8 +3157,10 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             unsafe { DefWindowProcW(window, message, wparam, lparam) }
         }
         0x02a3 if main => {
-            if app.desktop_name_hovered {
+            let changed = app.desktop_name_hovered || app.desktop_name_pressed;
+            if changed {
                 app.desktop_name_hovered = false;
+                app.desktop_name_pressed = false;
                 unsafe {
                     InvalidateRect(window, null(), 0);
                 }
@@ -3156,9 +3174,10 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             let is_over = app
                 .current_desktop_name_layout()
                 .is_some_and(|layout| layout.rect.contains(x, y));
-            if app.desktop_name_pressed != is_over {
-                app.desktop_name_pressed = is_over;
+            if is_over {
+                app.desktop_name_pressed = true;
                 unsafe {
+                    SetCapture(window);
                     InvalidateRect(window, null(), 0);
                 }
             }
@@ -3168,6 +3187,12 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         0x0202 if main => {
             let x = (lparam & 0xffff) as i16 as i32;
             let y = ((lparam >> 16) & 0xffff) as i16 as i32;
+            let had_capture = unsafe { GetCapture() } == window;
+            if had_capture {
+                unsafe {
+                    ReleaseCapture();
+                }
+            }
             let was_pressed = std::mem::replace(&mut app.desktop_name_pressed, false);
             let is_over = app
                 .current_desktop_name_layout()
@@ -3177,9 +3202,26 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     InvalidateRect(window, null(), 0);
                 }
             }
-            if was_pressed && is_over {
+            if (had_capture || was_pressed) && is_over {
                 app.open_rename_desktop_name();
                 return 0;
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        0x001f | 0x0215 if main => {
+            if unsafe { GetCapture() } == window {
+                unsafe {
+                    ReleaseCapture();
+                }
+            }
+            let changed = app.desktop_name_hovered || app.desktop_name_pressed;
+            if changed {
+                app.desktop_name_hovered = false;
+                app.desktop_name_pressed = false;
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
             }
             drop(app);
             unsafe { DefWindowProcW(window, message, wparam, lparam) }
@@ -3227,6 +3269,11 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             // Keyboard/assistive activation can precede mouse delivery. Preserve
             // the application active before the rail, rather than toggling based
             // on the rail becoming foreground during input routing.
+            if unsafe { GetCapture() } == window {
+                unsafe {
+                    ReleaseCapture();
+                }
+            }
             if app.desktop_name_hovered || app.desktop_name_pressed {
                 app.desktop_name_hovered = false;
                 app.desktop_name_pressed = false;

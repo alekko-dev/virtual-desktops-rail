@@ -48,6 +48,9 @@ unsafe extern "system" {
     pub fn DestroyWindow(window: Handle) -> i32;
     pub fn GetWindowLongPtrW(window: Handle, index: i32) -> isize;
     pub fn SetWindowLongPtrW(window: Handle, index: i32, value: isize) -> isize;
+    pub fn SetCapture(window: Handle) -> Handle;
+    pub fn ReleaseCapture() -> i32;
+    pub fn GetCapture() -> Handle;
     pub fn IsDialogMessageW(window: Handle, message: *mut Message) -> i32;
     pub fn GetFocus() -> Handle;
     pub fn SetFocus(window: Handle) -> Handle;
