@@ -1,5 +1,7 @@
 //! Small, modeless editor. Shell calls stay in the integration subprocess.
 use crate::native::*;
+use rail_core::layout::Desktop;
+use std::collections::HashSet;
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -8,6 +10,37 @@ pub const SAVE: u32 = 0x8061;
 const CLASS: &str = "VirtualDesktopRailRename";
 static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
 const MAX_NAME: usize = 256;
+
+pub fn default_desktop_name(target_guid: &str, desktops: &[Desktop]) -> String {
+    let position = desktops
+        .iter()
+        .position(|d| d.id == target_guid)
+        .map(|idx| idx + 1)
+        .unwrap_or(1);
+
+    let occupied: HashSet<String> = desktops
+        .iter()
+        .enumerate()
+        .filter(|(_, d)| d.id != target_guid)
+        .map(|(idx, d)| {
+            let trimmed = d.name.trim();
+            if trimmed.is_empty() {
+                format!("Desktop {}", idx + 1).to_lowercase()
+            } else {
+                trimmed.to_lowercase()
+            }
+        })
+        .collect();
+
+    let mut num = position;
+    loop {
+        let candidate = format!("Desktop {num}");
+        if !occupied.contains(&candidate.to_lowercase()) {
+            return candidate;
+        }
+        num += 1;
+    }
+}
 
 pub fn validated_name(value: &str) -> Result<String, String> {
     let name = value.trim();
@@ -254,12 +287,12 @@ impl Popover {
         }
     }
 
-    pub fn request(&mut self) -> Option<(String, String, u64)> {
+    pub fn request(&mut self, desktops: &[Desktop]) -> Option<(String, String, u64)> {
         if self.pending {
             return None;
         }
         use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, GetWindowTextW};
-        let name = unsafe {
+        let raw_text = unsafe {
             let mut text = vec![
                 0u16;
                 GetWindowTextLengthW(windows::Win32::Foundation::HWND(self.edit)).max(0)
@@ -269,11 +302,20 @@ impl Popover {
             let len = GetWindowTextW(windows::Win32::Foundation::HWND(self.edit), &mut text);
             String::from_utf16_lossy(&text[..len as usize])
         };
-        let name = match validated_name(&name) {
-            Ok(name) => name,
-            Err(error) => {
-                self.fail(&error);
-                return None;
+        let trimmed = raw_text.trim();
+        let name = if trimmed.is_empty() {
+            let default_name = default_desktop_name(&self.guid, desktops);
+            unsafe {
+                SetWindowTextW(self.edit, wide(&default_name).as_ptr());
+            }
+            default_name
+        } else {
+            match validated_name(&raw_text) {
+                Ok(name) => name,
+                Err(error) => {
+                    self.fail(&error);
+                    return None;
+                }
             }
         };
         self.token = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed);
@@ -384,6 +426,7 @@ unsafe extern "system" fn procedure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn desktop_names_are_bounded_single_line_unicode() {
         assert_eq!(
@@ -397,5 +440,124 @@ mod tests {
         assert!(validated_name(&"a".repeat(257)).is_err());
         assert!(validated_name(&"\u{1f9d1}".repeat(129)).is_err());
         assert!(validated_name(&"a".repeat(256)).is_ok());
+    }
+
+    #[test]
+    fn default_desktop_name_matches_actual_position() {
+        let desktops = vec![
+            Desktop {
+                id: "d1".into(),
+                name: "First".into(),
+            },
+            Desktop {
+                id: "d2".into(),
+                name: "Second".into(),
+            },
+            Desktop {
+                id: "d3".into(),
+                name: "Third".into(),
+            },
+        ];
+        assert_eq!(default_desktop_name("d1", &desktops), "Desktop 1");
+        assert_eq!(default_desktop_name("d2", &desktops), "Desktop 2");
+        assert_eq!(default_desktop_name("d3", &desktops), "Desktop 3");
+    }
+
+    #[test]
+    fn default_desktop_name_skips_occupied_name_with_next_larger_number() {
+        let desktops = vec![
+            Desktop {
+                id: "d1".into(),
+                name: "Desktop 2".into(),
+            },
+            Desktop {
+                id: "d2".into(),
+                name: "Work".into(),
+            },
+            Desktop {
+                id: "d3".into(),
+                name: "Desktop 3".into(),
+            },
+        ];
+        // d2 is at position 2; "Desktop 2" and "Desktop 3" are occupied, so it chooses "Desktop 4"
+        assert_eq!(default_desktop_name("d2", &desktops), "Desktop 4");
+    }
+
+    #[test]
+    fn default_desktop_name_does_not_conflict_with_target_itself() {
+        let desktops = vec![
+            Desktop {
+                id: "d1".into(),
+                name: "Desktop 1".into(),
+            },
+            Desktop {
+                id: "d2".into(),
+                name: "Desktop 2".into(),
+            },
+        ];
+        // d2 is already named "Desktop 2"; when resetting, it shouldn't treat itself as occupying "Desktop 2"
+        assert_eq!(default_desktop_name("d2", &desktops), "Desktop 2");
+    }
+
+    #[test]
+    fn default_desktop_name_accounts_for_unnamed_peers() {
+        let desktops = vec![
+            Desktop {
+                id: "d1".into(),
+                name: String::new(),
+            },
+            Desktop {
+                id: "d2".into(),
+                name: "Work".into(),
+            },
+            Desktop {
+                id: "d3".into(),
+                name: String::new(),
+            },
+        ];
+        // d1 is effectively Desktop 1, d3 is effectively Desktop 3; d2 (pos 2) gets Desktop 2
+        assert_eq!(default_desktop_name("d2", &desktops), "Desktop 2");
+
+        // If d2 is named "Desktop 1", and we rename d1 (pos 1):
+        let desktops2 = vec![
+            Desktop {
+                id: "d1".into(),
+                name: "Work".into(),
+            },
+            Desktop {
+                id: "d2".into(),
+                name: "Desktop 1".into(),
+            },
+            Desktop {
+                id: "d3".into(),
+                name: String::new(),
+            },
+        ];
+        // d1 (pos 1) sees Desktop 1 occupied by d2; Desktop 2 is free (d3 is pos 3 -> Desktop 3); gets Desktop 2
+        assert_eq!(default_desktop_name("d1", &desktops2), "Desktop 2");
+    }
+
+    #[test]
+    fn default_desktop_name_case_insensitive() {
+        let desktops = vec![
+            Desktop {
+                id: "d1".into(),
+                name: "desktop 2".into(),
+            },
+            Desktop {
+                id: "d2".into(),
+                name: "Work".into(),
+            },
+        ];
+        assert_eq!(default_desktop_name("d2", &desktops), "Desktop 3");
+    }
+
+    #[test]
+    fn default_desktop_name_unknown_target_fallback() {
+        let desktops = vec![Desktop {
+            id: "d1".into(),
+            name: "Desktop 1".into(),
+        }];
+        assert_eq!(default_desktop_name("unknown", &desktops), "Desktop 2");
     }
 }

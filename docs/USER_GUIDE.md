@@ -22,8 +22,10 @@ A narrow 25-DIP rail sits on the left edge of your primary display, reserving sp
 Right-clicking a desktop dot (or clicking the current desktop's vertical name on the rail when shown) opens a small rename editor beside the rail with the current
 name selected. **Enter** or **Rename** saves; **Escape**, **Cancel**, or clicking outside
 dismisses an unsaved edit. Use **Tab** to move between the field and buttons. Names
-are trimmed and must be nonempty, on one line, and within the field's length limit.
-Unicode and duplicate names are supported. Renaming updates the Windows desktop name, including
+are trimmed, on one line, and within the field's length limit (up to 256 characters). If you
+delete the name and save, the desktop is reset to its default name based on its position
+(such as "Desktop 2"); if another desktop already occupies that name, the editor uses
+the first available higher number. Unicode and duplicate custom names are supported. Renaming updates the Windows desktop name, including
 Task View. If the operation fails or cannot be confirmed, the editor keeps your text
 and shows an error so you can retry. A submitted rename may complete after the editor
 is dismissed; dismissal does not undo a submitted change.

@@ -378,8 +378,12 @@ native dialog navigation supplies Tab. The editor uses DWM rounded corners, nati
 system colors, and a collapsible status row that expands the popover only while showing
 progress or an error. It does not expand the AppBar.
 
-The UI validates a trimmed, nonempty, single-line name bounded to 256 UTF-16 code
-units and sends a GUID-targeted rename to the isolated integration subprocess.
+The UI validates a trimmed, single-line name bounded to 256 UTF-16 code
+units. If the user clears the name and submits (via Enter or Rename), the UI accepts
+the empty input and resolves a default name according to the desktop's actual 1-based
+position (e.g. `Desktop 2`); if that name is already occupied by another desktop (or displayed
+as another desktop's default), the editor selects the first available higher number (`Desktop 3`,
+etc.). The resolved name is sent as a GUID-targeted rename to the isolated integration subprocess.
 The worker validates again, invokes `winvd::Desktop::set_name`, and reads the name
 back before returning success. No shell call runs on the UI thread. The next frame
 refreshes desktop tooltips and accessible button names, including external renames.

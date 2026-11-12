@@ -472,6 +472,7 @@ impl App {
     }
 
     fn save_rename(&mut self, source: Handle) {
+        let desktops = self.model.desktops();
         let Some(popover) = self
             .rename
             .as_mut()
@@ -479,7 +480,7 @@ impl App {
         else {
             return;
         };
-        let Some((guid, name, token)) = popover.request() else {
+        let Some((guid, name, token)) = popover.request(desktops) else {
             return;
         };
         if !self.ready
@@ -1297,7 +1298,6 @@ impl App {
                 } else {
                     name
                 };
-                let caption = format!("{caption}");
                 specs.push((
                     100 + index,
                     caption,
