@@ -247,7 +247,7 @@ pub(crate) fn compute_desktop_name_layout(
     let (id, raw_name, index) = current_desktop?;
     let dpi = font_dpi.max(96);
     let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
-    let pad = scale(4);
+    let pad = scale(8);
     let bottom = footer_top - scale(12);
     let name = if raw_name.is_empty() {
         format!("Desktop {}", index + 1)
@@ -2573,9 +2573,10 @@ fn paint_desktop_name(
         } else {
             0x00ece8e7
         };
+        let surface = rail_background(app, surface, high_contrast, is_dark);
         let pill_h = layout.rect.bottom - layout.rect.top;
         let half_w = (raster.rail_width as f64 / scale) * 0.5 - 2.0;
-        let half_h = (pill_h as f64 / scale) * 0.5 - 2.5;
+        let half_h = (pill_h as f64 / scale) * 0.5 - 2.0;
         let center_x = raster.rail_width as f64 / 2.0;
         let center_y = (layout.rect.top + layout.rect.bottom) as f64 / 2.0;
 
@@ -2693,6 +2694,7 @@ fn draw(app: &App, item: &DrawItem) {
             } else {
                 0x00ece8e7
             };
+            let surface = rail_background(app, surface, high_contrast, is_dark);
             let half_w = (width as f64 / scale) * 0.5 - 2.0;
             let half_h = (height as f64 / scale) * 0.5 - 2.5;
             smooth_shape(dc, width, height, dpi, surface, |x, y| {
@@ -3996,8 +3998,8 @@ mod visual_tests {
         assert_eq!(layout.rect.left, 0);
         assert_eq!(layout.rect.right, 24);
         assert!(layout.rect.top < layout.text_top);
-        assert_eq!(layout.text_top, layout.rect.top + 4);
-        assert_eq!(layout.rect.bottom - layout.text_top, raster.height + 4);
+        assert_eq!(layout.text_top, layout.rect.top + 8);
+        assert_eq!(layout.rect.bottom - layout.text_top, raster.height + 8);
 
         // Hit testing:
         assert!(layout.rect.contains(0, layout.rect.top));

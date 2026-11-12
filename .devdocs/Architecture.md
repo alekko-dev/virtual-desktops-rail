@@ -371,7 +371,8 @@ Desktop dots retain left-click switching. Right-click (or F2 on a focused dot) o
 a modeless 280-DIP rename popover beside that dot, clamped to its monitor work area,
 without switching desktops. Clicking the current desktop's vertical name on the rail
 (when shown) also opens the same rename popover, anchored beside the name; the name reacts
-on hover and press with the same rounded surface highlight used by the desktop switch indicators.
+on hover and press with the same rounded surface highlight used by the desktop switch indicators,
+padded above and below the text and accommodating active rail tinting.
 The existing name is selected; Enter/Rename submits, Escape/Cancel/deactivation dismisses, and
 native dialog navigation supplies Tab. The editor uses DWM rounded corners, native
 system colors, and a collapsible status row that expands the popover only while showing
