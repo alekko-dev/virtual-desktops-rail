@@ -33,7 +33,12 @@ pub struct Popover {
 }
 
 impl Popover {
-    pub fn show(owner: Handle, anchor: Handle, guid: String, name: &str) -> Option<Self> {
+    pub fn show(
+        owner: Handle,
+        anchor_rect: windows::Win32::Foundation::RECT,
+        guid: String,
+        name: &str,
+    ) -> Option<Self> {
         use windows::Win32::Foundation::{BOOL, HWND};
         use windows::Win32::Graphics::Dwm::{
             DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
@@ -42,7 +47,7 @@ impl Popover {
         use windows::Win32::Graphics::Gdi::{
             GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
         };
-        use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, SetForegroundWindow};
+        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
         unsafe {
             let instance = GetModuleHandleW(null());
             let class_name = wide(CLASS);
@@ -63,16 +68,12 @@ impl Popover {
             RegisterClassExW(&class);
             let dpi = GetDpiForWindow(owner).max(96) as i32;
             let scale = |n: i32| (n * dpi + 48) / 96;
-            let mut anchor_rect = windows::Win32::Foundation::RECT::default();
-            if GetWindowRect(HWND(anchor), &mut anchor_rect).is_err() {
-                return None;
-            }
             let mut monitor = MONITORINFO {
                 cbSize: std::mem::size_of::<MONITORINFO>() as u32,
                 ..Default::default()
             };
             if !GetMonitorInfoW(
-                MonitorFromWindow(HWND(anchor), MONITOR_DEFAULTTONEAREST),
+                MonitorFromWindow(HWND(owner), MONITOR_DEFAULTTONEAREST),
                 &mut monitor,
             )
             .as_bool()

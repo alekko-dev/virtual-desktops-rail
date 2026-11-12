@@ -216,12 +216,76 @@ pub enum Command {
 }
 
 #[derive(Default)]
-struct DesktopNameRaster {
+pub(crate) struct DesktopNameRaster {
     name: String,
     dpi: u32,
     rail_width: i32,
     height: i32,
     mask: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DesktopNameLayout {
+    pub rect: Rect,
+    pub text_top: i32,
+    pub desktop_id: String,
+    pub name: String,
+}
+
+pub(crate) fn compute_desktop_name_layout(
+    show_desktop_name: bool,
+    current_desktop: Option<(&str, &str, usize)>,
+    font_dpi: u32,
+    rail_width: i32,
+    content_bottom: i32,
+    footer_top: i32,
+    raster: &mut DesktopNameRaster,
+) -> Option<DesktopNameLayout> {
+    if !show_desktop_name {
+        return None;
+    }
+    let (id, raw_name, index) = current_desktop?;
+    let dpi = font_dpi.max(96);
+    let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
+    let pad = scale(8);
+    let bottom = footer_top - scale(12);
+    let name = if raw_name.is_empty() {
+        format!("Desktop {}", index + 1)
+    } else {
+        raw_name.to_string()
+    };
+
+    if raster.name != name || raster.dpi != dpi || raster.rail_width != rail_width {
+        let (height, mask) = rasterize_desktop_name(&name, dpi, rail_width);
+        *raster = DesktopNameRaster {
+            name: name.clone(),
+            dpi,
+            rail_width,
+            height,
+            mask,
+        };
+    }
+
+    let total_height = raster.height + pad * 2;
+    if raster.height <= 0
+        || total_height > bottom - content_bottom - scale(12)
+        || raster.rail_width > rail_width
+    {
+        return None;
+    }
+
+    let top = bottom - total_height;
+    Some(DesktopNameLayout {
+        rect: Rect {
+            left: 0,
+            top,
+            right: rail_width,
+            bottom,
+        },
+        text_top: top + pad,
+        desktop_id: id.to_string(),
+        name,
+    })
 }
 
 struct App {
@@ -231,6 +295,8 @@ struct App {
     tooltip: Handle,
     font: Handle,
     desktop_name_raster: DesktopNameRaster,
+    desktop_name_hovered: bool,
+    desktop_name_pressed: bool,
     font_dpi: u32,
     settings_fonts: Vec<usize>,
     settings_signature: String,
@@ -285,6 +351,10 @@ impl App {
         if !self.ready {
             return;
         }
+        if anchor == self.window {
+            self.open_rename_desktop_name();
+            return;
+        }
         let Some(button) = self.buttons.iter().find(|button| button.hwnd == anchor) else {
             return;
         };
@@ -306,8 +376,98 @@ impl App {
             desktop.name.clone()
         };
         let guid = guid.clone();
+        let mut anchor_rect = windows::Win32::Foundation::RECT::default();
+        if unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetWindowRect(
+                windows::Win32::Foundation::HWND(anchor),
+                &mut anchor_rect,
+            )
+        }
+        .is_err()
+        {
+            return;
+        }
         self.rename.take();
-        self.rename = rename::Popover::show(self.window, anchor, guid, &name);
+        self.rename = rename::Popover::show(self.window, anchor_rect, guid, &name);
+    }
+
+    fn desktop_name_layout(&mut self, width: i32, footer_top: i32) -> Option<DesktopNameLayout> {
+        let current_desktop = self.model.current().and_then(|current_id| {
+            self.model
+                .desktops()
+                .iter()
+                .enumerate()
+                .find(|(_, d)| d.id == current_id)
+                .map(|(index, d)| (d.id.as_str(), d.name.as_str(), index))
+        });
+        let dpi = self.font_dpi.max(96);
+        let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
+        let content_bottom = self
+            .buttons
+            .iter()
+            .filter(|button| matches!(button.kind, ButtonKind::Desktop(_) | ButtonKind::Window(_)))
+            .map(|button| button.y + button.cell)
+            .max()
+            .unwrap_or(scale(42));
+        compute_desktop_name_layout(
+            self.model.saved().show_desktop_name,
+            current_desktop,
+            dpi,
+            width,
+            content_bottom,
+            footer_top,
+            &mut self.desktop_name_raster,
+        )
+    }
+
+    fn current_desktop_name_layout(&mut self) -> Option<DesktopNameLayout> {
+        let mut client = Rect::default();
+        unsafe {
+            GetClientRect(self.window, &mut client);
+        }
+        let dpi = unsafe { GetDpiForWindow(self.window).max(96) as i32 };
+        let scale = |dip: i32| (dip * dpi + 48) / 96;
+        let footer_top = client.bottom - scale(172);
+        let width = client.right - 1;
+        self.desktop_name_layout(width, footer_top)
+    }
+
+    fn open_rename_desktop_name(&mut self) {
+        if !self.ready {
+            return;
+        }
+        self.desktop_name_hovered = false;
+        self.desktop_name_pressed = false;
+        let Some(layout) = self.current_desktop_name_layout() else {
+            return;
+        };
+        let mut top_left = windows::Win32::Foundation::POINT {
+            x: layout.rect.left,
+            y: layout.rect.top,
+        };
+        let mut bottom_right = windows::Win32::Foundation::POINT {
+            x: layout.rect.right,
+            y: layout.rect.bottom,
+        };
+        unsafe {
+            let _ = windows::Win32::Graphics::Gdi::ClientToScreen(
+                windows::Win32::Foundation::HWND(self.window),
+                &mut top_left,
+            );
+            let _ = windows::Win32::Graphics::Gdi::ClientToScreen(
+                windows::Win32::Foundation::HWND(self.window),
+                &mut bottom_right,
+            );
+        }
+        let anchor_rect = windows::Win32::Foundation::RECT {
+            left: top_left.x,
+            top: top_left.y,
+            right: bottom_right.x,
+            bottom: bottom_right.y,
+        };
+        self.rename.take();
+        self.rename =
+            rename::Popover::show(self.window, anchor_rect, layout.desktop_id, &layout.name);
     }
 
     fn save_rename(&mut self, source: Handle) {
@@ -2401,59 +2561,63 @@ fn paint_desktop_name(
     colors: (u32, u32),
     high_contrast: bool,
 ) {
-    if !app.model.saved().show_desktop_name {
+    let Some(layout) = app.desktop_name_layout(width, footer_top) else {
         return;
-    }
+    };
     let (background, foreground) = colors;
-    let Some((index, desktop)) = app
-        .model
-        .desktops()
-        .iter()
-        .enumerate()
-        .find(|(_, desktop)| Some(desktop.id.as_str()) == app.model.current())
-    else {
-        return;
-    };
-    let dpi = app.font_dpi.max(96);
-    let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
-    let content_bottom = app
-        .buttons
-        .iter()
-        .filter(|button| matches!(button.kind, ButtonKind::Desktop(_) | ButtonKind::Window(_)))
-        .map(|button| button.y + button.cell)
-        .max()
-        .unwrap_or(scale(42));
-    let bottom = footer_top - scale(12);
-    let name = if desktop.name.is_empty() {
-        format!("Desktop {}", index + 1)
-    } else {
-        desktop.name.clone()
-    };
-
-    if app.desktop_name_raster.name != name
-        || app.desktop_name_raster.dpi != dpi
-        || app.desktop_name_raster.rail_width != width
-    {
-        let (height, mask) = rasterize_desktop_name(&name, dpi, width);
-        app.desktop_name_raster = DesktopNameRaster {
-            name,
-            dpi,
-            rail_width: width,
-            height,
-            mask,
-        };
-    }
-
     let raster = &app.desktop_name_raster;
-    if raster.height <= 0
-        || raster.height > bottom - content_bottom - scale(12)
-        || raster.rail_width > width
-    {
-        return;
+    let hovered = app.desktop_name_hovered;
+    let pressed = app.desktop_name_pressed;
+    let is_dark = crate::theme::dark();
+
+    let dpi = app.font_dpi.max(96);
+    let scale = dpi as f64 / 96.0;
+
+    use windows::Win32::{
+        Foundation::COLORREF,
+        Graphics::Gdi::{GetPixel, HDC, SetPixelV},
+    };
+
+    if (hovered || pressed) && !high_contrast {
+        let surface = if is_dark {
+            if pressed { 0x00484342 } else { 0x003a3534 }
+        } else if pressed {
+            0x00e0dcdc
+        } else {
+            0x00ece8e7
+        };
+        let surface = rail_background(app, surface, high_contrast, is_dark);
+        let pill_h = layout.rect.bottom - layout.rect.top;
+        let half_w = (raster.rail_width as f64 / scale) * 0.5 - 2.0;
+        let half_h = (pill_h as f64 / scale) * 0.5 - 2.0;
+        let center_x = raster.rail_width as f64 / 2.0;
+        let center_y = (layout.rect.top + layout.rect.bottom) as f64 / 2.0;
+
+        for vy in 0..pill_h {
+            let py = layout.rect.top + vy;
+            let dy = (py as f64 + 0.5 - center_y) / scale;
+            for vx in 0..raster.rail_width {
+                let dx = (vx as f64 + 0.5 - center_x) / scale;
+                let d = rounded_rect_sdf(dx, dy, half_w.max(2.0), half_h.max(2.0), 4.0);
+                let coverage = (0.5 - d * scale).clamp(0.0, 1.0);
+                if coverage == 0.0 {
+                    continue;
+                }
+                let base = unsafe { GetPixel(HDC(dc), vx, py).0 };
+                let mut blended = 0u32;
+                for shift in [0, 8, 16] {
+                    let a = ((base >> shift) & 255) as f64;
+                    let b = ((surface >> shift) & 255) as f64;
+                    blended |= ((a + (b - a) * coverage).round() as u32) << shift;
+                }
+                unsafe {
+                    let _ = SetPixelV(HDC(dc), vx, py, COLORREF(blended));
+                }
+            }
+        }
     }
 
-    let top = bottom - raster.height;
-    let color = if high_contrast {
+    let color = if high_contrast || hovered || pressed {
         foreground
     } else {
         let mut muted = 0;
@@ -2465,25 +2629,23 @@ fn paint_desktop_name(
         muted
     };
 
-    use windows::Win32::{
-        Foundation::COLORREF,
-        Graphics::Gdi::{HDC, SetPixelV},
-    };
     for vy in 0..raster.height {
+        let py = layout.text_top + vy;
         for vx in 0..raster.rail_width {
             let alpha = raster.mask[(vy * raster.rail_width + vx) as usize];
             if alpha == 0 {
                 continue;
             }
             let cov = (alpha as f64 / 255.0).powf(0.80);
+            let base = unsafe { GetPixel(HDC(dc), vx, py).0 };
             let mut blended = 0u32;
             for shift in [0, 8, 16] {
-                let a = ((background >> shift) & 255) as f64;
+                let a = ((base >> shift) & 255) as f64;
                 let b = ((color >> shift) & 255) as f64;
                 blended |= ((a + (b - a) * cov).round() as u32) << shift;
             }
             unsafe {
-                let _ = SetPixelV(HDC(dc), vx, top + vy, COLORREF(blended));
+                let _ = SetPixelV(HDC(dc), vx, py, COLORREF(blended));
             }
         }
     }
@@ -2545,6 +2707,7 @@ fn draw(app: &App, item: &DrawItem) {
             } else {
                 0x00ece8e7
             };
+            let surface = rail_background(app, surface, high_contrast, is_dark);
             let half_w = (width as f64 / scale) * 0.5 - 2.0;
             let half_h = (height as f64 / scale) * 0.5 - 2.5;
             smooth_shape(dc, width, height, dpi, surface, |x, y| {
@@ -2934,6 +3097,174 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             app.save_rename(wparam as Handle);
             0
         }
+        0x0020 if main => {
+            if (lparam & 0xffff) == 1 {
+                let mut pt = windows::Win32::Foundation::POINT::default();
+                if unsafe { windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt) }.is_ok()
+                    && unsafe {
+                        windows::Win32::Graphics::Gdi::ScreenToClient(
+                            windows::Win32::Foundation::HWND(window),
+                            &mut pt,
+                        )
+                    }
+                    .as_bool()
+                    && app
+                        .current_desktop_name_layout()
+                        .is_some_and(|layout| layout.rect.contains(pt.x, pt.y))
+                {
+                    unsafe {
+                        windows::Win32::UI::WindowsAndMessaging::SetCursor(
+                            windows::Win32::UI::WindowsAndMessaging::HCURSOR(LoadCursorW(
+                                null_mut(),
+                                32649usize as *const u16,
+                            )
+                                as *mut _),
+                        );
+                    }
+                    return 1;
+                }
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        0x0200 if main => {
+            let x = (lparam & 0xffff) as i16 as i32;
+            let y = ((lparam >> 16) & 0xffff) as i16 as i32;
+            let is_over = app
+                .current_desktop_name_layout()
+                .is_some_and(|layout| layout.rect.contains(x, y));
+            let mut invalidate = false;
+            if is_over != app.desktop_name_hovered {
+                app.desktop_name_hovered = is_over;
+                if is_over {
+                    let mut track = TrackMouseEventData {
+                        size: size_of::<TrackMouseEventData>() as u32,
+                        flags: 0x0000_0002, // TME_LEAVE
+                        track: window,
+                        hover_time: 0,
+                    };
+                    unsafe {
+                        TrackMouseEvent(&mut track);
+                    }
+                }
+                invalidate = true;
+            }
+            let has_capture = unsafe { GetCapture() } == window;
+            if has_capture {
+                if app.desktop_name_pressed != is_over {
+                    app.desktop_name_pressed = is_over;
+                    invalidate = true;
+                }
+            } else if app.desktop_name_pressed {
+                app.desktop_name_pressed = false;
+                invalidate = true;
+            }
+            if invalidate {
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        0x02a3 if main => {
+            let changed = app.desktop_name_hovered || app.desktop_name_pressed;
+            if changed {
+                app.desktop_name_hovered = false;
+                app.desktop_name_pressed = false;
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        0x0201 if main => {
+            let x = (lparam & 0xffff) as i16 as i32;
+            let y = ((lparam >> 16) & 0xffff) as i16 as i32;
+            let is_over = app
+                .current_desktop_name_layout()
+                .is_some_and(|layout| layout.rect.contains(x, y));
+            if is_over {
+                app.desktop_name_pressed = true;
+                unsafe {
+                    SetCapture(window);
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        0x0202 if main => {
+            let x = (lparam & 0xffff) as i16 as i32;
+            let y = ((lparam >> 16) & 0xffff) as i16 as i32;
+            let had_capture = unsafe { GetCapture() } == window;
+            if had_capture {
+                unsafe {
+                    ReleaseCapture();
+                }
+            }
+            let was_pressed = std::mem::replace(&mut app.desktop_name_pressed, false);
+            let is_over = app
+                .current_desktop_name_layout()
+                .is_some_and(|layout| layout.rect.contains(x, y));
+            if was_pressed {
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+            if (had_capture || was_pressed) && is_over {
+                app.open_rename_desktop_name();
+                return 0;
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        0x001f | 0x0215 if main => {
+            if unsafe { GetCapture() } == window {
+                unsafe {
+                    ReleaseCapture();
+                }
+            }
+            let changed = app.desktop_name_hovered || app.desktop_name_pressed;
+            if changed {
+                app.desktop_name_hovered = false;
+                app.desktop_name_pressed = false;
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
+        0x007b if main => {
+            let pt_x = (lparam & 0xffff) as i16 as i32;
+            let pt_y = ((lparam >> 16) & 0xffff) as i16 as i32;
+            let hit = if lparam == -1 {
+                true
+            } else {
+                let mut pt = windows::Win32::Foundation::POINT { x: pt_x, y: pt_y };
+                if unsafe {
+                    windows::Win32::Graphics::Gdi::ScreenToClient(
+                        windows::Win32::Foundation::HWND(window),
+                        &mut pt,
+                    )
+                }
+                .as_bool()
+                {
+                    app.current_desktop_name_layout()
+                        .is_some_and(|layout| layout.rect.contains(pt.x, pt.y))
+                } else {
+                    false
+                }
+            };
+            if hit {
+                app.open_rename_desktop_name();
+                return 0;
+            }
+            drop(app);
+            unsafe { DefWindowProcW(window, message, wparam, lparam) }
+        }
         WAKE if main => {
             app.drain();
             0
@@ -2949,6 +3280,18 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             // Keyboard/assistive activation can precede mouse delivery. Preserve
             // the application active before the rail, rather than toggling based
             // on the rail becoming foreground during input routing.
+            if unsafe { GetCapture() } == window {
+                unsafe {
+                    ReleaseCapture();
+                }
+            }
+            if app.desktop_name_hovered || app.desktop_name_pressed {
+                app.desktop_name_hovered = false;
+                app.desktop_name_pressed = false;
+                unsafe {
+                    InvalidateRect(window, null(), 0);
+                }
+            }
             if wparam & 0xffff != 0 && lparam != 0 {
                 app.pre_foreground = Some(lparam as usize);
             } else if wparam & 0xffff == 0 && KEYBOARD_FOCUS.swap(false, Ordering::AcqRel) {
@@ -3290,6 +3633,8 @@ pub fn run(settings: bool) -> Result<(), String> {
         tooltip: null_mut(),
         font: null_mut(),
         desktop_name_raster: DesktopNameRaster::default(),
+        desktop_name_hovered: false,
+        desktop_name_pressed: false,
         font_dpi: 0,
         settings_fonts: Vec::new(),
         settings_signature: String::new(),
@@ -3657,5 +4002,91 @@ mod visual_tests {
                 .iter()
                 .all(|unit| *unit == 0)
         );
+    }
+
+    #[test]
+    fn desktop_name_layout_and_hit_testing() {
+        let mut raster = super::DesktopNameRaster::default();
+
+        // When show_desktop_name is false, layout is None:
+        assert!(
+            super::compute_desktop_name_layout(
+                false,
+                Some(("guid-1", "Desktop 1", 0)),
+                96,
+                24,
+                100,
+                500,
+                &mut raster,
+            )
+            .is_none()
+        );
+
+        // When current desktop is None, layout is None:
+        assert!(
+            super::compute_desktop_name_layout(true, None, 96, 24, 100, 500, &mut raster,)
+                .is_none()
+        );
+
+        // When space is insufficient, layout is None:
+        assert!(
+            super::compute_desktop_name_layout(
+                true,
+                Some(("guid-1", "Desktop 1", 0)),
+                96,
+                24,
+                400,
+                420,
+                &mut raster,
+            )
+            .is_none()
+        );
+
+        // When space is sufficient, layout is Some:
+        let layout = super::compute_desktop_name_layout(
+            true,
+            Some(("guid-1", "My Work", 0)),
+            96,
+            24,
+            100,
+            500,
+            &mut raster,
+        )
+        .expect("Layout should succeed when space is sufficient");
+
+        assert_eq!(layout.desktop_id, "guid-1");
+        assert_eq!(layout.name, "My Work");
+        assert_eq!(layout.rect.left, 0);
+        assert_eq!(layout.rect.right, 24);
+        assert!(layout.rect.top < layout.text_top);
+        assert_eq!(layout.text_top, layout.rect.top + 8);
+        assert_eq!(layout.rect.bottom - layout.text_top, raster.height + 8);
+
+        // Hit testing:
+        assert!(layout.rect.contains(0, layout.rect.top));
+        assert!(
+            layout
+                .rect
+                .contains(12, (layout.rect.top + layout.rect.bottom) / 2)
+        );
+        assert!(layout.rect.contains(24, layout.rect.bottom - 1));
+        assert!(!layout.rect.contains(12, layout.rect.top - 1));
+        assert!(!layout.rect.contains(12, layout.rect.bottom));
+        assert!(!layout.rect.contains(-1, layout.rect.top));
+        assert!(!layout.rect.contains(25, layout.rect.top));
+
+        // When raw name is empty, fallback "Desktop {index + 1}" is formatted:
+        let fallback_layout = super::compute_desktop_name_layout(
+            true,
+            Some(("guid-2", "", 2)),
+            96,
+            24,
+            100,
+            500,
+            &mut raster,
+        )
+        .expect("Fallback layout should succeed");
+        assert_eq!(fallback_layout.desktop_id, "guid-2");
+        assert_eq!(fallback_layout.name, "Desktop 3");
     }
 }
