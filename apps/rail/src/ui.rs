@@ -872,6 +872,7 @@ impl App {
                     warning,
                 } => {
                     self.loaded = true;
+                    self.signature.clear();
                     self.model = Model::new(saved);
                     self.notice = warning.unwrap_or_default();
                     if path.as_os_str().is_empty() && self.notice.is_empty() {
@@ -1229,7 +1230,7 @@ impl App {
         let dpi = unsafe { GetDpiForWindow(self.window) }.max(96);
         let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
         let signature = format!(
-            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}",
+            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}|{}",
             self.model.desktops(),
             self.model.current(),
             self.ready,
@@ -1247,6 +1248,7 @@ impl App {
             self.status,
             self.model.saved().desktop_tint,
             self.model.saved().show_desktop_name,
+            self.loaded,
             self.theme_busy,
             dark()
         );
@@ -1344,6 +1346,8 @@ impl App {
                 LIGHT_SWITCH,
                 if self.theme_busy {
                     "Changing Windows theme…"
+                } else if !self.loaded {
+                    "Loading preferences…"
                 } else if dark() {
                     "Switch Windows to light theme"
                 } else {
@@ -1353,7 +1357,7 @@ impl App {
                 bounds.bottom - scale(162),
                 scale(34),
                 ButtonKind::LightSwitch,
-                !self.theme_busy,
+                self.loaded && !self.theme_busy,
             ));
             specs.push((
                 PAUSE,
@@ -2776,7 +2780,9 @@ fn draw(app: &App, item: &DrawItem) {
                 | ButtonKind::LightSwitch
                 | ButtonKind::Settings
                 | ButtonKind::Exit => {
-                    let color = if matches!(button.kind, ButtonKind::Pause) && !app.ready {
+                    let color = if (matches!(button.kind, ButtonKind::Pause) && !app.ready)
+                        || !button.enabled
+                    {
                         unavailable
                     } else if hovered || pressed {
                         text
@@ -3488,7 +3494,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         }
                         ButtonKind::Settings => app.command(Command::Settings),
                         ButtonKind::LightSwitch => {
-                            if !app.theme_busy {
+                            if app.loaded && !app.theme_busy {
                                 match theme::start_toggle(
                                     app.model.saved().custom_system_for_light,
                                     app.model.saved().custom_system_for_dark,

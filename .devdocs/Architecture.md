@@ -396,8 +396,9 @@ the custom Windows panel mode is remembered in schema 1 rail state and restored 
 Setting matching standard modes in Windows clears the remembered custom setting for that app mode.
 Its sun/moon glyph shows the destination mode, matching its tooltip and accessible name. A short-lived
 worker writes and reads back the values, then broadcasts `WM_SETTINGCHANGE` with
-`ImmersiveColorSet` using a per-recipient timeout. The button is disabled while busy;
-completion refreshes its accessible name/tooltip, and failures open the Settings notice.
+`ImmersiveColorSet` using a per-recipient timeout. The button is disabled before
+preferences are loaded and while busy; completion refreshes its accessible name/tooltip,
+and failures open the Settings notice.
 If the app-mode write fails after the system-mode write, the previous system mode is
 restored where possible. Registry readback establishes preference persistence, not
 that every running application rendered the new mode. High-contrast painting remains
