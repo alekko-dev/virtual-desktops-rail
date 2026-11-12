@@ -61,19 +61,26 @@ See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-au
 
 ## Interactive regression matrix
 
-The desktop rename implementation (2026-11-10, working changes) passed
+The desktop rename implementation (2026-11-10/2026-11-11, working changes) passed
 `check-dev.ps1`: formatting, warnings-denied Clippy, workspace tests, version
-contracts and locked release builds. Automated name validation covers whitespace-only,
-embedded control characters, Unicode and UTF-16 length boundaries. User screenshots
+contracts and locked release builds. Automated tests cover desktop name bounding,
+single-line Unicode validation, desktop name layout and hit-testing for both
+visible and overflow/hidden states, and pointer capture/leave state management. User screenshots
 confirmed the compact light-theme popover appearance (rounded DWM frame, muted heading,
 centered selected text, and clean button corners after handling `WM_CTLCOLORSTATIC` and
-`WM_CTLCOLORBTN` and collapsing the idle status row); full interactive keyboard/pointer,
-error-expansion, dark/high-contrast and live shell rename/read-back checks remain open.
+`WM_CTLCOLORBTN` and collapsing the idle status row); automated CUA pointer/keyboard exercises
+were unavailable because no interactive desktop or computer-use tools are provisioned in the
+agent execution environment. Live pointer clicks, hover/press background highlights, tint accommodation,
+and popup dismissal were exercised and verified directly by the user in their active Windows desktop
+session. Full interactive keyboard/pointer, error-expansion, dark/high-contrast and live shell
+rename/read-back checks remain documented for acceptance:
 
-Desktop rename acceptance (computer-control testing deferred to the user):
+Desktop rename acceptance:
 
 - Right-click an inactive dot: the editor opens beside it, with its name selected,
   without switching desktops or changing application-window layouts.
+- Click the vertical desktop name on the rail when shown: the editor opens beside
+  the name with the current desktop name selected.
 - Type a name, save with Enter and with Rename, and verify the rail tooltip,
   accessibility name and Windows Task View name agree. Restore original names.
 - Verify F2 on a keyboard-focused dot, Tab/Shift+Tab navigation, Escape, Cancel,
@@ -345,6 +352,7 @@ families under ignored `artifacts/` are supporting references only.
 | 2026-11-03; Windows 11 x64 | Task View-scoped DWM Peek exclusion, immediate Task View foreground-loss reveal, and double-buffered/persistent-button GDI rendering passed `check-dev.ps1` (87 workspace tests, version contracts and locked release builds). Visual behavior during desktop switches and Task View return was verified by the user; automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was installed in the session. |
 | 2026-11-05; Windows 11 x64 | Rail visual refinements (14-DIP header badge with divider, DPI-scaled anti-aliased window status pills, owner-draw hover/pressed surface highlights, keyboard-only focus ring visibility, footer separator, and scaled-down rounded utility icons) passed `check-dev.ps1` (formatting, Clippy, workspace tests, version contracts, and locked release builds). Live visual and pointer behavior was inspected and verified by the user; automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was installed in the session. |
 | 2026-11-10; Windows 11 x64 | Vertical current-desktop name uses DPI-cached 4x supersampled rasterization and descender-compensated optical rail centering. Default-on Appearance visibility preference includes legacy-default, explicit opt-out round-trip and cross-session merge coverage. Passed `check-dev.ps1` (formatting, Clippy, workspace tests including raster coverage/centering at 96/120/144/192 DPI, version contracts, and locked release builds). Built into a separate target directory because the original release EXE was running. Computer-control tests were skipped by request; final rendering, Settings geometry/input and overflow hiding remain unverified live. |
+| 2026-11-12; Windows 11 x64 | Desktop name click-to-rename workflow with owner-draw hover/press background highlighting, vertical press padding, rail tint accommodation, and pointer capture/leave state management passed `check-dev.ps1` (formatting, Clippy, workspace tests, version contracts, and locked release builds). Automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was provisioned in the agent session; live pointer interaction, hover/press visual feedback, popover activation, and outside-click dismissal were exercised and confirmed by the user in their desktop session. |
 
 The desktop-name raster test also compares nonempty, identical masks with thread-local
 GDI batch limits of 1 and 4096 across 96/120/144/192 DPI, restoring the original limit
