@@ -34,7 +34,13 @@ fn help_and_invalid_arguments_exit_without_starting_a_rail() {
     assert!(String::from_utf8_lossy(&help.stdout).contains("no longer affects build eligibility"));
     assert!(String::from_utf8_lossy(&help.stdout).contains("26100.2605"));
     assert!(String::from_utf8_lossy(&help.stdout).contains("--auto-restore on|off"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("--light-switch apps|windows|both"));
     let invalid = Command::new(exe).arg("--unknown-option").output().unwrap();
+    assert_eq!(invalid.status.code(), Some(1));
+    let invalid = Command::new(exe)
+        .args(["--light-switch", "maybe"])
+        .output()
+        .unwrap();
     assert_eq!(invalid.status.code(), Some(1));
     let invalid = Command::new(exe)
         .args(["--auto-restore", "maybe"])

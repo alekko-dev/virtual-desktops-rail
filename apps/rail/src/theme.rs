@@ -72,6 +72,10 @@ pub fn dark() -> bool {
     read(APPS).unwrap_or(1) == 0
 }
 
+pub fn system_dark() -> bool {
+    read(SYSTEM).unwrap_or(1) == 0
+}
+
 fn broadcast() {
     use windows::Win32::Foundation::{LPARAM, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -93,34 +97,64 @@ fn broadcast() {
     }
 }
 
-fn toggle() -> Result<(), String> {
-    let apps = read(APPS)?;
-    let system = read(SYSTEM)?;
-    let target = u32::from(apps == 0);
-    write(SYSTEM, target)?;
-    if let Err(error) = write(APPS, target) {
-        let rollback = write(SYSTEM, system);
-        broadcast();
-        return Err(match rollback {
-            Ok(()) => error,
-            Err(rollback) => format!("{error}; restoring system mode also failed: {rollback}"),
-        });
-    }
-    let result = (|| {
-        if read(APPS)? == target && read(SYSTEM)? == target {
-            Ok(())
-        } else {
-            Err("Windows did not retain the requested color mode.".into())
+fn toggle(target: rail_core::LightSwitchTarget) -> Result<(), String> {
+    match target {
+        rail_core::LightSwitchTarget::Applications => {
+            let apps = read(APPS)?;
+            let target_val = u32::from(apps == 0);
+            write(APPS, target_val)?;
+            let result = if read(APPS)? == target_val {
+                Ok(())
+            } else {
+                Err("Windows did not retain the requested application color mode.".into())
+            };
+            broadcast();
+            result
         }
-    })();
-    broadcast();
-    result
+        rail_core::LightSwitchTarget::Windows => {
+            let system = read(SYSTEM)?;
+            let target_val = u32::from(system == 0);
+            write(SYSTEM, target_val)?;
+            let result = if read(SYSTEM)? == target_val {
+                Ok(())
+            } else {
+                Err("Windows did not retain the requested Windows color mode.".into())
+            };
+            broadcast();
+            result
+        }
+        rail_core::LightSwitchTarget::Both => {
+            let apps = read(APPS)?;
+            let system = read(SYSTEM)?;
+            let target_val = u32::from(apps == 0);
+            write(SYSTEM, target_val)?;
+            if let Err(error) = write(APPS, target_val) {
+                let rollback = write(SYSTEM, system);
+                broadcast();
+                return Err(match rollback {
+                    Ok(()) => error,
+                    Err(rollback) => {
+                        format!("{error}; restoring system mode also failed: {rollback}")
+                    }
+                });
+            }
+            let result = (|| {
+                if read(APPS)? == target_val && read(SYSTEM)? == target_val {
+                    Ok(())
+                } else {
+                    Err("Windows did not retain the requested color mode.".into())
+                }
+            })();
+            broadcast();
+            result
+        }
+    }
 }
 
-pub fn start_toggle() -> Result<(), String> {
+pub fn start_toggle(target: rail_core::LightSwitchTarget) -> Result<(), String> {
     std::thread::Builder::new()
         .name("windows-theme".into())
-        .spawn(|| crate::notify(crate::Event::Theme(toggle())))
+        .spawn(move || crate::notify(crate::Event::Theme(toggle(target))))
         .map(|_| ())
         .map_err(|error| error.to_string())
 }

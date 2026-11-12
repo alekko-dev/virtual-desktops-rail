@@ -11,4 +11,4 @@ pub use model::{CaptureRequest, Click, ExternalRestore, Model, Runtime};
 pub use operation::{
     Acceptance, Action, Effect, OperationState, Outcome, Pending, Request, Settled,
 };
-pub use saved::{Record, Saved};
+pub use saved::{LightSwitchTarget, Record, Saved};

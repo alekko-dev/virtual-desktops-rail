@@ -1105,6 +1105,31 @@ fn snap_policy_defaults_migrates_and_persists_explicit_opt_out() {
     assert!(!Model::new(saved).saved().minimize_snapped_elsewhere);
 }
 
+#[test]
+fn light_switch_target_defaults_migrates_and_persists() {
+    let mut value = serde_json::to_value(Saved::default()).unwrap();
+    value.as_object_mut().unwrap().remove("light_switch_target");
+    let saved = Saved::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert_eq!(
+        saved.light_switch_target,
+        rail_core::LightSwitchTarget::Both
+    );
+    let mut model = Model::new(saved);
+    let revision = model.saved().preferences_revision;
+    model.set_light_switch_target(rail_core::LightSwitchTarget::Applications);
+    assert!(model.is_dirty());
+    assert_eq!(model.saved().preferences_revision, revision + 1);
+    let saved = Saved::decode(&serde_json::to_vec(model.saved()).unwrap()).unwrap();
+    assert_eq!(
+        saved.light_switch_target,
+        rail_core::LightSwitchTarget::Applications
+    );
+    assert_eq!(
+        Model::new(saved).saved().light_switch_target,
+        rail_core::LightSwitchTarget::Applications
+    );
+}
+
 fn pre_minimize_snap_sample() -> (Model, Window, String, Request, Window) {
     let (mut model, mut window, key) = saved_destinations();
     window.layout.visible = Some([125, 80, 725, 500]);

@@ -42,7 +42,10 @@ const AUTO_RESTORE: usize = 6005;
 const MINIMIZE_SNAPPED_ELSEWHERE: usize = 6006;
 const DESKTOP_TINT: usize = 6007;
 const SHOW_DESKTOP_NAME: usize = 6008;
-const SETTINGS_FOOTER_Y: i32 = 420;
+const LIGHT_SWITCH_APPS: usize = 6009;
+const LIGHT_SWITCH_WINDOWS: usize = 6010;
+const LIGHT_SWITCH_BOTH: usize = 6011;
+const SETTINGS_FOOTER_Y: i32 = 486;
 const SAVE_REPORT: usize = 6105;
 const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
 const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
@@ -205,15 +208,36 @@ pub enum Command {
     Resume,
     Retry,
     Exit,
-    Status { nonce: String },
-    Click { key: String },
-    Switch { guid: String },
-    AutomationUi { enabled: bool },
-    ExperimentalIntegration { enabled: bool },
-    AutoRestore { enabled: bool },
-    DesktopTint { enabled: bool },
-    ShowDesktopName { enabled: bool },
-    MinimizeSnappedElsewhere { enabled: bool },
+    Status {
+        nonce: String,
+    },
+    Click {
+        key: String,
+    },
+    Switch {
+        guid: String,
+    },
+    AutomationUi {
+        enabled: bool,
+    },
+    ExperimentalIntegration {
+        enabled: bool,
+    },
+    AutoRestore {
+        enabled: bool,
+    },
+    DesktopTint {
+        enabled: bool,
+    },
+    ShowDesktopName {
+        enabled: bool,
+    },
+    MinimizeSnappedElsewhere {
+        enabled: bool,
+    },
+    LightSwitchTarget {
+        target: rail_core::LightSwitchTarget,
+    },
 }
 
 #[derive(Default)]
@@ -670,6 +694,10 @@ impl App {
                     serde_json::json!({"event":"minimize_snapped_elsewhere_changed","enabled":enabled}),
                 ));
             }
+            Command::LightSwitchTarget { target } => {
+                self.model.set_light_switch_target(target);
+                self.render(false);
+            }
             Command::ExperimentalIntegration { enabled } => {
                 if self.model.set_experimental_integration(enabled) {
                     self.command(Command::Retry);
@@ -726,6 +754,7 @@ impl App {
                     "minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
                     "desktop_tint":saved.desktop_tint,
                     "show_desktop_name":saved.show_desktop_name,
+                    "light_switch_target":saved.light_switch_target,
                     "desktops":self.model.desktops(),"windows":self.model.present().map(|(key,r)|serde_json::json!({
                         "key":key,"hwnd":r.window().hwnd,"pid":r.window().pid,"minimized":r.window().minimized,"blocked":r.blocked(),
                         "responsive":r.window().responsive,"pending":r.pending().is_some(),"layout":r.window().layout,
@@ -1331,14 +1360,43 @@ impl App {
                 }
                 y += scale(45);
             }
+            let light_switch_target = self.model.saved().light_switch_target;
+            let light_switch_is_dark = match light_switch_target {
+                rail_core::LightSwitchTarget::Applications | rail_core::LightSwitchTarget::Both => {
+                    dark()
+                }
+                rail_core::LightSwitchTarget::Windows => theme::system_dark(),
+            };
             specs.push((
                 LIGHT_SWITCH,
                 if self.theme_busy {
-                    "Changing Windows theme…"
-                } else if dark() {
-                    "Switch Windows to light theme"
+                    match light_switch_target {
+                        rail_core::LightSwitchTarget::Applications => {
+                            "Changing applications theme…"
+                        }
+                        rail_core::LightSwitchTarget::Windows => "Changing Windows theme…",
+                        rail_core::LightSwitchTarget::Both => "Changing theme…",
+                    }
+                } else if light_switch_is_dark {
+                    match light_switch_target {
+                        rail_core::LightSwitchTarget::Applications => {
+                            "Switch applications to light theme"
+                        }
+                        rail_core::LightSwitchTarget::Windows => "Switch Windows to light theme",
+                        rail_core::LightSwitchTarget::Both => {
+                            "Switch Windows and applications to light theme"
+                        }
+                    }
                 } else {
-                    "Switch Windows to dark theme"
+                    match light_switch_target {
+                        rail_core::LightSwitchTarget::Applications => {
+                            "Switch applications to dark theme"
+                        }
+                        rail_core::LightSwitchTarget::Windows => "Switch Windows to dark theme",
+                        rail_core::LightSwitchTarget::Both => {
+                            "Switch Windows and applications to dark theme"
+                        }
+                    }
                 }
                 .into(),
                 bounds.bottom - scale(162),
@@ -1574,7 +1632,7 @@ impl App {
                 200,
                 160,
                 scale(560),
-                scale(526),
+                scale(592),
                 self.window,
                 null_mut(),
                 GetModuleHandleW(null()),
@@ -1685,12 +1743,52 @@ impl App {
                 28,
             ),
             (
+                6111,
+                "STATIC",
+                "Light switch toggles",
+                0x50000000,
+                24,
+                338,
+                496,
+                22,
+            ),
+            (
+                LIGHT_SWITCH_APPS,
+                "BUTTON",
+                "applications",
+                0x50030009,
+                24,
+                366,
+                130,
+                28,
+            ),
+            (
+                LIGHT_SWITCH_WINDOWS,
+                "BUTTON",
+                "Windows",
+                0x50000009,
+                162,
+                366,
+                110,
+                28,
+            ),
+            (
+                LIGHT_SWITCH_BOTH,
+                "BUTTON",
+                "both",
+                0x50000009,
+                280,
+                366,
+                90,
+                28,
+            ),
+            (
                 6104,
                 "STATIC",
                 "Desktop integration",
                 0x50000000,
                 24,
-                344,
+                410,
                 496,
                 22,
             ),
@@ -1700,7 +1798,7 @@ impl App {
                 "Retry desktop integration",
                 0x50010000,
                 24,
-                372,
+                438,
                 212,
                 32,
             ),
@@ -1710,16 +1808,16 @@ impl App {
                 "Save diagnostic report…",
                 0x50010000,
                 248,
-                372,
+                438,
                 272,
                 32,
             ),
             (6106, "STATIC", "", 0x50000010, 0, SETTINGS_FOOTER_Y, 560, 1),
-            (DONE, "BUTTON", "Done", 0x50010001, 432, 436, 88, 34),
-            (6107, "STATIC", "●", 0x50000000, 24, 431, 10, 18),
-            (6100, "STATIC", "", 0x50000000, 36, 432, 372, 28),
+            (DONE, "BUTTON", "Done", 0x50010001, 432, 502, 88, 34),
+            (6107, "STATIC", "●", 0x50000000, 24, 497, 10, 18),
+            (6100, "STATIC", "", 0x50000000, 36, 498, 372, 28),
             // Selectable, scrollable details; it occupies no space while hidden.
-            (6109, "EDIT", "", 0x40a10844, 24, 456, 496, 0),
+            (6109, "EDIT", "", 0x40a10844, 24, 522, 496, 0),
         ] {
             let child = unsafe {
                 CreateWindowExW(
@@ -1739,7 +1837,7 @@ impl App {
             };
             unsafe {
                 let font = self.settings_fonts[match id {
-                    6102..=6104 | 6110 => 1,
+                    6102..=6104 | 6110 | 6111 => 1,
                     6100 | 6107 | 6109 => 2,
                     _ => 0,
                 }];
@@ -1754,7 +1852,7 @@ impl App {
                 wide(&label).as_ptr(),
                 0x50000000,
                 scale(36),
-                scale(460),
+                scale(526),
                 scale(372),
                 scale(14),
                 self.settings,
@@ -1822,7 +1920,7 @@ impl App {
                 SelectObject(dc, previous);
                 ReleaseDC(window, dc);
                 // The read-only edit keeps oversized details selectable and scrollable.
-                let available = (work[3] - work[1] - chrome - px(526)).max(px(24));
+                let available = (work[3] - work[1] - chrome - px(592)).max(px(24));
                 notice_height =
                     (bounds.bottom - bounds.top + px(12)).clamp(px(28), available.max(px(28)));
             }
@@ -1833,12 +1931,12 @@ impl App {
                 notice_height + px(12)
             };
             for (id, x, y, width, height) in [
-                (6109, px(24), px(456), px(496), notice_height),
-                (6108, px(36), px(460) + extra, px(372), px(14)),
+                (6109, px(24), px(522), px(496), notice_height),
+                (6108, px(36), px(526) + extra, px(372), px(14)),
                 (
                     DONE as i32,
                     px(432),
-                    if extra == 0 { px(436) } else { px(460) + extra },
+                    if extra == 0 { px(502) } else { px(526) + extra },
                     px(88),
                     px(34),
                 ),
@@ -1854,9 +1952,9 @@ impl App {
                 );
             }
             let height = if extra == 0 {
-                px(526)
+                px(592)
             } else {
-                px(526) + notice_height + chrome
+                px(592) + notice_height + chrome
             };
             let top = outer.top.clamp(work[1], (work[3] - height).max(work[1]));
             let left = outer
@@ -1888,7 +1986,7 @@ impl App {
         }
         let saved = self.model.saved();
         let signature = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
             self.status,
             self.notice,
             saved.paused,
@@ -1899,7 +1997,8 @@ impl App {
             saved.auto_restore,
             saved.minimize_snapped_elsewhere,
             saved.desktop_tint,
-            saved.show_desktop_name
+            saved.show_desktop_name,
+            saved.light_switch_target
         );
         if signature == self.settings_signature {
             return;
@@ -1910,9 +2009,40 @@ impl App {
         let desktop_tint = saved.desktop_tint;
         let show_desktop_name = saved.show_desktop_name;
         let minimize_snapped_elsewhere = saved.minimize_snapped_elsewhere;
+        let light_switch_target = saved.light_switch_target;
         self.settings_signature = signature;
         self.layout_settings_notice();
         unsafe {
+            SendMessageW(
+                GetDlgItem(self.settings, LIGHT_SWITCH_APPS as i32),
+                0xf1,
+                (light_switch_target == rail_core::LightSwitchTarget::Applications) as usize,
+                0,
+            );
+            SendMessageW(
+                GetDlgItem(self.settings, LIGHT_SWITCH_WINDOWS as i32),
+                0xf1,
+                (light_switch_target == rail_core::LightSwitchTarget::Windows) as usize,
+                0,
+            );
+            SendMessageW(
+                GetDlgItem(self.settings, LIGHT_SWITCH_BOTH as i32),
+                0xf1,
+                (light_switch_target == rail_core::LightSwitchTarget::Both) as usize,
+                0,
+            );
+            EnableWindow(
+                GetDlgItem(self.settings, LIGHT_SWITCH_APPS as i32),
+                self.loaded as i32,
+            );
+            EnableWindow(
+                GetDlgItem(self.settings, LIGHT_SWITCH_WINDOWS as i32),
+                self.loaded as i32,
+            );
+            EnableWindow(
+                GetDlgItem(self.settings, LIGHT_SWITCH_BOTH as i32),
+                self.loaded as i32,
+            );
             SendMessageW(
                 GetDlgItem(self.settings, SHOW_DESKTOP_NAME as i32),
                 0xf1,
@@ -2074,7 +2204,7 @@ impl App {
             "application":crate::version::info(),
             "integration":{"status":self.status,"ready":self.ready},
             "settings":{"paused":saved.paused,"auto_restore":saved.auto_restore,"minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
-                    "desktop_tint":saved.desktop_tint,"show_desktop_name":saved.show_desktop_name,"startup":saved.startup},
+                    "desktop_tint":saved.desktop_tint,"show_desktop_name":saved.show_desktop_name,"light_switch_target":saved.light_switch_target,"startup":saved.startup},
             "desktops":desktops,
             "model":{"generation":self.model.generation(),"transition_serial":self.model.transition_serial(),"current_desktop":current_desktop},
             "dispatch_latency":self.dispatch_latency,
@@ -2784,7 +2914,14 @@ fn draw(app: &App, item: &DrawItem) {
                             outline.min(stem).min(dot)
                         } else if matches!(button.kind, ButtonKind::LightSwitch) {
                             // Show the destination mode: sun for light, crescent for dark.
-                            if is_dark {
+                            let light_switch_is_dark = match app.model.saved().light_switch_target {
+                                rail_core::LightSwitchTarget::Applications
+                                | rail_core::LightSwitchTarget::Both => is_dark,
+                                rail_core::LightSwitchTarget::Windows => {
+                                    crate::theme::system_dark()
+                                }
+                            };
+                            if light_switch_is_dark {
                                 let disk = x.hypot(y) - 2.6;
                                 let mut rays = f64::INFINITY;
                                 for ray in 0..8 {
@@ -3479,7 +3616,8 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         ButtonKind::Settings => app.command(Command::Settings),
                         ButtonKind::LightSwitch => {
                             if !app.theme_busy {
-                                match theme::start_toggle() {
+                                let target = app.model.saved().light_switch_target;
+                                match theme::start_toggle(target) {
                                     Ok(()) => app.theme_busy = true,
                                     Err(error) => {
                                         app.notice =
@@ -3528,6 +3666,21 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                             SendMessageW(GetDlgItem(window, SHOW_DESKTOP_NAME as i32), 0xf0, 0, 0)
                         } != 0;
                         app.command(Command::ShowDesktopName { enabled });
+                    }
+                    LIGHT_SWITCH_APPS => {
+                        app.command(Command::LightSwitchTarget {
+                            target: rail_core::LightSwitchTarget::Applications,
+                        });
+                    }
+                    LIGHT_SWITCH_WINDOWS => {
+                        app.command(Command::LightSwitchTarget {
+                            target: rail_core::LightSwitchTarget::Windows,
+                        });
+                    }
+                    LIGHT_SWITCH_BOTH => {
+                        app.command(Command::LightSwitchTarget {
+                            target: rail_core::LightSwitchTarget::Both,
+                        });
                     }
                     AUTO_RESTORE => {
                         let enabled = unsafe {
@@ -3993,7 +4146,7 @@ mod visual_tests {
 
     #[test]
     fn settings_footer_boundary_matches_separator_line() {
-        assert_eq!(super::SETTINGS_FOOTER_Y, 420);
+        assert_eq!(super::SETTINGS_FOOTER_Y, 486);
         for dpi in [96, 120, 144, 192] {
             let scale = |dip: i32| (dip * dpi + 48) / 96;
             let erase_boundary = (super::SETTINGS_FOOTER_Y * dpi + 48) / 96;
