@@ -1297,7 +1297,7 @@ impl App {
                 } else {
                     name
                 };
-                let caption = format!("{caption}; click to switch; right-click to rename");
+                let caption = format!("{caption}");
                 specs.push((
                     100 + index,
                     caption,
