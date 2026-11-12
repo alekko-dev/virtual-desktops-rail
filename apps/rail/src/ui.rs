@@ -564,6 +564,8 @@ impl App {
                     "minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
                     "desktop_tint":saved.desktop_tint,
                     "show_desktop_name":saved.show_desktop_name,
+                    "custom_system_for_light":saved.custom_system_for_light,
+                    "custom_system_for_dark":saved.custom_system_for_dark,
                     "desktops":self.model.desktops(),"windows":self.model.present().map(|(key,r)|serde_json::json!({
                         "key":key,"hwnd":r.window().hwnd,"pid":r.window().pid,"minimized":r.window().minimized,"blocked":r.blocked(),
                         "responsive":r.window().responsive,"pending":r.pending().is_some(),"layout":r.window().layout,
@@ -977,9 +979,17 @@ impl App {
                 }
                 Event::Theme(result) => {
                     self.theme_busy = false;
-                    if let Err(error) = result {
-                        self.notice = format!("Windows theme could not be changed: {error}");
-                        self.show_settings();
+                    match result {
+                        Ok(outcome) => {
+                            self.model.set_custom_theme_modes(
+                                outcome.custom_system_for_light,
+                                outcome.custom_system_for_dark,
+                            );
+                        }
+                        Err(error) => {
+                            self.notice = format!("Windows theme could not be changed: {error}");
+                            self.show_settings();
+                        }
                     }
                     self.signature.clear();
                 }
@@ -1913,7 +1923,8 @@ impl App {
             "application":crate::version::info(),
             "integration":{"status":self.status,"ready":self.ready},
             "settings":{"paused":saved.paused,"auto_restore":saved.auto_restore,"minimize_snapped_elsewhere":saved.minimize_snapped_elsewhere,
-                    "desktop_tint":saved.desktop_tint,"show_desktop_name":saved.show_desktop_name,"startup":saved.startup},
+                    "desktop_tint":saved.desktop_tint,"show_desktop_name":saved.show_desktop_name,"startup":saved.startup,
+                    "custom_system_for_light":saved.custom_system_for_light,"custom_system_for_dark":saved.custom_system_for_dark},
             "desktops":desktops,
             "model":{"generation":self.model.generation(),"transition_serial":self.model.transition_serial(),"current_desktop":current_desktop},
             "dispatch_latency":self.dispatch_latency,
@@ -3135,7 +3146,10 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                         ButtonKind::Settings => app.command(Command::Settings),
                         ButtonKind::LightSwitch => {
                             if !app.theme_busy {
-                                match theme::start_toggle() {
+                                match theme::start_toggle(
+                                    app.model.saved().custom_system_for_light,
+                                    app.model.saved().custom_system_for_dark,
+                                ) {
                                     Ok(()) => app.theme_busy = true,
                                     Err(error) => {
                                         app.notice =

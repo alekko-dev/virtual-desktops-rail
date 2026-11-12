@@ -1105,6 +1105,23 @@ fn snap_policy_defaults_migrates_and_persists_explicit_opt_out() {
     assert!(!Model::new(saved).saved().minimize_snapped_elsewhere);
 }
 
+#[test]
+fn custom_theme_modes_defaults_and_persists() {
+    let mut model = Model::new(Saved::default());
+    assert_eq!(model.saved().custom_system_for_light, None);
+    assert_eq!(model.saved().custom_system_for_dark, None);
+    let revision = model.saved().preferences_revision;
+    model.set_custom_theme_modes(Some(0), Some(1));
+    assert!(model.is_dirty());
+    assert_eq!(model.saved().preferences_revision, revision + 1);
+    let saved = Saved::decode(&serde_json::to_vec(model.saved()).unwrap()).unwrap();
+    assert_eq!(saved.custom_system_for_light, Some(0));
+    assert_eq!(saved.custom_system_for_dark, Some(1));
+    let model2 = Model::new(saved);
+    assert_eq!(model2.saved().custom_system_for_light, Some(0));
+    assert_eq!(model2.saved().custom_system_for_dark, Some(1));
+}
+
 fn pre_minimize_snap_sample() -> (Model, Window, String, Request, Window) {
     let (mut model, mut window, key) = saved_destinations();
     window.layout.visible = Some([125, 80, 725, 500]);

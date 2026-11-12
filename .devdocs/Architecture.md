@@ -384,10 +384,13 @@ tokens prevent stale replies from dismissing a newer edit. Dismissal after submi
 does not cancel a shell operation already in progress. Names are owned by Windows,
 not duplicated in rail storage or diagnostic history.
 
-The bottom light switch sets both `AppsUseLightTheme` and `SystemUsesLightTheme`
+The bottom light switch sets `AppsUseLightTheme` and `SystemUsesLightTheme`
 under the current user's Windows `Themes\Personalize` key, choosing the opposite
-of the current app mode. Its sun/moon glyph shows the destination mode, matching its
-tooltip and accessible name. No appearance preference is stored in rail state. A short-lived
+of the current app mode while respecting custom color modes. If the current mode has
+custom mixed settings (such as light apps with dark Windows panels, or dark apps with light Windows panels),
+the custom Windows panel mode is remembered in schema 1 rail state and restored when switching back.
+Setting matching standard modes in Windows clears the remembered custom setting for that app mode.
+Its sun/moon glyph shows the destination mode, matching its tooltip and accessible name. A short-lived
 worker writes and reads back the values, then broadcasts `WM_SETTINGCHANGE` with
 `ImmersiveColorSet` using a per-recipient timeout. The button is disabled while busy;
 completion refreshes its accessible name/tooltip, and failures open the Settings notice.

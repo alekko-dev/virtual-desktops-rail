@@ -70,7 +70,7 @@ enum Event {
     Stored(Result<(), String>),
     Report(Result<std::path::PathBuf, String>),
     Startup(bool, Result<(), String>),
-    Theme(Result<(), String>),
+    Theme(Result<theme::ThemeOutcome, String>),
     Icon(String, u32, usize),
     NativeWindow(u32, usize, u64),
 }

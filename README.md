@@ -41,7 +41,7 @@ Enable **Tint rail with active desktop color** in Settings for a subtle backgrou
 - **Top dots:** Your virtual desktops. Click to switch; hover to see the desktop name. Right-click a dot to rename it without switching desktops (or press **F2** while the dot has keyboard focus). Enter saves; Escape or clicking outside cancels. Names are shared with Windows Task View.
 - **App icons:** Your all-desktop windows (solid bar underneath = visible; outlined bar = minimized). Click to restore, focus, or minimize.
 - **Vertical name:** The current desktop name appears softly above the bottom buttons when there is room to show it in full. Turn it off with **Settings → Appearance → Show desktop name** (on by default).
-- **Bottom buttons:** Use the **light switch** above Pause to toggle Windows light/dark colors for apps and the system, **Pause/Resume** automatic window actions, open **Settings** (to enable automatic layout restore on desktop switch or start with Windows), or **Exit** the app.
+- **Bottom buttons:** Use the **light switch** above Pause to toggle Windows light/dark colors for apps and the system (respecting custom color modes), **Pause/Resume** automatic window actions, open **Settings** (to enable automatic layout restore on desktop switch or start with Windows), or **Exit** the app.
 
 > *[Placeholder: Annotated diagram or close-up screenshot of the rail calling out: (1) Desktop dots, (2) Pinned app icons with solid/outlined visibility indicators, and (3) Light switch, Pause/Resume, Settings, and Exit buttons at the bottom.]*
 

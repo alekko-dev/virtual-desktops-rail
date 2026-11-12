@@ -29,6 +29,12 @@ pub struct Saved {
     /// On automatic desktop restoration, minimize incompatible live Snap arrangements.
     #[serde(default = "enabled_by_default")]
     pub minimize_snapped_elsewhere: bool,
+    /// Remembered custom Windows shell mode (0 for dark, 1 for light) when app mode is light.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_system_for_light: Option<u32>,
+    /// Remembered custom Windows shell mode (0 for dark, 1 for light) when app mode is dark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_system_for_dark: Option<u32>,
     #[serde(default)]
     pub preferences_revision: u64,
     pub windows: BTreeMap<String, Record>,
@@ -45,6 +51,8 @@ impl Default for Saved {
             desktop_tint: false,
             show_desktop_name: true,
             minimize_snapped_elsewhere: true,
+            custom_system_for_light: None,
+            custom_system_for_dark: None,
             preferences_revision: 0,
             windows: BTreeMap::new(),
         }

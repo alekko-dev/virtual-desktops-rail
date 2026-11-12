@@ -285,6 +285,17 @@ impl Model {
         }
     }
 
+    pub fn set_custom_theme_modes(&mut self, for_light: Option<u32>, for_dark: Option<u32>) {
+        if self.saved.custom_system_for_light != for_light
+            || self.saved.custom_system_for_dark != for_dark
+        {
+            self.saved.custom_system_for_light = for_light;
+            self.saved.custom_system_for_dark = for_dark;
+            self.saved.bump_preferences();
+            self.dirty = true;
+        }
+    }
+
     pub fn set_auto_restore(&mut self, enabled: bool) {
         if self.saved.auto_restore == enabled {
             return;

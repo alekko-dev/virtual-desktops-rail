@@ -91,8 +91,12 @@ sun/moon glyph and confirmed the theme switch works in their local Windows sessi
 Computer-control tests were skipped at the user's request. Keyboard activation,
 high contrast, additional DPI configurations and repaint across other applications
 remain unverified; the manual confirmation does not establish those broader cases.
-The final release executable SHA-256 is
-`3093A2FB437256680FECB6B2FCC0825F7E6616C0847278579F6EA8CD0CF55A30`.
+
+Custom color mode support for the light switch passed `check-dev.ps1` on 2026-11-12:
+unit tests cover remembering and restoring dark Windows panels with light apps,
+remembering and restoring light Windows panels with dark apps, standard mode toggling,
+and clearing custom overrides when explicit matching modes are configured. Cross-session
+preference merging and schema 1 persistence were validated in locked workspace tests.
 
 The executable-first icon change (`faa5cbf` plus changes, 2026-11-07) passed
 `check-dev.ps1`, including locked release builds. The sandbox denied an existing
