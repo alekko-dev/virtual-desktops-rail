@@ -153,6 +153,15 @@ the system theme. Keep registry access and allocations outside pixel callbacks.
 Check hover/reveal responsiveness and the destination glyph with Windows selected,
 including when the application and system modes differ.
 
+## Light-switch description stays on the previous target
+
+The rail render signature must include `light_switch_target`. Otherwise a Settings
+or CLI target change updates the click action but can leave the old tooltip,
+accessible caption and glyph until another invalidation. Including the target
+refreshes the existing native button and its description on the next render.
+Verify target changes on an otherwise idle rail, including different app/system
+color modes, without relying on a hover or another state change to repaint it.
+
 ## Passive rail absent from desktop automation
 
 Normal TOOLWINDOW style can be omitted by automation inventories. Follow the

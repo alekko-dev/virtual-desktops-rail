@@ -1250,7 +1250,7 @@ impl App {
         let dpi = unsafe { GetDpiForWindow(self.window) }.max(96);
         let scale = |dip: i32| (dip * dpi as i32 + 48) / 96;
         let signature = format!(
-            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}",
+            "{:?}|{:?}|{}|{}|{:?}|{}|{}|{}|{}|{}|{}|{:?}",
             self.model.desktops(),
             self.model.current(),
             self.ready,
@@ -1269,7 +1269,8 @@ impl App {
             self.model.saved().desktop_tint,
             self.model.saved().show_desktop_name,
             self.theme_busy,
-            dark()
+            dark(),
+            self.model.saved().light_switch_target
         );
         if force || signature != self.signature {
             self.signature = signature;

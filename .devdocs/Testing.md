@@ -106,7 +106,10 @@ per-pixel callback; source inspection confirms one system-theme query per
 Windows-target light-switch repaint. Live glyph/hover/reveal checks of this fix
 were not run: Computer Use found an existing user rail, and the session singleton
 prevents an isolated patched instance alongside it. The user instance and its
-settings were preserved. No repaint latency measurement was collected.
+settings were preserved. No repaint latency measurement was collected. The follow-up
+render-cache fix includes `light_switch_target` in the rail signature so Settings
+and CLI target changes refresh the button description and glyph; live target-change
+checks remain unverified for the same reason.
 
 The executable-first icon change (`faa5cbf` plus changes, 2026-11-07) passed
 `check-dev.ps1`, including locked release builds. The sandbox denied an existing
