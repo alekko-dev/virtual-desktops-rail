@@ -75,11 +75,47 @@ and popup dismissal were exercised and verified directly by the user in their ac
 session. Full interactive keyboard/pointer, error-expansion, dark/high-contrast and live shell
 rename/read-back checks remain documented for acceptance:
 
+The desktop switching menu implementation and final border/hover refinement passed
+`check-dev.ps1` on 2026-11-13 (formatting, warnings-denied Clippy, locked workspace
+tests, version contracts and release builds). Final tested release SHA-256:
+`05FB32974E0B2E04F0E6481C12DD6687AD88BE1B083C5DC303C03AD78A937A35`.
+In the Windows 26300.9974 Explorer session, product status reported integration
+ready. Computer Use enumerated the paused test rail but denied state capture with
+“not approved to use virtual-desktop-rail”; no automated screenshots or real input
+were obtained. The user elected to test manually. Their screenshots established
+that left-click opened the menu, all four desktops fit without a scrollbar after
+the integral-height fix, and active selection and inactive gray hover could appear
+simultaneously. Native initial font metrics had rounded down the original list
+height before the explicit row height; `LBS_NOINTEGRALHEIGHT` prevents that loss.
+The active row's XOR focus rectangle produced an unexpected colored border; the
+final refinement suppresses it on the active row and lightens hover tint to 1/16.
+The later user screenshot shows the selected row without that border and a light
+gray hovered row, but also establishes that the popup remains light in application
+dark mode. Popup client-area application-theme matching is separate future work.
+Keyboard selection, hover clearing, dismissal, live switching, larger inventories,
+DPI/high-contrast coverage and right-click rename regression remain unverified.
+During the agent's test setup no desktop was switched, renamed, created or deleted;
+automation visibility was restored off and original app files restored and hash-checked.
+
+Desktop switching menu acceptance:
+
+- Left-click the visible vertical name: inspect its rounded frame, compact spacing,
+  current marker and ordered desktop names alongside the rename popup.
+- Hover inactive rows: the inactive row gets a gray background without switching;
+  the active desktop retains its selected colors. Moving out clears the hover. Check the increased row spacing.
+- Click another row and independently confirm the destination; reopen and switch
+  back. Arrows must move selection without switching; Enter applies, Escape cancels.
+- Check outside/deactivation dismissal, right-click rename, repeated reopening,
+  duplicate/empty/long names, scrolling, work-area clamping and light/dark/high-contrast
+  appearance at multiple DPIs. A changed desktop inventory must dismiss the stale list.
+- Press the name, drag away and release: no popup should open; releasing back over
+  the name should open it. Check capture cancellation and restoring focus afterward.
+
 Desktop rename acceptance:
 
 - Right-click an inactive dot: the editor opens beside it, with its name selected,
   without switching desktops or changing application-window layouts.
-- Click the vertical desktop name on the rail when shown: the editor opens beside
+- Right-click the vertical desktop name on the rail when shown: the editor opens beside
   the name with the current desktop name selected.
 - Type a name, save with Enter and with Rename, and verify the rail tooltip,
   accessibility name and Windows Task View name agree. Restore original names.

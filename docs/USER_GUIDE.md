@@ -8,7 +8,7 @@ A narrow 25-DIP rail sits on the left edge of your primary display, reserving sp
 
 | Control or state | Behavior |
 | --- | --- |
-| Desktop dot | Click to switch; hover for its name. Right-click to rename without switching, or press F2 on a focused dot (or click the vertical desktop name when shown). The current desktop is a larger filled circle; others are colored outlines. |
+| Desktop dot | Click to switch; hover for its name. Right-click to rename without switching, or press F2 on a focused dot (or right-click the vertical desktop name when shown). The current desktop is a larger filled circle; others are colored outlines. |
 | Minimized window icon | Restore its current-desktop layout and request focus. |
 | Visible background window icon | Bring the window forward. |
 | Foreground window icon | Minimize the window. |
@@ -19,7 +19,11 @@ A narrow 25-DIP rail sits on the left edge of your primary display, reserving sp
 | Save diagnostic report… | Choose a local ZIP destination for the redacted support report. |
 | Button below Settings | Exit the app and release the reserved screen space. |
 
-Right-clicking a desktop dot (or clicking the current desktop's vertical name on the rail when shown) opens a small rename editor beside the rail with the current
+Left-click the vertical desktop name to open the desktop switching menu. The current
+desktop is marked; click a row or use the arrow keys and Enter to switch. Escape,
+clicking outside, or activating another window dismisses the menu. Long lists scroll.
+
+Right-clicking a desktop dot (or right-clicking the current desktop's vertical name on the rail when shown) opens a small rename editor beside the rail with the current
 name selected. **Enter** or **Rename** saves; **Escape**, **Cancel**, or clicking outside
 dismisses an unsaved edit. Use **Tab** to move between the field and buttons. Names
 are trimmed, on one line, and within the field's length limit (up to 256 characters). If you

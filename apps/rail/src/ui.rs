@@ -1,8 +1,8 @@
 pub(crate) const ACTION_TIMEOUT_NOTICE: &str = "A window action could not be verified in time. Its button remains disabled while that action is outstanding.";
 
 use crate::{
-    EVENTS, Event, MAIN_WINDOW, OVERRUN, WAKE, actions, bridge, icons, native::*, notify, platform,
-    rename, store, theme, theme::dark,
+    EVENTS, Event, MAIN_WINDOW, OVERRUN, WAKE, actions, bridge, desktop_picker, icons, native::*,
+    notify, platform, rename, store, theme, theme::dark,
 };
 use crossbeam_channel::{Receiver, Sender};
 use rail_core::{Model, Saved};
@@ -118,6 +118,18 @@ struct TrackMouseEventData {
 #[link(name = "user32")]
 unsafe extern "system" {
     fn TrackMouseEvent(event: *mut TrackMouseEventData) -> i32;
+}
+
+pub(crate) fn track_mouse_leave(window: Handle) {
+    let mut track = TrackMouseEventData {
+        size: size_of::<TrackMouseEventData>() as u32,
+        flags: 0x0000_0002,
+        track: window,
+        hover_time: 0,
+    };
+    unsafe {
+        TrackMouseEvent(&mut track);
+    }
 }
 
 static HOVERED_BUTTON: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -317,6 +329,7 @@ struct App {
     window: Handle,
     settings: Handle,
     rename: Option<rename::Popover>,
+    desktop_picker: Option<desktop_picker::Popover>,
     tooltip: Handle,
     font: Handle,
     desktop_name_raster: DesktopNameRaster,
@@ -412,6 +425,7 @@ impl App {
         {
             return;
         }
+        self.desktop_picker.take();
         self.rename.take();
         self.rename = rename::Popover::show(self.window, anchor_rect, guid, &name);
     }
@@ -458,6 +472,10 @@ impl App {
     }
 
     fn open_rename_desktop_name(&mut self) {
+        self.open_desktop_name_popup(false);
+    }
+
+    fn open_desktop_name_popup(&mut self, switch: bool) {
         if !self.ready {
             return;
         }
@@ -490,9 +508,19 @@ impl App {
             right: bottom_right.x,
             bottom: bottom_right.y,
         };
+        self.desktop_picker.take();
         self.rename.take();
-        self.rename =
-            rename::Popover::show(self.window, anchor_rect, layout.desktop_id, &layout.name);
+        if switch {
+            self.desktop_picker = desktop_picker::Popover::show(
+                self.window,
+                anchor_rect,
+                self.model.desktops(),
+                &layout.desktop_id,
+            );
+        } else {
+            self.rename =
+                rename::Popover::show(self.window, anchor_rect, layout.desktop_id, &layout.name);
+        }
     }
 
     fn save_rename(&mut self, source: Handle) {
@@ -2254,6 +2282,7 @@ impl App {
     }
 
     fn stop(&mut self) {
+        self.desktop_picker.take();
         self.rename.take();
         if self.stopped {
             return;
@@ -3329,12 +3358,12 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             let x = (lparam & 0xffff) as i16 as i32;
             let y = ((lparam >> 16) & 0xffff) as i16 as i32;
             let had_capture = unsafe { GetCapture() } == window;
+            let was_pressed = std::mem::replace(&mut app.desktop_name_pressed, false);
             if had_capture {
                 unsafe {
                     ReleaseCapture();
                 }
             }
-            let was_pressed = std::mem::replace(&mut app.desktop_name_pressed, false);
             let is_over = app
                 .current_desktop_name_layout()
                 .is_some_and(|layout| layout.rect.contains(x, y));
@@ -3343,8 +3372,8 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     InvalidateRect(window, null(), 0);
                 }
             }
-            if (had_capture || was_pressed) && is_over {
-                app.open_rename_desktop_name();
+            if had_capture && was_pressed && is_over {
+                app.open_desktop_name_popup(true);
                 return 0;
             }
             drop(app);
@@ -3773,6 +3802,7 @@ pub fn run(settings: bool) -> Result<(), String> {
         window: null_mut(),
         settings: null_mut(),
         rename: None,
+        desktop_picker: None,
         tooltip: null_mut(),
         font: null_mut(),
         desktop_name_raster: DesktopNameRaster::default(),
@@ -3891,6 +3921,24 @@ pub fn run(settings: bool) -> Result<(), String> {
             let tooltip = app.borrow().tooltip;
             if !tooltip.is_null() && (0x200..=0x20e).contains(&message.message) {
                 SendMessageW(tooltip, 0x407, 0, &message as *const _ as isize);
+            }
+            let (consumed, selected) = {
+                let mut app = app.borrow_mut();
+                if app.desktop_picker.as_ref().is_some_and(|picker| {
+                    !picker.is_current(app.model.desktops(), app.model.current(), app.ready)
+                }) {
+                    app.desktop_picker.take();
+                }
+                app.desktop_picker
+                    .as_ref()
+                    .map(|picker| picker.input(&mut message))
+                    .unwrap_or_default()
+            };
+            if let Some(guid) = selected {
+                app.borrow_mut().command(Command::Switch { guid });
+            }
+            if consumed {
+                continue;
             }
             let rename_window = app.borrow().rename.as_ref().map(|popover| popover.window);
             if let Some(rename_window) = rename_window {

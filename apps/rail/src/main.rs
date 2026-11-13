@@ -4,6 +4,7 @@ compile_error!("The rail requires Windows x64.");
 mod actions;
 mod appbar;
 mod bridge;
+mod desktop_picker;
 mod icons;
 mod metrics;
 mod native;
