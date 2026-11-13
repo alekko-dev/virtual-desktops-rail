@@ -392,17 +392,24 @@ tokens prevent stale replies from dismissing a newer edit. Dismissal after submi
 does not cancel a shell operation already in progress. Names are owned by Windows,
 not duplicated in rail storage or diagnostic history.
 
-The bottom light switch sets both `AppsUseLightTheme` and `SystemUsesLightTheme`
-under the current user's Windows `Themes\Personalize` key, choosing the opposite
-of the current app mode. Its sun/moon glyph shows the destination mode, matching its
-tooltip and accessible name. No appearance preference is stored in rail state. A short-lived
-worker writes and reads back the values, then broadcasts `WM_SETTINGCHANGE` with
-`ImmersiveColorSet` using a per-recipient timeout. The button is disabled while busy;
-completion refreshes its accessible name/tooltip, and failures open the Settings notice.
-If the app-mode write fails after the system-mode write, the previous system mode is
-restored where possible. Registry readback establishes preference persistence, not
-that every running application rendered the new mode. High-contrast painting remains
-governed by system accessibility colors.
+The bottom light switch toggles Windows color modes under the current user's
+Windows `Themes\Personalize` key according to the `light_switch_target` preference
+configured in Settings (`applications`, `windows`, or `both`, defaulting to `both` in `Saved`):
+- When set to `both`, it toggles both `AppsUseLightTheme` and `SystemUsesLightTheme`,
+  choosing the opposite of the current app mode. If the app-mode write fails after
+  the system-mode write, the previous system mode is restored where possible.
+- When set to `applications`, it toggles only `AppsUseLightTheme` based on the current app mode.
+- When set to `windows`, it toggles only `SystemUsesLightTheme` based on the current system mode.
+
+Its sun/moon glyph shows the destination mode, matching its tooltip and accessible name
+(derived from current system mode when targeting Windows, or current app mode otherwise).
+The target preference is persisted in schema 1 and participates in revision-based cross-session
+preference merges. A short-lived worker writes and reads back the values, then broadcasts
+`WM_SETTINGCHANGE` with `ImmersiveColorSet` using a per-recipient timeout. The button is
+disabled while busy; completion refreshes its accessible name/tooltip, and failures open
+the Settings notice. Registry readback establishes preference persistence, not that every
+running application rendered the new mode. High-contrast painting remains governed by
+system accessibility colors.
 
 The default-off `desktop_tint` preference blends the active desktop dot color into
 the rail background (18% in dark theme, 14% in light theme), including owner-drawn

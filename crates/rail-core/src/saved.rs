@@ -3,6 +3,15 @@ use crate::Layout;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LightSwitchTarget {
+    Applications,
+    Windows,
+    #[default]
+    Both,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Record {
     pub identity: crate::Identity,
@@ -30,6 +39,8 @@ pub struct Saved {
     #[serde(default = "enabled_by_default")]
     pub minimize_snapped_elsewhere: bool,
     #[serde(default)]
+    pub light_switch_target: LightSwitchTarget,
+    #[serde(default)]
     pub preferences_revision: u64,
     pub windows: BTreeMap<String, Record>,
 }
@@ -45,6 +56,7 @@ impl Default for Saved {
             desktop_tint: false,
             show_desktop_name: true,
             minimize_snapped_elsewhere: true,
+            light_switch_target: LightSwitchTarget::Both,
             preferences_revision: 0,
             windows: BTreeMap::new(),
         }

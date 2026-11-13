@@ -285,6 +285,14 @@ impl Model {
         }
     }
 
+    pub fn set_light_switch_target(&mut self, target: crate::LightSwitchTarget) {
+        if self.saved.light_switch_target != target {
+            self.saved.light_switch_target = target;
+            self.saved.bump_preferences();
+            self.dirty = true;
+        }
+    }
+
     pub fn set_auto_restore(&mut self, enabled: bool) {
         if self.saved.auto_restore == enabled {
             return;

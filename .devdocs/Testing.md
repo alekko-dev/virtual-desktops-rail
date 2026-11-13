@@ -101,6 +101,16 @@ remain unverified; the manual confirmation does not establish those broader case
 The final release executable SHA-256 is
 `3093A2FB437256680FECB6B2FCC0825F7E6616C0847278579F6EA8CD0CF55A30`.
 
+The PR #25 repaint fix (2026-11-13) moves the Windows theme read outside the
+per-pixel callback; source inspection confirms one system-theme query per
+Windows-target light-switch repaint. Live glyph/hover/reveal checks of this fix
+were not run: Computer Use found an existing user rail, and the session singleton
+prevents an isolated patched instance alongside it. The user instance and its
+settings were preserved. No repaint latency measurement was collected. The follow-up
+render-cache fix includes `light_switch_target` in the rail signature so Settings
+and CLI target changes refresh the button description and glyph; live target-change
+checks remain unverified for the same reason.
+
 The executable-first icon change (`faa5cbf` plus changes, 2026-11-07) passed
 `check-dev.ps1`, including locked release builds. The sandbox denied an existing
 atomic-file replacement test; the complete check passed outside the sandbox.
@@ -355,6 +365,7 @@ families under ignored `artifacts/` are supporting references only.
 | 2026-11-11; Windows 11 x64 | Aligned Settings footer background erase boundary (`WM_ERASEBKGND` / `SETTINGS_FOOTER_Y = 420`) with separator line position (ID 6106), eliminating gray band overlap into the Desktop Integration section when the error notice is hidden or dismissed. Passed `check-dev.ps1` (formatting, Clippy, 63 workspace tests including scaled boundary equivalence across 96/120/144/192 DPI, version contracts, and locked release builds). Automated computer-use testing was unavailable because desktop access tools are not installed in the environment. |
 | 2026-11-12; Windows 11 x64 | Desktop name click-to-rename workflow with owner-draw hover/press background highlighting, vertical press padding, rail tint accommodation, and pointer capture/leave state management passed `check-dev.ps1` (formatting, Clippy, workspace tests, version contracts, and locked release builds). Automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was provisioned in the agent session; live pointer interaction, hover/press visual feedback, popover activation, and outside-click dismissal were exercised and confirmed by the user in their desktop session. |
 | 2026-11-12; Windows 11 x64 | Modeless desktop rename popover accepts empty input on submission (Enter or Rename), resolving the default name from actual 1-based position (e.g. `Desktop 2`) and advancing to the first available higher number if already occupied. Passed `check-dev.ps1` (formatting, Clippy, 70 workspace tests covering position matching, occupied-number collision avoidance, self-exclusion, unrenamed peer accommodation, and case-insensitivity, version contracts, and locked release builds). Automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was provisioned in the agent session. |
+| 2026-11-12; Windows 11 x64 | Settings light switch target controls (Applications, Windows, Both radio group under bold "Light switch toggles" heading) with schema 1 `light_switch_target` persistence, migration defaulting, cross-session merging, CLI `--light-switch` arg parsing, updated destination glyph/tooltips and adjusted Settings footer boundary (`SETTINGS_FOOTER_Y = 486`) passed `check-dev.ps1` (formatting, Clippy, workspace tests including controller default/migration, store multi-session merge, scaled footer erase boundary, CLI help and release builds). Automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was provisioned in the agent session. |
 
 The desktop-name raster test also compares nonempty, identical masks with thread-local
 GDI batch limits of 1 and 4096 across 96/120/144/192 DPI, restoring the original limit

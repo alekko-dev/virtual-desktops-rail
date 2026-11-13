@@ -141,7 +141,7 @@ fn run(args: Vec<String>) -> Result<i32, String> {
     }
     if args == ["--help"] || args == ["-h"] {
         println!(
-            "virtual-desktop-rail [--settings]\nBuild identity: --version [--json] (this executable; no running instance required).\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nLegacy preference: --experimental-integration on|off (persisted for compatibility; no longer affects build eligibility).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Desktop integration requires Windows 11 24H2 build 26100.2605 or newer and successful runtime checks."
+            "virtual-desktop-rail [--settings]\nBuild identity: --version [--json] (this executable; no running instance required).\nControls for an existing instance: --status, --pause, --resume, --retry, --exit.\nAuto-restore preference: --auto-restore on|off (persisted; Settings also offers this option).\nLight switch target: --light-switch apps|windows|both (persisted; Settings also offers this option).\nLegacy preference: --experimental-integration on|off (persisted for compatibility; no longer affects build eligibility).\nDiagnostic controls: --click WINDOW_KEY, --switch DESKTOP_GUID, --automation-ui on|off.\nAutomation UI temporarily exposes the passive rail to desktop test tools; restore off after testing.\nRuns locally as the signed-in user. Desktop integration requires Windows 11 24H2 build 26100.2605 or newer and successful runtime checks."
         );
         return Ok(0);
     }
@@ -179,6 +179,17 @@ fn run(args: Vec<String>) -> Result<i32, String> {
             Some(ui::Command::AutoRestore {
                 enabled: value == "on",
             })
+        }
+        [arg, value]
+            if arg == "--light-switch"
+                && ["apps", "applications", "windows", "both"].contains(&value.as_str()) =>
+        {
+            let target = match value.as_str() {
+                "apps" | "applications" => rail_core::LightSwitchTarget::Applications,
+                "windows" => rail_core::LightSwitchTarget::Windows,
+                _ => rail_core::LightSwitchTarget::Both,
+            };
+            Some(ui::Command::LightSwitchTarget { target })
         }
         [arg, value] if arg == "--automation-ui" && ["on", "off"].contains(&value.as_str()) => {
             Some(ui::Command::AutomationUi {
