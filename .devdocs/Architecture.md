@@ -360,7 +360,7 @@ The current desktop name is painted bottom-to-top above the utility divider in
 text extents keep it clear of desktop/window buttons with 12-DIP gaps. If its full
 length or thickness cannot fit, or the current desktop is unknown, it is omitted
 without truncation. Empty names use the same numbered fallback as desktop tooltips.
-It shares the rail's invalidation and reveal transform and adds no input target.
+It shares the rail's invalidation and reveal transform and uses the painted name as its input target.
 The rasterizer flushes GDI drawing before reading DIB memory so queued text output
 cannot be sampled as an empty mask and cached as an invisible label.
 **Appearance → Show desktop name** controls visibility immediately. The default-on
@@ -369,7 +369,7 @@ explicit opt-outs, and participates in revision-based cross-session preference m
 
 Desktop dots retain left-click switching. Right-click (or F2 on a focused dot) opens
 a modeless 280-DIP rename popover beside that dot, clamped to its monitor work area,
-without switching desktops. Clicking the current desktop's vertical name on the rail
+without switching desktops. Right-clicking the current desktop's vertical name on the rail
 (when shown) also opens the same rename popover, anchored beside the name; the name reacts
 on hover and press with the same rounded surface highlight used by the desktop switch indicators,
 padded above and below the text and accommodating active rail tinting.
@@ -377,6 +377,27 @@ The existing name is selected; Enter/Rename submits, Escape/Cancel/deactivation 
 native dialog navigation supplies Tab. The editor uses DWM rounded corners, native
 system colors, and a collapsible status row that expands the popover only while showing
 progress or an error. It does not expand the AppBar.
+
+Left-clicking the vertical name opens a modeless desktop picker with the same
+280-DIP width, DWM rounded frame, system colors and Segoe UI typography
+as the rename editor, with no visible heading, 4-DIP outer padding and 28-DIP rows.
+Its native accessible listbox preserves shell order, numbers rows to distinguish
+duplicate names and marks the current desktop. The list fits the whole inventory
+until its height would exceed 480 DIPs or two thirds of the monitor work area;
+only then does it show a scrollbar. `LBS_NOINTEGRALHEIGHT` prevents native initial
+font metrics from shrinking the list before the explicit row height is applied.
+Click selects a row.
+Owner-drawn rows retain selected system colors on the active desktop; inactive
+hovered rows use a separate neutral gray tint that clears on pointer leave. Hover
+does not change the native keyboard selection or switch desktops. Keyboard focus
+has a focus rectangle only on inactive targets; the active selected row has no
+outline. Hover uses a light 1/16 foreground tint over the system background. Arrows
+navigate and Enter selects. Escape, outside clicks and deactivation dismiss.
+The popup is clamped to the monitor work area and does not resize the AppBar.
+A captured name press must release over the name to open the picker. Only one name
+popup is retained; changes to readiness, current desktop or desktop inventory dismiss
+an outdated picker. Selection keeps the captured GUID and uses the existing guarded
+asynchronous switch command, which revalidates current membership and readiness.
 
 The UI validates a trimmed, single-line name bounded to 256 UTF-16 code
 units. If the user clears the name and submits (via Enter or Rename), the UI accepts
