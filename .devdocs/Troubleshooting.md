@@ -143,6 +143,16 @@ as BGRA; converting those bytes to PBGRA multiplies alpha again. Re-label them P
 before Fant filtering. Keep selection/filtering off the UI thread. Verify analytic
 transparency/filtering regressions and actual icons across DPI settings.
 
+## Slow light-switch repaints
+
+The Windows-target light-switch glyph previously read `SystemUsesLightTheme` inside
+the `smooth_shape` distance closure, causing a registry query for every rasterized
+pixel and increasing work quadratically with DPI. Sample the target theme once
+before rasterization and capture the Boolean; other utility buttons must not read
+the system theme. Keep registry access and allocations outside pixel callbacks.
+Check hover/reveal responsiveness and the destination glyph with Windows selected,
+including when the application and system modes differ.
+
 ## Passive rail absent from desktop automation
 
 Normal TOOLWINDOW style can be omitted by automation inventories. Follow the

@@ -101,6 +101,13 @@ remain unverified; the manual confirmation does not establish those broader case
 The final release executable SHA-256 is
 `3093A2FB437256680FECB6B2FCC0825F7E6616C0847278579F6EA8CD0CF55A30`.
 
+The PR #25 repaint fix (2026-11-13) moves the Windows theme read outside the
+per-pixel callback; source inspection confirms one system-theme query per
+Windows-target light-switch repaint. Live glyph/hover/reveal checks of this fix
+were not run: Computer Use found an existing user rail, and the session singleton
+prevents an isolated patched instance alongside it. The user instance and its
+settings were preserved. No repaint latency measurement was collected.
+
 The executable-first icon change (`faa5cbf` plus changes, 2026-11-07) passed
 `check-dev.ps1`, including locked release builds. The sandbox denied an existing
 atomic-file replacement test; the complete check passed outside the sandbox.

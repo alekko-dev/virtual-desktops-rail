@@ -2903,6 +2903,15 @@ fn draw(app: &App, item: &DrawItem) {
                     } else {
                         muted
                     };
+                    // Sample the target theme once per light-switch repaint, never per pixel.
+                    let light_switch_is_dark = if matches!(button.kind, ButtonKind::LightSwitch)
+                        && app.model.saved().light_switch_target
+                            == rail_core::LightSwitchTarget::Windows
+                    {
+                        theme::system_dark()
+                    } else {
+                        is_dark
+                    };
                     smooth_shape(dc, width, height, dpi, color, |x, y| {
                         if matches!(button.kind, ButtonKind::Pause) && !app.ready {
                             // A full warning symbol stays legible in the narrow rail and
@@ -2914,13 +2923,6 @@ fn draw(app: &App, item: &DrawItem) {
                             outline.min(stem).min(dot)
                         } else if matches!(button.kind, ButtonKind::LightSwitch) {
                             // Show the destination mode: sun for light, crescent for dark.
-                            let light_switch_is_dark = match app.model.saved().light_switch_target {
-                                rail_core::LightSwitchTarget::Applications
-                                | rail_core::LightSwitchTarget::Both => is_dark,
-                                rail_core::LightSwitchTarget::Windows => {
-                                    crate::theme::system_dark()
-                                }
-                            };
                             if light_switch_is_dark {
                                 let disk = x.hypot(y) - 2.6;
                                 let mut rays = f64::INFINITY;
