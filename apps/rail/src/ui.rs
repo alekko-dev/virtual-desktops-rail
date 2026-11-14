@@ -479,6 +479,15 @@ impl App {
         if !self.ready {
             return;
         }
+        if switch
+            && self
+                .desktop_picker
+                .as_ref()
+                .is_some_and(|picker| picker.is_visible())
+        {
+            self.desktop_picker.take();
+            return;
+        }
         self.desktop_name_hovered = false;
         self.desktop_name_pressed = false;
         let Some(layout) = self.current_desktop_name_layout() else {
@@ -3929,10 +3938,34 @@ pub fn run(settings: bool) -> Result<(), String> {
                 }) {
                     app.desktop_picker.take();
                 }
-                app.desktop_picker
+                let click_on_name = message.message == 0x0201
+                    && message.window == app.window
+                    && app.current_desktop_name_layout().is_some_and(|layout| {
+                        let x = (message.lparam & 0xffff) as i16 as i32;
+                        let y = ((message.lparam >> 16) & 0xffff) as i16 as i32;
+                        layout.rect.contains(x, y)
+                    });
+                let outcome = app
+                    .desktop_picker
                     .as_ref()
-                    .map(|picker| picker.input(&mut message))
-                    .unwrap_or_default()
+                    .map(|picker| {
+                        if click_on_name {
+                            // Keep the picker alive through the rail's matching mouse-up;
+                            // the name handler then toggles it closed.
+                            (false, None)
+                        } else {
+                            picker.input(&mut message)
+                        }
+                    })
+                    .unwrap_or_default();
+                if app
+                    .desktop_picker
+                    .as_ref()
+                    .is_some_and(|picker| !picker.is_visible())
+                {
+                    app.desktop_picker.take();
+                }
+                outcome
             };
             if let Some(guid) = selected {
                 app.borrow_mut().command(Command::Switch { guid });

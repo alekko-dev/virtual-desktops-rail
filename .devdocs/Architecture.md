@@ -378,7 +378,8 @@ native dialog navigation supplies Tab. The editor uses DWM rounded corners, nati
 system colors, and a collapsible status row that expands the popover only while showing
 progress or an error. It does not expand the AppBar.
 
-Left-clicking the vertical name opens a modeless desktop picker with the same
+Left-clicking the vertical name opens a modeless desktop picker; left-clicking it
+again while the picker is open dismisses it. The picker uses the same
 280-DIP width, DWM rounded frame, system colors and Segoe UI typography
 as the rename editor, with no visible heading, 4-DIP outer padding and 28-DIP rows.
 Its native accessible listbox preserves shell order, numbers rows to distinguish

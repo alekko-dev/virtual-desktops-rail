@@ -97,6 +97,11 @@ DPI/high-contrast coverage and right-click rename regression remain unverified.
 During the agent's test setup no desktop was switched, renamed, created or deleted;
 automation visibility was restored off and original app files restored and hash-checked.
 
+The second-click-to-dismiss change passed `check-dev.ps1` on 2026-11-14. Live
+interaction could not be verified: the rebuilt release executable exited with code 1
+before exposing a target window, and the documented automation-visibility control
+timed out waiting for a running rail. No desktop was switched or otherwise changed.
+
 Desktop switching menu acceptance:
 
 - Left-click the visible vertical name: inspect its rounded frame, compact spacing,

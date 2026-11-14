@@ -191,6 +191,12 @@ impl Popover {
         }
     }
 
+    pub fn is_visible(&self) -> bool {
+        unsafe {
+            windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(HWND(self.window)).as_bool()
+        }
+    }
+
     /// Dismiss stale inventories instead of silently reinterpreting list positions.
     pub fn is_current(&self, desktops: &[Desktop], current: Option<&str>, ready: bool) -> bool {
         ready && current == Some(self.current.as_str()) && self.desktops == desktops
@@ -282,6 +288,7 @@ unsafe extern "system" fn procedure(
         COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor, GetSysColorBrush, HDC, SetBkColor,
         SetTextColor,
     };
+    use windows::Win32::UI::WindowsAndMessaging::{GW_OWNER, GetWindow};
     match message {
         0x002b if lparam != 0 => unsafe {
             paint_row(window, &*(lparam as *const DrawItem));
@@ -300,7 +307,10 @@ unsafe extern "system" fn procedure(
         },
         0x0006 if wparam & 0xffff == 0 => {
             unsafe {
-                ShowWindow(window, 0);
+                let owner = GetWindow(HWND(window), GW_OWNER).ok();
+                if owner != Some(HWND(lparam as *mut _)) {
+                    ShowWindow(window, 0);
+                }
             }
             0
         }
