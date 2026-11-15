@@ -1,5 +1,5 @@
 [workspace]
-members = ["tools/native-smoke", "tools/compatibility-probe", "crates/rail-core", "apps/rail", "tools/fullscreen-smoke"]
+members = ["tools/native-smoke", "tools/compatibility-probe", "crates/rail-core", "crates/settings-protocol", "apps/rail", "apps/settings", "tools/fullscreen-smoke"]
 resolver = "3"
 
 [workspace.dependencies]

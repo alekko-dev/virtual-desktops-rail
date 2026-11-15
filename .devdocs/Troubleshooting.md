@@ -6,6 +6,17 @@ reusable symptoms, known mechanisms and proven fixes. Current contracts are in
 For user evidence, use the local support report and its [privacy contract](Architecture.md#stack-and-source-map).
 It is not uploaded automatically; user review/sharing remains their decision.
 
+## Modern Settings radio selection returns to the previous target
+
+In Reactor 0.100.0, `RadioButton::on_checked` registers an `IsChecked` property-change
+callback, so it reports false as well as true. Switching a grouped option can deliver
+the old option's false event before the new option's true event. Sending a preference
+action for both lets the old action enter the pending-request gate first, dropping the
+intended selection. Filter `checked == true` before constructing/sending the action.
+The `radio_group_deselection_never_sends_the_old_target` regression exercises the real
+view callbacks through Reactor's recording pump across all six directed transitions.
+It failed before the filter and passed afterward; it does not certify native input.
+
 ## Snapped restoration reports success at the wrong visible size
 
 `GetWindowPlacement` normal restore bounds can match a request while the actual

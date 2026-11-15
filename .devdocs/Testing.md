@@ -18,6 +18,78 @@ real pointer/keyboard input through the installed computer-use skill. Independen
 observe foreground, visibility, placement and integration state. CLI controls and
 controller tests cannot certify rendering, focus, tooltips or click behavior.
 
+## Modern Settings companion validation
+
+On 2026-11-15, the Reactor 0.100.0 companion implementation on base `020ef01`
+passed `scripts/check-dev.ps1` (formatting, Clippy, workspace tests, version contracts,
+release builds and runtime staging), `scripts/test-resource-measurement.ps1`, and
+local `scripts/package.ps1 -BuildLabel modern-settings-verified` packaging. The pinned
+Rust 1.99.1 toolchain was retained. Windows reported 10.0.26300; the revision/display
+configuration was not collected for this process-only check. Nonfatal incremental
+cache hard-link warnings occurred.
+
+`scripts/test-settings-lifecycle.ps1` ran an owned release companion in the user's
+session, with synthetic preferences over anonymous pipes. It received the component's
+initialization acknowledgement, sent another state snapshot, closed stdin, and
+observed exit code 0 within the deadline, including from the packaged copy. No resident rail connection, preference-file
+write, desktop switch, window manipulation or input automation was used. The tested
+companion SHA-256 was
+`49C5E49FE296E2F8D4C4C73E408E34BA5E87735313D972F596A6DCD15F017FCB`.
+This proves initialization and pipe-close lifetime, not visible rendering, focus or
+completion of every native property update. The private helper/runtime folder had
+211 files totalling 63,554,878 bytes; the complete local ZIP was 25,849,623 bytes.
+
+Repeat after building/staging:
+
+```powershell
+./scripts/test-settings-lifecycle.ps1
+```
+
+The subsequent Settings UI correction addressed user-reported black dark-mode
+background, vertically stacked integration buttons, missing footer separation and
+radio choices that could not return to applications. The real radio view callbacks
+were replayed through Reactor's recording pump with old-option false followed by
+new-option true for every pair of targets. Before the fix the first pair emitted
+both the previous and intended targets; filtering deselection made all six directed
+transitions pass. The full development checks and isolated release lifecycle check
+passed after adding a theme-resource background, two-column integration row and
+fixed themed footer/divider. These are implementation and event-contract checks;
+appearance and actual pointer/keyboard operation remain unverified by request.
+The `settings-ui-fixes` portable package also passed the isolated lifecycle check;
+its companion SHA-256 was
+`EF254A42CECBF72D9DF35743FD4B73870A5631A573AC6E28FFC736FF3A5F2B56`.
+
+The subsequent `settings-only` build removed the complete Win32 Settings UI,
+its command, fallback, dialog routing and obsolete picker/notice-restoration code.
+CLI regression coverage confirms the retired flag is rejected and absent from help.
+Companion failures now produce an error dialog. The Done-hover height report led to
+an 88-DIP reserved button column, a 34-DIP button height and omission of the empty
+notice scroller; this constrains native measurement without truncating long status
+text. The native hover symptom was not reproduced or visually verified because
+computer-control testing remains explicitly skipped. Full development checks and
+the packaged isolated lifecycle smoke passed. Companion SHA-256:
+`F2E9045FC043003E2714A2BA2CB2E956D8E7E9B09989D593BD29FE67D39FBFBC`.
+The following `settings-compact` build reduced initial client height from 700 to
+620 DIPs and content bottom margin from 24 to 12 DIPs after the user reported excess
+space above the footer. Full development checks and packaged lifecycle smoke passed;
+the spacing remains visually unverified under the same computer-control skip.
+The later title-bar/alignment correction uses the shared rail icon through Reactor's
+window icon API, with its ICO staged beside the helper; Done has an explicit 88-DIP
+width and right alignment within its reserved column. Full development checks and
+the isolated release lifecycle check passed. The user's supplied screenshot established
+the generic title-bar icon and left-aligned, naturally sized Done button before this
+change; the resulting native appearance remains unverified under the same skip.
+
+Computer-control validation remains skipped at the user's explicit request. Live
+controller action delivery, acknowledgements, Startup/report completion, repeat-open
+activation, crash/error reporting and parent-exit behavior still need actual app coverage.
+Theme/high-contrast, keyboard traversal, screen readers and mixed DPI/text scaling
+remain unverified. The original resident process was not replaced. The preserved
+closed-Settings `before.json` was not overwritten; no after sample or original
+Win32 Settings-open comparison was taken. No memory/CPU/startup-latency acceptance
+claim follows from these checks. Measure the rail, integration worker and helper
+together while Settings is open; see the baseline procedure below.
+
 ## Evidence standards and desktop safety
 
 Run desktop tests serially in an unlocked, awake Explorer session. Use owned fixtures
@@ -361,12 +433,105 @@ do not establish origin. Probe formats are not the privacy-filtered support ZIP.
 
 ## Resource and latency measurement
 
-For a warmed stable two-pinned-window workload, run `./scripts/Measure-RailIdle.ps1`.
-Check inventory, geometry, visibility, generations, pending work and UI/worker lifetimes
-throughout; reject changed/unavailable workloads and overlapping cleanup. Include
-both processes and distinguish private working set, total working set, private bytes,
-duration, counter resolution and host load. Performance targets are owned by
+Resource comparison is a local workflow, separate from CI. Before editing a feature,
+measure a warmed release build; after implementation, run the final release build
+with the same representative idle workload and measurement settings:
+
+```powershell
+./scripts/Measure-RailIdle.ps1 -Workload 'two pinned windows' -OutputPath artifacts/resource-runs/before.json
+./scripts/Measure-RailIdle.ps1 -Workload 'two pinned windows' -BaselinePath artifacts/resource-runs/before.json
+```
+
+The script observes the running instance; it does not launch, restart or replace it.
+Build the local control executable first (`cargo build --release --locked -p
+virtual-desktop-rail`). Confirm the running release build is the intended baseline
+or final build; its executable SHA-256 and size are recorded. The script does not
+infer running-build identity from the checkout. Preserve the user's running session;
+arrange an authorized test session if replacing it is necessary.
+
+Default duration is 30 seconds after 10 seconds warmup, sampled every 5 seconds.
+Use identical `-Seconds`, `-WarmupSeconds`, `-SampleIntervalSeconds` and
+`-ExpectedManagedWindows` (default 2, zero supported) for a pair. `-Workload` is a
+required description: keep window applications, sizes, visibility, desktop inventory,
+settings and host load comparable. The label identifies the feature/stage. Without
+`-OutputPath`, a unique timestamped JSON log is saved under `artifacts/resource-runs`.
+Existing outputs are never overwritten. Paths are relative to the repository root.
+Logs are local ignored artifacts; keep both when reporting results.
+
+Both the main process and integration worker are included. Each log records per-process
+and combined samples plus start/end, unweighted sample mean, sampled peak and end-minus-start
+growth for private working set (private resident RAM), private bytes (private committed
+memory, including nonresident allocations), and total working set (private plus shared
+resident pages). Combined total working set may double-count shared pages; do not call
+it unique RAM consumption. Memory figures in the console use MiB; JSON stores bytes.
+CPU is reported as milliseconds per elapsed second and percent of one logical core
+(100% means one core), including diagnostic polling overhead. Executable size is also
+recorded. Finite CPU counter resolution means zero is not proof of no work.
+
+`-BaselinePath` requires a schema-2 log and matching machine, OS version, processor count,
+workload description, window/desktop counts, pause state and timing configuration.
+It reports absolute and percentage deltas for memory mean/peak/end/growth, normalized CPU
+and executable size. Positive means an increase; percentage is unavailable for a zero
+or negative baseline. Earlier schema-1 logs cannot supply these comparisons.
+Different process IDs and executable hashes are expected across builds.
+
+Inventory, geometry, visibility, generations, pending work and process lifetimes are
+checked throughout; observed changes reject the run. Checks are sampled and cannot
+prove no intervening activity. No workload is driven by the script. This is idle
+measurement, not an interaction stress test, exact peak capture, leak certification
+or action latency measurement. Repeat pairs when differences are small/noisy; do not
+attribute a delta to a feature solely from one pair. Performance targets are owned by
 [Status](Status-and-Roadmap.md#performance-targets).
+
+Validate aggregation and comparison guards locally with
+`./scripts/test-resource-measurement.ps1` (not part of CI). The script and its
+checks were imported unchanged from `codex/resource-usage-monitoring`, commit
+`f4b253c`, for this UI evaluation. The script checks and `scripts/check-dev.ps1`
+passed on 2026-11-15 after reverting the custom popup/Settings theme experiment.
+
+### Before modern Settings: measured baseline
+
+Measured 2026-11-15 at 16:05 Europe/Warsaw on Windows 11 x64 build
+26300.9974, 22 logical processors, 3840×2160 display at 144 DPI (150%).
+Two existing managed windows (Obsidian and Codex), both visible, three desktops,
+Settings closed, integration ready, automation visibility off, pause off,
+auto-restore on, active-desktop tint on, desktop name on and the light switch
+targeting applications. No UI interactions were driven during the sample.
+
+The running release was rebuilt from `020ef01c5f406abab13214d2e307a251a74afc2e`
+with all application-source changes from the abandoned theme experiment reverted.
+Embedded provenance is dirty because measurement/research files are present;
+the monitoring script does not change application runtime code.
+Executable SHA-256:
+`10AE3285E8565D4E0AA5D3ADFCA40E4EA9C2EA7C19E1D6B6E6C2C8444D3D2684`.
+The run used the exact before command above. Local raw evidence is
+`artifacts/resource-runs/before.json` (schema 2); preserve it for the after command.
+
+| Combined rail + integration worker metric | Before |
+| --- | ---: |
+| Private resident memory, mean / sampled peak | 3.99 / 4.04 MiB |
+| Private committed memory, mean / sampled peak | 5.34 / 5.50 MiB |
+| Total resident memory, mean / sampled peak (shared pages may repeat) | 38.18 / 38.23 MiB |
+| CPU | 218.75 ms over 30.799 s; 7.103 ms/s; 0.710% of one core |
+| Executable size | 2,181,632 bytes (2.08 MiB) |
+
+Ten seconds of warmup preceded the requested 30-second sample; actual CPU interval
+was 30.799 seconds. Five memory samples were collected with a requested five-second
+interval; counter/status collection adds elapsed time. Means are unweighted.
+Observed inventory and process lifetimes were stable. Host load was not controlled,
+and status polling contributes overhead. This single run establishes a local before
+reference, not effectively-zero idle CPU, action latency or leak certification.
+The private resident result is below the provisional 20-MB target for this sample;
+the total resident sum is a different metric.
+
+The proposed [Settings framework experiment](UI-Framework.md) is not implemented.
+After it, run the exact after command above against the updated release with the
+same closed-Settings workload. This script currently counts only the main process
+and integration worker: an open Settings companion must be measured separately
+and included explicitly in the combined total. Capture an additional original
+Win32 Settings-open baseline before implementing that comparison, then compare
+open Settings and post-close resource use and cold/warm startup latency. Do not
+claim a companion is free from a two-process-only measurement.
 
 `--status` reports bounded `dispatch_latency` statistics in microseconds: count, max,
 over-50-ms count and the latest 256 samples. Cross-process QPC measures integration

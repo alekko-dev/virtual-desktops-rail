@@ -9,6 +9,7 @@ owns completed validation and its limits. A scoped pass is not general release c
 | Area | Implemented scope | Verification boundary |
 | --- | --- | --- |
 | Native rail | Primary-left AppBar, desktop dots/tooltips, icon-only shared-window controls, configurable Windows light/dark switch (applications, Windows, or both in Settings), pause, Settings and Exit | User approved the sun/moon glyph and confirmed theme switching works; computer-control tests skipped at user request. Real input/rendering and passive fullscreen checks exist for earlier controls; broader display/accessibility coverage remains open |
+| Modern Settings trial | On-demand Rust Reactor 0.100.0 / WinUI 3 companion, native preference controls, status/notices, report picker, version/Done, bounded controller-owned IPC, single helper, initialization watchdog and explicit startup-error reporting | Full development checks, local portable packaging and isolated WinUI initialization/state-update/pipe-close exit passed. Real input/theme/accessibility, controller-to-companion live synchronization, repeated activation/error recovery and resource deltas remain unverified; computer-control testing skipped by user request |
 | Desktop switching menu | Left-click the vertical desktop name opens a rounded, work-area-clamped desktop list; a second click on the name dismisses it. Current marker, scrolling, pointer selection, arrows/Enter, Escape/outside/deactivation dismissal; GUID selection through existing switch guards | `check-dev.ps1` passed for the second-click change. Live interaction could not be verified because the rebuilt app exited before exposing a window; see [Testing](Testing.md#interactive-regression-matrix). Earlier user screenshots show opening, four visible rows, persistent active selection and light gray inactive hover. Keyboard, other dismissal paths, live switching and broader display/accessibility checks remain open. Application-theme matching remains future work |
 | Desktop naming | Right-click/F2 dot or right-click desktop name rename popover, empty-name reset to default positional name with collision avoidance, keyboard save/cancel, GUID-targeted Windows rename with read-back confirmation, inline errors | Automated input validation, positional fallback and collision tests, name layout/hit-testing tests, and user-verified compact light-theme popover appearance covered; broader pointer/keyboard, error-expansion, dark/high-contrast and Task View synchronization checks remain open. |
 | Shared-window discovery | Individual OR app-level pins, minimized inventory, bounded cached reconciliation/rescans | Task View pin origin established on the initial tested revision; later API tests do not establish origin |
@@ -41,14 +42,26 @@ owns completed validation and its limits. A scoped pass is not general release c
 
 | Provisional target | Current assessment |
 | --- | --- |
-| Combined private working set below 20 MB; effectively zero idle CPU | Small VM samples only; physical/populated coverage and representative distributions remain open |
+| Combined private working set below 20 MB; effectively zero idle CPU | A local two-managed-window release baseline measured 3.99 MiB mean combined private resident memory and 0.710% of one core; see [Testing](Testing.md#before-modern-settings-measured-baseline). Broader distributions and effectively-zero CPU remain unestablished |
 | Automatic minimize accepted within 50 ms of worker desktop-event receipt | A recorded sample exceeded the target; measurement boundaries/results are in [Testing](Testing.md#resource-and-latency-measurement) |
 | Cached pin discovery within two seconds in an idle session | Local API-triggered samples exist; real interaction and broader workloads need coverage |
 
 ## Planned work
 
+The [modern Settings trial](UI-Framework.md) is implemented with an on-demand
+Rust Reactor/WinUI companion as the sole Settings UI. The reverted custom Win32
+theme experiment remains removed. No resource-target relaxation is accepted.
+The user's initial dark-background, integration-button layout, radio-selection and
+footer-separation reports have corresponding source fixes. Radio deselection handling
+has a failing-before/passing-after Reactor event regression; visual confirmation of
+the layout fixes remains outstanding. The old Settings window, command and automatic
+fallback have been removed at the user's request. A reported Done-hover footer-height
+change is addressed by a reserved button column/height and omission of the empty
+notice scroller; the native hover outcome remains unverified.
+
 | Priority | Work and acceptance evidence |
 | --- | --- |
+| Modern Settings acceptance | Real pointer/keyboard and screen-reader checks; app/system theme changes and high contrast; mixed DPI/text scaling; live controller acknowledgements, Startup and diagnostic picker save/cancel/overwrite; repeat open/close/activate, crash/disconnect and parent shutdown; measure aggregate open-window cost, startup latency and post-close resident delta against preserved baselines. |
 | Exact destination restoration | Implement explicit normal/Snap transitions and fallback reporting; broaden minimized-intent verification. Verify saved same/different/unsaved destinations with an independent foreground anchor; preserve the matching-arrangement path. |
 | Complete two-member Snap coverage | Finish mixed saved/unsaved visible/minimized combinations, constrained placements, held-drag switching, pending-click/race focus, shell taskbar/Alt+Tab group actions, pause/retry while pending and member close/unpin/replacement. Use [the repeatable procedure](Testing.md#native-snap-procedure). |
 | Diagnose real-app failures | Attribute Calculator duplicates/timeouts and transient pin errors to matching live identities without collecting titles. Extend disposable ordinary-app edge/shared-divider/drag-away workflows. |

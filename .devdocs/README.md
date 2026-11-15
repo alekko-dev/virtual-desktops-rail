@@ -12,6 +12,7 @@ contains the working instructions.
 | [Development](Development.md) | Required toolchain, recommended environment, build/control commands, repository layout, fixtures, dependencies, packaging and CI |
 | [Testing](Testing.md) | Repeatable verification procedures, measurement definitions, evidence standards and compact contextual validation records |
 | [Troubleshooting](Troubleshooting.md) | Recurring contributor symptoms, known causes, proven resolutions and regression checks |
+| [UI framework evaluation](UI-Framework.md) | Rationale and acceptance gates for the implemented modern Settings trial; Architecture owns the current design |
 | [Status and roadmap](Status-and-Roadmap.md) | Implemented capabilities, verification gaps, known defects, unmet targets, planned work and speculative ideas |
 
 ## Maintenance

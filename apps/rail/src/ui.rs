@@ -33,22 +33,7 @@ fn app_icon(size: i32) -> Handle {
 const PAUSE: usize = 5000;
 const SETTINGS: usize = 5001;
 const LIGHT_SWITCH: usize = 5002;
-const SET_PAUSE: usize = 6000;
-const STARTUP: usize = 6001;
-const RETRY: usize = 6002;
 const EXIT: usize = 6003;
-const DONE: usize = 6004;
-const AUTO_RESTORE: usize = 6005;
-const MINIMIZE_SNAPPED_ELSEWHERE: usize = 6006;
-const DESKTOP_TINT: usize = 6007;
-const SHOW_DESKTOP_NAME: usize = 6008;
-const LIGHT_SWITCH_APPS: usize = 6009;
-const LIGHT_SWITCH_WINDOWS: usize = 6010;
-const LIGHT_SWITCH_BOTH: usize = 6011;
-const SETTINGS_FOOTER_Y: i32 = 486;
-const SAVE_REPORT: usize = 6105;
-const REPORT_PICKER_NOTICE: &str = "Choose a location to save the diagnostic report…";
-const REPORT_OUTPUT_PATH_CAPACITY: usize = 32768;
 const REVEAL_TIMER: usize = 0x524c;
 const REVEAL_DURATION_MS: u64 = 200;
 
@@ -327,7 +312,8 @@ pub(crate) fn compute_desktop_name_layout(
 
 struct App {
     window: Handle,
-    settings: Handle,
+    companion: Option<crate::settings::Companion>,
+    settings_token: u64,
     rename: Option<rename::Popover>,
     desktop_picker: Option<desktop_picker::Popover>,
     tooltip: Handle,
@@ -336,8 +322,6 @@ struct App {
     desktop_name_hovered: bool,
     desktop_name_pressed: bool,
     font_dpi: u32,
-    settings_fonts: Vec<usize>,
-    settings_signature: String,
     model: Model,
     events: Receiver<Event>,
     actions: Sender<actions::Work>,
@@ -381,7 +365,6 @@ struct App {
 struct ReportDraft {
     context: serde_json::Value,
     windows: Vec<store::ReportWindow>,
-    previous_notice: String,
 }
 
 impl App {
@@ -917,6 +900,30 @@ impl App {
         }
         while let Ok(event) = self.events.try_recv() {
             match event {
+                Event::SettingsFailed { token, error } => {
+                    if self.companion.as_ref().is_some_and(|c| c.token == token) {
+                        self.companion.take();
+                        self.notice = error;
+                        let detail = format!(
+                            "Settings could not be opened.\n\n{}\n\nCheck that the complete settings folder is beside the rail executable, then try again.",
+                            self.notice
+                        );
+                        std::thread::spawn(move || unsafe {
+                            use windows::Win32::UI::WindowsAndMessaging::{
+                                MB_ICONERROR, MB_OK, MessageBoxW,
+                            };
+                            MessageBoxW(
+                                None,
+                                windows::core::PCWSTR(wide(&detail).as_ptr()),
+                                windows::core::PCWSTR(
+                                    wide("Virtual Desktop Rail — Settings").as_ptr(),
+                                ),
+                                MB_OK | MB_ICONERROR,
+                            );
+                        });
+                    }
+                }
+                Event::SettingsRequest { token, request } => self.settings_action(token, request),
                 Event::Command(command) => self.command(command),
                 Event::Renamed { token, result } => {
                     if let Some(popover) = self
@@ -954,7 +961,10 @@ impl App {
                         Err(error) => self.status = error,
                     }
                 }
-                Event::Frame(frame, received, experimental) => {
+                Event::Frame(mut frame, received, experimental) => {
+                    if let Some(companion) = &self.companion {
+                        frame.windows.retain(|window| !companion.owns(window));
+                    }
                     // Ignore queued frames from a worker superseded by a legacy
                     // preference change while its replacement is reconnecting.
                     if experimental != self.model.saved().experimental_integration {
@@ -1652,504 +1662,94 @@ impl App {
     }
 
     fn show_settings(&mut self) {
-        if !self.settings.is_null() {
-            unsafe {
-                ShowWindow(self.settings, 5);
-            }
+        if let Some(companion) = &self.companion
+            && companion.alive()
+        {
+            companion.activate();
             return;
         }
-        let dpi = unsafe { GetDpiForWindow(self.window).max(96) } as i32;
-        let scale = |dip: i32| (dip * dpi + 48) / 96;
-        let pointer = unsafe { GetWindowLongPtrW(self.window, -21) };
-        self.settings = unsafe {
-            CreateWindowExW(
-                0x40000,
-                wide(CLASS).as_ptr(),
-                wide("Virtual Desktop Rail — Settings").as_ptr(),
-                0x12c80000,
-                200,
-                160,
-                scale(560),
-                scale(592),
-                self.window,
-                null_mut(),
-                GetModuleHandleW(null()),
-                null_mut(),
-            )
+        self.settings_token += 1;
+        let mut state = self.settings_state();
+        state.acknowledged = 0;
+        self.companion = Some(crate::settings::Companion::start(
+            self.settings_token,
+            state,
+        ));
+    }
+
+    fn settings_state(&self) -> rail_settings_protocol::State {
+        let saved = self.model.saved();
+        rail_settings_protocol::State {
+            version: rail_settings_protocol::VERSION,
+            acknowledged: self.companion.as_ref().map_or(0, |c| c.acknowledged),
+            loaded: self.loaded,
+            paused: saved.paused,
+            startup: saved.startup,
+            startup_busy: self.startup_busy,
+            report_busy: self.report_busy,
+            auto_restore: saved.auto_restore,
+            minimize_snapped_elsewhere: saved.minimize_snapped_elsewhere,
+            desktop_tint: saved.desktop_tint,
+            show_desktop_name: saved.show_desktop_name,
+            light_switch_target: saved.light_switch_target,
+            status: self.status.chars().take(1024).collect(),
+            notice: self.notice.chars().take(2048).collect(),
+            build: crate::version::label(),
+        }
+    }
+
+    fn settings_action(&mut self, token: u64, request: rail_settings_protocol::Request) {
+        use rail_settings_protocol::Action;
+        let Some(companion) = &mut self.companion else {
+            return;
         };
-        unsafe {
-            SetWindowLongPtrW(self.settings, -21, pointer);
+        if companion.token != token || request.id <= companion.acknowledged {
+            return;
         }
-        // Settings use their own typographic hierarchy, independent of rail icon labels.
-        for font in self.settings_fonts.drain(..) {
-            unsafe {
-                DeleteObject(font as Handle);
+        companion.acknowledged = request.id;
+        if !self.loaded {
+            self.update_settings();
+            return;
+        }
+        match request.action {
+            Action::Ready => {}
+            Action::Pause { enabled } => self.command(if enabled {
+                Command::Pause
+            } else {
+                Command::Resume
+            }),
+            Action::Startup { enabled } => {
+                if !self.startup_busy && self.startup.try_send(enabled).is_ok() {
+                    self.startup_busy = true;
+                }
             }
-        }
-        for (size, weight) in [(14, 400), (14, 600), (12, 400), (10, 400)] {
-            let font = unsafe {
-                CreateFontW(
-                    -scale(size),
-                    0,
-                    0,
-                    0,
-                    weight,
-                    0,
-                    0,
-                    0,
-                    1,
-                    0,
-                    0,
-                    5,
-                    0,
-                    wide("Segoe UI").as_ptr(),
-                )
-            };
-            self.settings_fonts.push(font as usize);
-        }
-        for (id, class, label, style, x, y, width, height) in [
-            (
-                6102,
-                "STATIC",
-                "Window behavior",
-                0x50000000,
-                24,
-                20,
-                496,
-                22,
-            ),
-            (
-                SET_PAUSE,
-                "BUTTON",
-                "Pause automatic window actions",
-                0x50010003,
-                24,
-                48,
-                496,
-                28,
-            ),
-            (
-                AUTO_RESTORE,
-                "BUTTON",
-                "Restore saved layouts on desktop switch",
-                0x50010003,
-                24,
-                82,
-                496,
-                28,
-            ),
-            (
-                MINIMIZE_SNAPPED_ELSEWHERE,
-                "BUTTON",
-                "Minimize snapped windows on other desktops",
-                0x50010003,
-                24,
-                116,
-                496,
-                28,
-            ),
-            (6103, "STATIC", "Startup", 0x50000000, 24, 160, 496, 22),
-            (
-                STARTUP,
-                "BUTTON",
-                "Start with Windows",
-                0x50010003,
-                24,
-                188,
-                496,
-                28,
-            ),
-            (6110, "STATIC", "Appearance", 0x50000000, 24, 232, 496, 22),
-            (
-                DESKTOP_TINT,
-                "BUTTON",
-                "Tint rail with active desktop color",
-                0x50010003,
-                24,
-                260,
-                496,
-                28,
-            ),
-            (
-                SHOW_DESKTOP_NAME,
-                "BUTTON",
-                "Show desktop name",
-                0x50010003,
-                24,
-                294,
-                496,
-                28,
-            ),
-            (
-                6111,
-                "STATIC",
-                "Light switch toggles",
-                0x50000000,
-                24,
-                338,
-                496,
-                22,
-            ),
-            (
-                LIGHT_SWITCH_APPS,
-                "BUTTON",
-                "applications",
-                0x50030009,
-                24,
-                366,
-                130,
-                28,
-            ),
-            (
-                LIGHT_SWITCH_WINDOWS,
-                "BUTTON",
-                "Windows",
-                0x50000009,
-                162,
-                366,
-                110,
-                28,
-            ),
-            (
-                LIGHT_SWITCH_BOTH,
-                "BUTTON",
-                "both",
-                0x50000009,
-                280,
-                366,
-                90,
-                28,
-            ),
-            (
-                6104,
-                "STATIC",
-                "Desktop integration",
-                0x50000000,
-                24,
-                410,
-                496,
-                22,
-            ),
-            (
-                RETRY,
-                "BUTTON",
-                "Retry desktop integration",
-                0x50010000,
-                24,
-                438,
-                212,
-                32,
-            ),
-            (
-                SAVE_REPORT,
-                "BUTTON",
-                "Save diagnostic report…",
-                0x50010000,
-                248,
-                438,
-                272,
-                32,
-            ),
-            (6106, "STATIC", "", 0x50000010, 0, SETTINGS_FOOTER_Y, 560, 1),
-            (DONE, "BUTTON", "Done", 0x50010001, 432, 502, 88, 34),
-            (6107, "STATIC", "●", 0x50000000, 24, 497, 10, 18),
-            (6100, "STATIC", "", 0x50000000, 36, 498, 372, 28),
-            // Selectable, scrollable details; it occupies no space while hidden.
-            (6109, "EDIT", "", 0x40a10844, 24, 522, 496, 0),
-        ] {
-            let child = unsafe {
-                CreateWindowExW(
-                    0,
-                    wide(class).as_ptr(),
-                    wide(label).as_ptr(),
-                    style,
-                    scale(x),
-                    scale(y),
-                    scale(width),
-                    scale(height),
-                    self.settings,
-                    id as Handle,
-                    GetModuleHandleW(null()),
-                    null_mut(),
-                )
-            };
-            unsafe {
-                let font = self.settings_fonts[match id {
-                    6102..=6104 | 6110 | 6111 => 1,
-                    6100 | 6107 | 6109 => 2,
-                    _ => 0,
-                }];
-                SendMessageW(child, 0x30, font, 1);
+            Action::AutoRestore { enabled } => self.command(Command::AutoRestore { enabled }),
+            Action::MinimizeSnappedElsewhere { enabled } => {
+                self.command(Command::MinimizeSnappedElsewhere { enabled })
             }
-        }
-        let label = format!("Version {}", crate::version::label());
-        unsafe {
-            let child = CreateWindowExW(
-                0,
-                wide("STATIC").as_ptr(),
-                wide(&label).as_ptr(),
-                0x50000000,
-                scale(36),
-                scale(526),
-                scale(372),
-                scale(14),
-                self.settings,
-                6108 as Handle,
-                GetModuleHandleW(null()),
-                null_mut(),
-            );
-            SendMessageW(child, 0x30, self.settings_fonts[3], 1);
+            Action::DesktopTint { enabled } => self.command(Command::DesktopTint { enabled }),
+            Action::ShowDesktopName { enabled } => {
+                self.command(Command::ShowDesktopName { enabled })
+            }
+            Action::LightSwitchTarget { target } => {
+                self.command(Command::LightSwitchTarget { target })
+            }
+            Action::Retry => self.command(Command::Retry),
+            Action::Report { destination } => {
+                let path = std::path::PathBuf::from(destination);
+                if path.is_absolute()
+                    && let Some(draft) = self.begin_report()
+                {
+                    self.save_report(path, draft);
+                }
+            }
         }
         self.update_settings();
     }
 
-    fn layout_settings_notice(&self) {
-        use windows::Win32::Foundation::{HWND, RECT};
-        use windows::Win32::Graphics::Gdi::{
-            DT_CALCRECT, DT_NOPREFIX, DT_WORDBREAK, DrawTextW, GetDC, HGDIOBJ, ReleaseDC,
-            SelectObject,
-        };
-        use windows::Win32::UI::HiDpi::AdjustWindowRectExForDpi;
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetWindowRect, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, WINDOW_EX_STYLE,
-            WINDOW_STYLE,
-        };
-        let window = HWND(self.settings);
-        let dpi = unsafe { GetDpiForWindow(self.settings) }.max(96);
-        let px = |value: i32| (i64::from(value) * i64::from(dpi) / 96) as i32;
-        unsafe {
-            let notice = GetDlgItem(self.settings, 6109);
-            SetWindowTextW(notice, wide(&self.notice).as_ptr());
-            let mut outer = RECT::default();
-            let _ = GetWindowRect(window, &mut outer);
-            let mut frame = RECT::default();
-            let _ = AdjustWindowRectExForDpi(
-                &mut frame,
-                WINDOW_STYLE(0x12c80000),
-                false,
-                WINDOW_EX_STYLE(0x40000),
-                dpi,
-            );
-            let chrome = frame.bottom - frame.top;
-            let monitor = windows::Win32::Graphics::Gdi::MonitorFromWindow(
-                window,
-                windows::Win32::Graphics::Gdi::MONITOR_DEFAULTTONEAREST,
-            );
-            let work = platform::monitor(monitor)
-                .ok()
-                .map(|context| context.2)
-                .unwrap_or([outer.left, outer.top, outer.right, outer.top + px(760)]);
-            let mut notice_height = 0;
-            if !self.notice.is_empty() {
-                let dc = GetDC(window);
-                let previous = SelectObject(dc, HGDIOBJ(self.settings_fonts[2] as *mut _));
-                let mut bounds = RECT {
-                    right: px(480),
-                    ..Default::default()
-                };
-                let mut text = wide(&self.notice);
-                text.pop();
-                DrawTextW(
-                    dc,
-                    &mut text,
-                    &mut bounds,
-                    DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX,
-                );
-                SelectObject(dc, previous);
-                ReleaseDC(window, dc);
-                // The read-only edit keeps oversized details selectable and scrollable.
-                let available = (work[3] - work[1] - chrome - px(592)).max(px(24));
-                notice_height =
-                    (bounds.bottom - bounds.top + px(12)).clamp(px(28), available.max(px(28)));
-            }
-            ShowWindow(notice, if self.notice.is_empty() { 0 } else { 5 });
-            let extra = if self.notice.is_empty() {
-                0
-            } else {
-                notice_height + px(12)
-            };
-            for (id, x, y, width, height) in [
-                (6109, px(24), px(522), px(496), notice_height),
-                (6108, px(36), px(526) + extra, px(372), px(14)),
-                (
-                    DONE as i32,
-                    px(432),
-                    if extra == 0 { px(502) } else { px(526) + extra },
-                    px(88),
-                    px(34),
-                ),
-            ] {
-                let _ = SetWindowPos(
-                    HWND(GetDlgItem(self.settings, id)),
-                    None,
-                    x,
-                    y,
-                    width,
-                    height,
-                    SWP_NOACTIVATE | SWP_NOZORDER,
-                );
-            }
-            let height = if extra == 0 {
-                px(592)
-            } else {
-                px(592) + notice_height + chrome
-            };
-            let top = outer.top.clamp(work[1], (work[3] - height).max(work[1]));
-            let left = outer
-                .left
-                .clamp(work[0], (work[2] - (outer.right - outer.left)).max(work[0]));
-            let _ = SetWindowPos(
-                window,
-                None,
-                left,
-                top,
-                outer.right - outer.left,
-                height,
-                SWP_NOACTIVATE | SWP_NOZORDER,
-            );
-            let _ = windows::Win32::Graphics::Gdi::RedrawWindow(
-                window,
-                None,
-                None,
-                windows::Win32::Graphics::Gdi::RDW_INVALIDATE
-                    | windows::Win32::Graphics::Gdi::RDW_ERASE
-                    | windows::Win32::Graphics::Gdi::RDW_ALLCHILDREN,
-            );
-        }
-    }
-
-    fn update_settings(&mut self) {
-        if self.settings.is_null() {
-            return;
-        }
-        let saved = self.model.saved();
-        let signature = format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
-            self.status,
-            self.notice,
-            saved.paused,
-            saved.startup,
-            self.startup_busy,
-            self.loaded,
-            saved.experimental_integration,
-            saved.auto_restore,
-            saved.minimize_snapped_elsewhere,
-            saved.desktop_tint,
-            saved.show_desktop_name,
-            saved.light_switch_target
-        );
-        if signature == self.settings_signature {
-            return;
-        }
-        let paused = saved.paused;
-        let startup = saved.startup;
-        let auto_restore = saved.auto_restore;
-        let desktop_tint = saved.desktop_tint;
-        let show_desktop_name = saved.show_desktop_name;
-        let minimize_snapped_elsewhere = saved.minimize_snapped_elsewhere;
-        let light_switch_target = saved.light_switch_target;
-        self.settings_signature = signature;
-        self.layout_settings_notice();
-        unsafe {
-            SendMessageW(
-                GetDlgItem(self.settings, LIGHT_SWITCH_APPS as i32),
-                0xf1,
-                (light_switch_target == rail_core::LightSwitchTarget::Applications) as usize,
-                0,
-            );
-            SendMessageW(
-                GetDlgItem(self.settings, LIGHT_SWITCH_WINDOWS as i32),
-                0xf1,
-                (light_switch_target == rail_core::LightSwitchTarget::Windows) as usize,
-                0,
-            );
-            SendMessageW(
-                GetDlgItem(self.settings, LIGHT_SWITCH_BOTH as i32),
-                0xf1,
-                (light_switch_target == rail_core::LightSwitchTarget::Both) as usize,
-                0,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, LIGHT_SWITCH_APPS as i32),
-                self.loaded as i32,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, LIGHT_SWITCH_WINDOWS as i32),
-                self.loaded as i32,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, LIGHT_SWITCH_BOTH as i32),
-                self.loaded as i32,
-            );
-            SendMessageW(
-                GetDlgItem(self.settings, SHOW_DESKTOP_NAME as i32),
-                0xf1,
-                show_desktop_name as usize,
-                0,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, SHOW_DESKTOP_NAME as i32),
-                self.loaded as i32,
-            );
-            SendMessageW(
-                GetDlgItem(self.settings, DESKTOP_TINT as i32),
-                0xf1,
-                desktop_tint as usize,
-                0,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, DESKTOP_TINT as i32),
-                self.loaded as i32,
-            );
-            let light = GetDlgItem(self.settings, 6107);
-            SetWindowLongPtrW(light, -21, self.ready as isize);
-            InvalidateRect(light, null(), 1);
-            let text = GetDlgItem(self.settings, 6100);
-            SetWindowTextW(text, wide(&self.status).as_ptr());
-            SendMessageW(
-                GetDlgItem(self.settings, SET_PAUSE as i32),
-                0xf1,
-                paused as usize,
-                0,
-            );
-            SendMessageW(
-                GetDlgItem(self.settings, STARTUP as i32),
-                0xf1,
-                startup as usize,
-                0,
-            );
-            SendMessageW(
-                GetDlgItem(self.settings, AUTO_RESTORE as i32),
-                0xf1,
-                auto_restore as usize,
-                0,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, AUTO_RESTORE as i32),
-                self.loaded as i32,
-            );
-            SendMessageW(
-                GetDlgItem(self.settings, MINIMIZE_SNAPPED_ELSEWHERE as i32),
-                0xf1,
-                minimize_snapped_elsewhere as usize,
-                0,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, MINIMIZE_SNAPPED_ELSEWHERE as i32),
-                self.loaded as i32,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, STARTUP as i32),
-                (!self.startup_busy && self.loaded) as i32,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, SET_PAUSE as i32),
-                self.loaded as i32,
-            );
-            EnableWindow(
-                GetDlgItem(self.settings, SAVE_REPORT as i32),
-                (!self.report_busy) as i32,
-            );
+    fn update_settings(&self) {
+        if let Some(companion) = &self.companion {
+            companion.publish(self.settings_state());
         }
     }
 
@@ -2157,9 +1757,7 @@ impl App {
         if self.report_busy {
             return None;
         }
-        let previous_notice = self.notice.clone();
         self.report_busy = true;
-        self.notice = REPORT_PICKER_NOTICE.into();
         self.update_settings();
         let aliases: BTreeMap<_, _> = self
             .model
@@ -2247,11 +1845,7 @@ impl App {
             "model":{"generation":self.model.generation(),"transition_serial":self.model.transition_serial(),"current_desktop":current_desktop},
             "dispatch_latency":self.dispatch_latency,
         });
-        Some(ReportDraft {
-            context,
-            windows,
-            previous_notice,
-        })
+        Some(ReportDraft { context, windows })
     }
 
     fn save_report(&mut self, destination: std::path::PathBuf, draft: ReportDraft) {
@@ -2273,16 +1867,6 @@ impl App {
         }
     }
 
-    fn cancel_report(&mut self, draft: ReportDraft, error: Option<String>) {
-        self.report_busy = false;
-        if let Some(error) = error {
-            self.notice = format!("The save dialog could not be opened: {error}");
-        } else if self.notice == REPORT_PICKER_NOTICE {
-            self.notice = self.snap_notice.previous(draft.previous_notice);
-        }
-        self.update_settings();
-    }
-
     fn diagnostic_window_label(&self, key: &str) -> String {
         self.diagnostic_window_labels
             .get(key)
@@ -2291,6 +1875,7 @@ impl App {
     }
 
     fn stop(&mut self) {
+        self.companion.take();
         self.desktop_picker.take();
         self.rename.take();
         if self.stopped {
@@ -2318,67 +1903,6 @@ impl App {
             }
         }
     }
-}
-
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn GetDlgItem(window: Handle, id: i32) -> Handle;
-}
-
-fn report_output_path_buffer(suggested_name: &str) -> Vec<u16> {
-    let suggested_name = wide(suggested_name);
-    let mut buffer = vec![0; REPORT_OUTPUT_PATH_CAPACITY];
-    let count = suggested_name.len().min(buffer.len());
-    buffer[..count].copy_from_slice(&suggested_name[..count]);
-    buffer
-}
-
-fn save_report_dialog(owner: Handle) -> Result<Option<std::path::PathBuf>, String> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::Controls::Dialogs::{
-        CommDlgExtendedError, GetSaveFileNameW, OFN_EXPLORER, OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT,
-        OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
-    };
-    use windows::core::{PCWSTR, PWSTR};
-
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let mut filename =
-        report_output_path_buffer(&format!("VirtualDesktopRail-diagnostic-{timestamp}.zip"));
-    let filter: Vec<u16> = "ZIP archive (*.zip)\0*.zip\0All files (*.*)\0*.*\0\0"
-        .encode_utf16()
-        .collect();
-    let title = wide("Save diagnostic report");
-    let extension = wide("zip");
-    let mut dialog = OPENFILENAMEW {
-        lStructSize: size_of::<OPENFILENAMEW>() as u32,
-        hwndOwner: HWND(owner),
-        lpstrFilter: PCWSTR(filter.as_ptr()),
-        lpstrFile: PWSTR(filename.as_mut_ptr()),
-        nMaxFile: filename.len() as u32,
-        lpstrTitle: PCWSTR(title.as_ptr()),
-        lpstrDefExt: PCWSTR(extension.as_ptr()),
-        Flags: OPEN_FILENAME_FLAGS(
-            OFN_EXPLORER.0 | OFN_NOCHANGEDIR.0 | OFN_OVERWRITEPROMPT.0 | OFN_PATHMUSTEXIST.0,
-        ),
-        ..Default::default()
-    };
-    if !unsafe { GetSaveFileNameW(&mut dialog) }.as_bool() {
-        let error = unsafe { CommDlgExtendedError() };
-        return if error.0 == 0 {
-            Ok(None)
-        } else {
-            Err(format!("Windows common-dialog error 0x{:04x}", error.0))
-        };
-    }
-    let Some(end) = filename.iter().position(|value| *value == 0) else {
-        return Err("The selected path was not terminated.".into());
-    };
-    Ok(Some(std::path::PathBuf::from(String::from_utf16_lossy(
-        &filename[..end],
-    ))))
 }
 
 unsafe fn fill(dc: Handle, rect: &Rect, color: u32) {
@@ -3107,43 +2631,6 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         return unsafe { DefWindowProcW(window, message, wparam, lparam) };
     }
     let cell = unsafe { &*(pointer as *const RefCell<App>) };
-    if !main && message == 0x0111 && (wparam & 0xffff) == SAVE_REPORT && lparam != 0 {
-        let control = unsafe {
-            windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(windows::Win32::Foundation::HWND(
-                lparam as *mut _,
-            ))
-        };
-        if control == SAVE_REPORT as i32 {
-            // Snapshot under the borrow, then drop it before the common dialog's
-            // nested message loop so WAKE and native events continue to drain.
-            let draft = {
-                let Ok(mut app) = cell.try_borrow_mut() else {
-                    return 0;
-                };
-                app.begin_report()
-            };
-            if let Some(draft) = draft {
-                match save_report_dialog(window) {
-                    Ok(Some(destination)) => {
-                        if let Ok(mut app) = cell.try_borrow_mut() {
-                            app.save_report(destination, draft);
-                        }
-                    }
-                    Ok(None) => {
-                        if let Ok(mut app) = cell.try_borrow_mut() {
-                            app.cancel_report(draft, None);
-                        }
-                    }
-                    Err(error) => {
-                        if let Ok(mut app) = cell.try_borrow_mut() {
-                            app.cancel_report(draft, Some(error));
-                        }
-                    }
-                }
-            }
-            return 0;
-        }
-    }
     if main && message == 0x4a && lparam != 0 {
         let data = unsafe { &*(lparam as *const CopyData) };
         if data.tag == 0x5241494c
@@ -3168,7 +2655,7 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
         }
         return 0;
     }
-    // Color/erase messages can reenter while ShowWindow/SetWindowPos/EnableWindow hold the model borrow.
+    // Rail paint messages can reenter while native layout holds the model borrow.
     if main {
         match message {
             0x0014 => return 1,
@@ -3177,78 +2664,6 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     windows::Win32::Graphics::Gdi::NULL_BRUSH,
                 )
                 .0 as isize;
-            },
-            _ => {}
-        }
-    } else {
-        match message {
-            0x0135 | 0x0138 => unsafe {
-                let control = windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
-                    windows::Win32::Foundation::HWND(lparam as *mut _),
-                );
-                let color = if control == 6107 {
-                    windows::Win32::Foundation::COLORREF(
-                        if GetWindowLongPtrW(lparam as Handle, -21) != 0 {
-                            0x00438320
-                        } else {
-                            0x000078ad
-                        },
-                    )
-                } else {
-                    windows::Win32::Foundation::COLORREF(
-                        windows::Win32::Graphics::Gdi::GetSysColor(if control == 6108 {
-                            windows::Win32::Graphics::Gdi::COLOR_GRAYTEXT
-                        } else {
-                            windows::Win32::Graphics::Gdi::COLOR_WINDOWTEXT
-                        }),
-                    )
-                };
-                windows::Win32::Graphics::Gdi::SetTextColor(
-                    windows::Win32::Graphics::Gdi::HDC(wparam as *mut _),
-                    color,
-                );
-                windows::Win32::Graphics::Gdi::SetBkMode(
-                    windows::Win32::Graphics::Gdi::HDC(wparam as *mut _),
-                    windows::Win32::Graphics::Gdi::TRANSPARENT,
-                );
-                return windows::Win32::Graphics::Gdi::GetSysColorBrush(
-                    if windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
-                        windows::Win32::Foundation::HWND(lparam as *mut _),
-                    ) == 6100
-                        || windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
-                            windows::Win32::Foundation::HWND(lparam as *mut _),
-                        ) == 6107
-                        || windows::Win32::UI::WindowsAndMessaging::GetDlgCtrlID(
-                            windows::Win32::Foundation::HWND(lparam as *mut _),
-                        ) == 6108
-                    {
-                        windows::Win32::Graphics::Gdi::COLOR_BTNFACE
-                    } else {
-                        windows::Win32::Graphics::Gdi::COLOR_WINDOW
-                    },
-                )
-                .0 as isize;
-            },
-            0x0014 => unsafe {
-                let mut rect = Rect::default();
-                GetClientRect(window, &mut rect);
-                fill(
-                    wparam as Handle,
-                    &rect,
-                    windows::Win32::Graphics::Gdi::GetSysColor(
-                        windows::Win32::Graphics::Gdi::COLOR_WINDOW,
-                    ),
-                );
-                let dpi = GetDpiForWindow(window).max(96) as i32;
-                rect.top = (SETTINGS_FOOTER_Y * dpi + 48) / 96;
-                fill(
-                    wparam as Handle,
-                    &rect,
-                    windows::Win32::Graphics::Gdi::GetSysColor(
-                        windows::Win32::Graphics::Gdi::COLOR_BTNFACE,
-                    ),
-                );
-                return 1;
             },
             _ => {}
         }
@@ -3631,121 +3046,44 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
             }
             0
         }
-        0x0111 => {
+        0x0111 if main => {
             let id = wparam & 0xffff;
-            if main {
-                if let Some(button) = app
-                    .buttons
-                    .iter()
-                    .find(|b| b.id == id && b.hwnd as isize == lparam)
-                {
-                    let kind = button.kind.clone();
-                    if !matches!(kind, ButtonKind::Window(_)) {
-                        app.pre_foreground = None;
-                    }
-                    match kind {
-                        ButtonKind::Desktop(guid) => app.command(Command::Switch { guid }),
-                        ButtonKind::Window(key) => app.command(Command::Click { key }),
-                        ButtonKind::Pause => {
-                            let command = if app.model.saved().paused {
-                                Command::Resume
-                            } else {
-                                Command::Pause
-                            };
-                            app.command(command);
-                        }
-                        ButtonKind::Settings => app.command(Command::Settings),
-                        ButtonKind::LightSwitch => {
-                            if !app.theme_busy {
-                                let target = app.model.saved().light_switch_target;
-                                match theme::start_toggle(target) {
-                                    Ok(()) => app.theme_busy = true,
-                                    Err(error) => {
-                                        app.notice =
-                                            format!("Windows theme could not be changed: {error}");
-                                        app.show_settings();
-                                    }
-                                }
-                                app.render(false);
-                            }
-                        }
-                        ButtonKind::Exit => app.command(Command::Exit),
-                    }
+            if let Some(button) = app
+                .buttons
+                .iter()
+                .find(|b| b.id == id && b.hwnd as isize == lparam)
+            {
+                let kind = button.kind.clone();
+                if !matches!(kind, ButtonKind::Window(_)) {
+                    app.pre_foreground = None;
                 }
-            } else {
-                match id {
-                    SET_PAUSE => {
-                        let paused = unsafe {
-                            SendMessageW(GetDlgItem(window, SET_PAUSE as i32), 0xf0, 0, 0)
-                        } != 0;
-                        app.command(if paused {
-                            Command::Pause
-                        } else {
+                match kind {
+                    ButtonKind::Desktop(guid) => app.command(Command::Switch { guid }),
+                    ButtonKind::Window(key) => app.command(Command::Click { key }),
+                    ButtonKind::Pause => {
+                        let command = if app.model.saved().paused {
                             Command::Resume
-                        });
+                        } else {
+                            Command::Pause
+                        };
+                        app.command(command);
                     }
-                    STARTUP => {
-                        if !app.startup_busy {
-                            let enabled = unsafe {
-                                SendMessageW(GetDlgItem(window, STARTUP as i32), 0xf0, 0, 0)
-                            } != 0;
-                            if app.startup.try_send(enabled).is_ok() {
-                                app.startup_busy = true;
+                    ButtonKind::Settings => app.command(Command::Settings),
+                    ButtonKind::LightSwitch => {
+                        if !app.theme_busy {
+                            let target = app.model.saved().light_switch_target;
+                            match theme::start_toggle(target) {
+                                Ok(()) => app.theme_busy = true,
+                                Err(error) => {
+                                    app.notice =
+                                        format!("Windows theme could not be changed: {error}");
+                                    app.show_settings();
+                                }
                             }
-                            app.update_settings();
+                            app.render(false);
                         }
                     }
-                    RETRY => app.command(Command::Retry),
-                    DESKTOP_TINT => {
-                        let enabled = unsafe {
-                            SendMessageW(GetDlgItem(window, DESKTOP_TINT as i32), 0xf0, 0, 0)
-                        } != 0;
-                        app.command(Command::DesktopTint { enabled });
-                    }
-                    SHOW_DESKTOP_NAME => {
-                        let enabled = unsafe {
-                            SendMessageW(GetDlgItem(window, SHOW_DESKTOP_NAME as i32), 0xf0, 0, 0)
-                        } != 0;
-                        app.command(Command::ShowDesktopName { enabled });
-                    }
-                    LIGHT_SWITCH_APPS => {
-                        app.command(Command::LightSwitchTarget {
-                            target: rail_core::LightSwitchTarget::Applications,
-                        });
-                    }
-                    LIGHT_SWITCH_WINDOWS => {
-                        app.command(Command::LightSwitchTarget {
-                            target: rail_core::LightSwitchTarget::Windows,
-                        });
-                    }
-                    LIGHT_SWITCH_BOTH => {
-                        app.command(Command::LightSwitchTarget {
-                            target: rail_core::LightSwitchTarget::Both,
-                        });
-                    }
-                    AUTO_RESTORE => {
-                        let enabled = unsafe {
-                            SendMessageW(GetDlgItem(window, AUTO_RESTORE as i32), 0xf0, 0, 0)
-                        } != 0;
-                        app.command(Command::AutoRestore { enabled });
-                    }
-                    MINIMIZE_SNAPPED_ELSEWHERE => {
-                        let enabled = unsafe {
-                            SendMessageW(
-                                GetDlgItem(window, MINIMIZE_SNAPPED_ELSEWHERE as i32),
-                                0xf0,
-                                0,
-                                0,
-                            )
-                        } != 0;
-                        app.command(Command::MinimizeSnappedElsewhere { enabled });
-                    }
-                    DONE => unsafe {
-                        app.settings = null_mut();
-                        app.settings_signature.clear();
-                        DestroyWindow(window);
-                    },
-                    _ => {}
+                    ButtonKind::Exit => app.command(Command::Exit),
                 }
             }
             0
@@ -3756,9 +3094,6 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                 unsafe {
                     PostQuitMessage(0);
                 }
-            } else if app.settings == window {
-                app.settings = null_mut();
-                app.settings_signature.clear();
             }
             0
         }
@@ -3809,7 +3144,8 @@ pub fn run(settings: bool) -> Result<(), String> {
     let _ = EVENTS.set(sender);
     let app = Box::new(RefCell::new(App {
         window: null_mut(),
-        settings: null_mut(),
+        companion: None,
+        settings_token: 0,
         rename: None,
         desktop_picker: None,
         tooltip: null_mut(),
@@ -3818,8 +3154,6 @@ pub fn run(settings: bool) -> Result<(), String> {
         desktop_name_hovered: false,
         desktop_name_pressed: false,
         font_dpi: 0,
-        settings_fonts: Vec::new(),
-        settings_signature: String::new(),
         model: Model::new(Saved::default()),
         events,
         actions: actions::start(),
@@ -4001,24 +3335,18 @@ pub fn run(settings: bool) -> Result<(), String> {
                 app.borrow_mut().open_rename(message.window);
                 continue;
             }
-            let settings = app.borrow().settings;
-            if settings.is_null()
-                && ((message.message == 0x0100
-                    && matches!(message.wparam, 0x09 | 0x20 | 0x0d | 0x25..=0x28)
-                    && !KEYBOARD_FOCUS.swap(true, Ordering::AcqRel))
-                    || (matches!(message.message, 0x0201 | 0x0203)
-                        && KEYBOARD_FOCUS.swap(false, Ordering::AcqRel)))
+            if (message.message == 0x0100
+                && matches!(message.wparam, 0x09 | 0x20 | 0x0d | 0x25..=0x28)
+                && !KEYBOARD_FOCUS.swap(true, Ordering::AcqRel))
+                || (matches!(message.message, 0x0201 | 0x0203)
+                    && KEYBOARD_FOCUS.swap(false, Ordering::AcqRel))
             {
                 let focused = GetFocus();
                 if !focused.is_null() {
                     InvalidateRect(focused, null(), 0);
                 }
             }
-            if IsDialogMessageW(
-                if settings.is_null() { window } else { settings },
-                &mut message,
-            ) == 0
-            {
+            if IsDialogMessageW(window, &mut message) == 0 {
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
@@ -4036,9 +3364,6 @@ pub fn run(settings: bool) -> Result<(), String> {
             if *icon != 0 {
                 DestroyIcon(*icon as Handle);
             }
-        }
-        for font in app.borrow_mut().settings_fonts.drain(..) {
-            DeleteObject(font as Handle);
         }
         if !app.borrow_mut().font.is_null() {
             DeleteObject(app.borrow_mut().font);
@@ -4083,7 +3408,7 @@ pub fn remote(command: &Command) -> Result<bool, String> {
 
 #[cfg(test)]
 mod visual_tests {
-    use super::{REPORT_OUTPUT_PATH_CAPACITY, desktop_color, report_output_path_buffer};
+    use super::desktop_color;
     #[test]
     fn reveal_restarts_for_new_switch_and_late_frames_finish_without_replay() {
         let mut reveal = super::SlideIn { started: Some(100) };
@@ -4208,36 +3533,6 @@ mod visual_tests {
             assert!(
                 (centroid_x - target_center).abs() < 0.75,
                 "DPI {dpi}: Centroid {centroid_x:.2} should be close to rail center {target_center:.2}"
-            );
-        }
-    }
-
-    #[test]
-    fn report_picker_buffer_holds_a_full_windows_path_and_suggested_name() {
-        let suggested = "VirtualDesktopRail-diagnostic-123.zip";
-        let buffer = report_output_path_buffer(suggested);
-        assert_eq!(buffer.len(), REPORT_OUTPUT_PATH_CAPACITY);
-        assert_eq!(
-            String::from_utf16_lossy(&buffer[..suggested.encode_utf16().count()]),
-            suggested
-        );
-        assert!(
-            buffer[suggested.encode_utf16().count()..]
-                .iter()
-                .all(|unit| *unit == 0)
-        );
-    }
-
-    #[test]
-    fn settings_footer_boundary_matches_separator_line() {
-        assert_eq!(super::SETTINGS_FOOTER_Y, 486);
-        for dpi in [96, 120, 144, 192] {
-            let scale = |dip: i32| (dip * dpi + 48) / 96;
-            let erase_boundary = (super::SETTINGS_FOOTER_Y * dpi + 48) / 96;
-            assert_eq!(
-                scale(super::SETTINGS_FOOTER_Y),
-                erase_boundary,
-                "Footer erase top boundary must match scaled separator line position at {dpi} DPI"
             );
         }
     }

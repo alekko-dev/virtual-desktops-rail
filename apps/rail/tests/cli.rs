@@ -30,6 +30,9 @@ fn help_and_invalid_arguments_exit_without_starting_a_rail() {
     let help = Command::new(exe).arg("--help").output().unwrap();
     assert!(help.status.success());
     assert!(String::from_utf8_lossy(&help.stdout).contains("--settings"));
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("--legacy-settings"));
+    let retired = Command::new(exe).arg("--legacy-settings").output().unwrap();
+    assert_eq!(retired.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&help.stdout).contains("--experimental-integration on|off"));
     assert!(String::from_utf8_lossy(&help.stdout).contains("no longer affects build eligibility"));
     assert!(String::from_utf8_lossy(&help.stdout).contains("26100.2605"));

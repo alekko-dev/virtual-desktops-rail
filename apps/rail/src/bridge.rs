@@ -38,13 +38,13 @@ enum Wire {
     Minimized(rail_core::MinimizeObservation),
 }
 
-struct KillJob(windows::Win32::Foundation::HANDLE);
+pub(crate) struct KillJob(windows::Win32::Foundation::HANDLE);
 impl Drop for KillJob {
     fn drop(&mut self) {
         let _ = unsafe { windows::Win32::Foundation::CloseHandle(self.0) };
     }
 }
-fn own_process(child: &std::process::Child) -> Result<KillJob, String> {
+pub(crate) fn own_process(child: &std::process::Child) -> Result<KillJob, String> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::System::JobObjects::*;
     let job = KillJob(unsafe { CreateJobObjectW(None, None) }.map_err(|e| e.to_string())?);

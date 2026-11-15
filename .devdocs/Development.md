@@ -8,6 +8,13 @@ Build Tools (Desktop development with C++, x64 MSVC linker and a Windows SDK).
 `Cargo.lock` and exact workspace dependency versions pin inputs. Open a new terminal
 after installation so PATH updates apply. Scripts locate Cargo under the user's `.cargo/bin`.
 
+The Settings companion pins `windows-reactor` and `windows-reactor-setup` 0.100.0.
+First builds require network access plus Windows curl/tar to stage the private runtime
+in the setup helper's `%LOCALAPPDATA%/windows-reactor-setup` cache. The build rejects
+missing critical runtime files because the preview helper can log failed downloads
+without returning an error. If a failed extraction left an incomplete cache, repair
+only that package cache and rebuild; do not change the pinned toolchain.
+
 A dedicated Windows VM is recommended for shell tests. Suggested Hyper-V setup:
 Generation 2, Secure Boot, TPM 2.0, 4 vCPUs, 8 GB RAM and a 100–128 GB expanding disk;
 a host with 32 GB RAM and SSD provides headroom. These are development recommendations,
@@ -84,7 +91,12 @@ and marked in embedded identity and `BUILD.json`. Packaging reads the executable
 `--version --json` output and checks Windows version resources before copying it.
 It respects Cargo's `CARGO_TARGET_DIR`, allowing isolated builds while the app runs.
 `BUILD.json` records version, full commit, dirty state, optional label and SHA-256.
-The script builds the app with static CRT and creates a portable directory and ZIP under `artifacts/`.
+The script builds both executables with static CRT and creates a portable directory and ZIP under `artifacts/`.
+`Stage-Settings.ps1` stages the helper/runtime in `settings/` using the pinned setup
+allowlist and includes license/notice files from both runtime NuGet packages. The
+complete folder is required; copying only the rail executable does not carry modern
+Settings. `check-dev.ps1` stages release output too. For a manual debug build, build
+the workspace then run `./scripts/Stage-Settings.ps1 -BuildDirectory target/debug`.
 It includes the executable, user README, SHA-256, third-party notices, dependency
 license texts and Rust standard-library licenses. Installed Rust documentation licenses
 are required. Existing package destinations are rejected instead of overwritten.

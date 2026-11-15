@@ -10,6 +10,7 @@ mod metrics;
 mod native;
 mod platform;
 mod rename;
+mod settings;
 mod singleton;
 mod snap_notice;
 mod store;
@@ -29,6 +30,14 @@ static MAIN_WINDOW: AtomicUsize = AtomicUsize::new(0);
 static OVERRUN: AtomicBool = AtomicBool::new(false);
 
 enum Event {
+    SettingsFailed {
+        token: u64,
+        error: String,
+    },
+    SettingsRequest {
+        token: u64,
+        request: rail_settings_protocol::Request,
+    },
     Command(ui::Command),
     Renamed {
         token: u64,

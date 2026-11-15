@@ -24,7 +24,7 @@ try {
     if ($ReleaseTag) { $releaseCommit = Assert-RailReleaseSource -Root $repoRoot -Version $Version -Tag $ReleaseTag }
     if ($BuildLabel -and $BuildLabel -notmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') { throw 'Build label must contain only letters, digits, dots and hyphens.' }
 
-    & $cargo build -p virtual-desktop-rail --release --locked
+    & $cargo build -p virtual-desktop-rail -p rail-settings --release --locked
     if ($LASTEXITCODE) { throw 'Release build failed.' }
     $executable = Join-Path $applicationMetadata.target_directory 'release/virtual-desktop-rail.exe'
     $build = Get-RailBuildInfo -Executable $executable
@@ -55,6 +55,8 @@ try {
     if (Test-Path -LiteralPath $package) { throw 'Package destination already exists.' }
     New-Item -ItemType Directory -Path "$package/licenses" -Force | Out-Null
     Copy-Item -LiteralPath $executable -Destination $package
+    $settingsDirectory = & "$PSScriptRoot/Stage-Settings.ps1" -BuildDirectory (Split-Path $executable -Parent)
+    Copy-Item -LiteralPath $settingsDirectory -Destination $package -Recurse
     $readme = Get-Content -LiteralPath 'README.md' -Raw -Encoding utf8
     $repositorySection = '(?s)\r?\n<!-- repository-links:start -->.*?<!-- repository-links:end -->\r?\n?'
     if ([regex]::Matches($readme, $repositorySection).Count -ne 1) {

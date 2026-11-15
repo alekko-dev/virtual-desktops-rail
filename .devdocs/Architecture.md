@@ -70,8 +70,10 @@ and the stable snapshot, attribution is deliberately rejected rather than guesse
 ## Stack and source map
 
 Rust with the pinned MSVC x64 toolchain, selected `windows` crate bindings, native
-Win32 controls and GDI painting, `winvd = 0.0.49`, and versioned JSON storage. Static
-CRT and an unpackaged portable executable avoid a managed runtime, service, or driver.
+Win32 rail/popups and GDI painting, `winvd = 0.0.49`, and versioned JSON storage.
+Settings uses an on-demand Rust Reactor 0.100.0 / WinUI 3 companion with a private
+Windows App SDK runtime. Static CRT and an unpackaged portable folder avoid a managed
+runtime, service, or driver; the Settings runtime files must remain in that folder.
 Core usage is local; diagnostics are bounded and do not collect window titles. Settings
 can create a user-selected ZIP locally. Its report uses temporary window/desktop labels,
 freshly observes still-matching managed windows off the UI thread, and includes bounded
@@ -95,6 +97,9 @@ provide only small artwork can still require enlargement.
 | `crates/rail-core/tests/controller.rs` | Named controller regression scenarios and seeded event-sequence invariant checks |
 | `apps/rail/src/main.rs` | GUI/CLI entry, command delivery and integration-worker mode |
 | `apps/rail/src/ui.rs` | Native controls, paint/input, WinEvents, settings and orchestration |
+| `apps/rail/src/settings.rs` | On-demand Settings process, bounded pipe transport, watchdog, activation and shutdown supervision |
+| `apps/settings` | Native WinUI Settings controls, system theme, report destination picker and component lifecycle |
+| `crates/settings-protocol` | Versioned, size-limited preference actions and authoritative state snapshots |
 | `apps/rail/src/theme.rs` | Per-user Windows app/system color-mode writes and off-UI change notification |
 | `apps/rail/src/appbar.rs` | Work-area reservation, fullscreen/z-order and shell recovery |
 | `apps/rail/src/platform.rs` | OS eligibility, window properties, candidates, identity and geometry |
@@ -108,23 +113,50 @@ provide only small artwork can still require enlargement.
 | `tools/native-smoke`, `tools/fullscreen-smoke` | Ordinary duplicate/modal/stalled-window and fullscreen fixtures |
 
 
-Settings includes **Save diagnostic report…** beside Retry. The UI snapshots report
-context, then releases its model borrow before opening the local ZIP save dialog; its
-nested message loop continues processing wake/events. Fresh managed-window observations
+Settings includes **Save diagnostic report…** and Retry. The companion opens the local
+ZIP save dialog, then asks the rail to snapshot report context for the chosen path.
+The rail remains responsive during the dialog.
+Fresh managed-window observations
 and archive writing run on the storage worker. The bounded `diagnostics-events.jsonl` history records desktop aliases,
 window aliases, accepted/completed action evidence, integration readiness and selected
 setting changes without persistent window or desktop identifiers. `--status` remains a
 separate live-instance snapshot and may contain identifiers; it is not copied to the
 support archive.
 
-The Settings footer places the integration indicator and status above a
-10-DIP version label in the system gray text color. The label aligns with the status
-text; Done is centered beside the combined group. The compact Settings window is
-526 DIP high, including both Appearance preferences. Status and notices use separate controls. A measured read-only notice area
-expands the window only while populated; oversized details remain selectable and
-vertically scrollable. Relayout preserves controls/focus, clamps to the work area,
-and redraws children. The timeout notice clears when no quarantined action remains.
-See [Testing](Testing.md#compatibility-and-completed-validation) for scoped verification.
+### Settings companion
+
+The Settings button and `--settings` launch `settings/rail-settings.exe` only on demand.
+Repeated opens request activation of that owned process. A supervisor owns the child
+and a kill-on-close JobObject; closing Settings exits WinUI, and stopping/crashing the
+rail closes the job. A 15-second initialization watchdog and startup/protocol failures
+report an error; the Win32 Settings implementation and its command have been removed.
+Git retains the previous implementation. The rail never initializes WinUI itself.
+
+Anonymous inherited pipes carry schema-1 JSON lines bounded to 16 KiB. The companion
+receives only preference/status snapshots, not window inventory or saved layouts.
+Actions are explicit set operations, with request acknowledgements and per-launch
+tokens rejecting duplicate/stale requests. Controls wait for controller acknowledgement;
+startup/report completion continues asynchronously through existing workers. The rail
+alone owns controller state and storage. Pipe readers/writers, launch, activation and
+waits run off the UI thread; state notifications coalesce through a bounded queue.
+The helper's PID plus process creation time are filtered out of controller inventories
+before snapshot admission, so PID reuse cannot exclude an unrelated process.
+
+The 560×620-DIP resizable window uses native checkboxes, grouped radio buttons and
+buttons, system theme and a scrolling layout. A theme-resource solid background
+supplies the native app surface instead of the host's default black background.
+The two Desktop integration buttons share one row. Status/version and Done occupy
+a fixed bottom footer with a themed surface and top divider; selectable notices
+scroll within a bounded area there. The Done column reserves 88 DIPs and its button
+size is 88×34 DIPs, right-aligned with the content edge, keeping hover/focus
+measurement from changing status wrapping. The title bar uses the shared rail icon,
+staged as `settings/rail.ico` and resolved relative to the companion executable.
+The notice scroller exists only when populated. Radio actions ignore deselection callbacks.
+The preferences pane has a 12-DIP bottom margin.
+Actual theme,
+focus, DPI and input behavior remains unverified for the companion; see
+[Testing](Testing.md#modern-settings-companion-validation). The timeout notice clears
+when no quarantined action remains.
 
 Build identity is compiled once per build and shared by Settings, local `--version`
 (and `--version --json`) and the additive `build` object in schema-1 `--status`.

@@ -52,10 +52,12 @@ Enable **Tint rail with active desktop color** in Settings for a subtle backgrou
 ## Installation and updates
 
 1. Download the portable Windows x64 ZIP from the project's releases (or grab the `VirtualDesktopRail-windows-x64-<commit>` artifact from the latest `main` GitHub Actions run).
-2. Extract the ZIP into a folder.
+2. Extract the whole ZIP into a folder, keeping the `settings` subfolder and its runtime files together.
 3. Run `virtual-desktop-rail.exe`.
 
 **Updating:** Click **Exit** at the bottom of the rail, extract the new ZIP over your folder, and start `virtual-desktop-rail.exe` again. (If you moved the folder and use **Start with Windows**, toggle that setting off and back on in Settings.)
+
+Settings opens a separate native WinUI window and exits when closed. If it cannot start, an error explains the failure. Keep the complete `settings` folder beside the rail executable.
 
 **Uninstalling:** Turn off **Start with Windows** in Settings, exit the app, and delete the folder. To also wipe saved layouts and settings, delete `%LOCALAPPDATA%\VirtualDesktopRail`.
 

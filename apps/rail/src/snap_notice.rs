@@ -25,15 +25,6 @@ impl SnapNotice {
 pub struct Lifecycle(Option<SnapNotice>);
 
 impl Lifecycle {
-    /// A report picker can temporarily cover the notice while recovery arrives.
-    pub fn previous(&self, text: String) -> String {
-        if text == TEXT && self.0.is_none() {
-            String::new()
-        } else {
-            text
-        }
-    }
-
     pub fn rejected(&mut self, notice: SnapNotice, model: &Model, text: &mut String) -> bool {
         let request = &notice.request;
         if request.generation == model.generation()

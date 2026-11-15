@@ -711,12 +711,6 @@ fn snap_notice_identity_removal_replacement_and_other_notices() {
         h.notice = text.into();
         h.frame(snapshot("A", 2300, vec![]));
         assert_eq!(h.notice, text);
-        assert_eq!(h.snap_notice.previous(text.into()), text);
-        assert!(
-            h.snap_notice
-                .previous(crate::snap_notice::TEXT.into())
-                .is_empty()
-        );
     }
     let (mut h, win) = snap_notice_fixture();
     let key = win.identity.key();
