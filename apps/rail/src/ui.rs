@@ -2527,8 +2527,8 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
         },
         Gdi::{
             BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLACKNESS, BitBlt, CreateCompatibleDC,
-            CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HDC, HGDIOBJ, PatBlt,
-            SRCCOPY, SelectObject,
+            CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, GdiFlush, HDC, HGDIOBJ,
+            PatBlt, SRCCOPY, SelectObject,
         },
     };
     use windows::core::Interface;
@@ -2653,15 +2653,16 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
             }
             let old_bitmap = SelectObject(mem_dc, HGDIOBJ(dib.0));
             let copied = BitBlt(mem_dc, 0, 0, w4, h4, target_dc, 0, 0, SRCCOPY).is_ok();
+            let synchronized = copied && GdiFlush().as_bool();
             let count = (w4 as usize).checked_mul(h4 as usize)?;
-            let pixels = if copied {
+            let pixels = if synchronized {
                 std::slice::from_raw_parts(bits as *const u32, count).to_vec()
             } else {
                 Vec::new()
             };
             SelectObject(mem_dc, old_bitmap);
             let _ = DeleteObject(dib);
-            if !copied {
+            if !synchronized {
                 return None;
             }
             Some((w4, h4, pad + baseline, pixels))
@@ -2790,23 +2791,8 @@ fn emoji_text_ranges(name: &str) -> Vec<windows::Win32::Graphics::DirectWrite::D
         let len = ch.len_utf16() as u32;
         let next = chars.get(index + 1).copied();
         let emoji_base = is_emoji_codepoint(ch)
-            || (matches!(next, Some('\u{FE0F}' | '\u{20E3}'))
-                && (ch.is_ascii_digit()
-                    || matches!(
-                        ch,
-                        '#' | '*'
-                            | '\u{00A9}'
-                            | '\u{00AE}'
-                            | '\u{203C}'
-                            | '\u{2049}'
-                            | '\u{2122}'
-                            | '\u{2139}'
-                            | '\u{3030}'
-                            | '\u{303D}'
-                            | '\u{3297}'
-                            | '\u{3299}'
-                            | '\u{2764}'
-                    )));
+            || (is_bmp_emoji_presentation(ch) && !matches!(next, Some('\u{FE0E}')))
+            || (matches!(next, Some('\u{FE0F}' | '\u{20E3}')) && is_bmp_emoji_codepoint(ch));
         let extender = matches!(ch, '\u{FE0E}' | '\u{FE0F}' | '\u{20E3}' | '\u{200D}')
             || matches!(ch as u32, 0x1F3FB..=0x1F3FF);
 
@@ -2837,6 +2823,142 @@ fn emoji_text_ranges(name: &str) -> Vec<windows::Win32::Graphics::DirectWrite::D
 
 fn is_emoji_codepoint(ch: char) -> bool {
     matches!(ch as u32, 0x1F000..=0x1FAFF | 0x1FC00..=0x1FFFD)
+}
+
+fn is_bmp_emoji_codepoint(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x0023
+            | 0x002A
+            | 0x0030..=0x0039
+            | 0x00A9
+            | 0x00AE
+            | 0x203C
+            | 0x2049
+            | 0x2122
+            | 0x2139
+            | 0x2194..=0x2199
+            | 0x21A9..=0x21AA
+            | 0x231A..=0x231B
+            | 0x2328
+            | 0x23CF
+            | 0x23E9..=0x23F3
+            | 0x23F8..=0x23FA
+            | 0x24C2
+            | 0x25AA..=0x25AB
+            | 0x25B6
+            | 0x25C0
+            | 0x25FB..=0x25FE
+            | 0x2600..=0x2604
+            | 0x260E
+            | 0x2611
+            | 0x2614..=0x2615
+            | 0x2618
+            | 0x261D
+            | 0x2620
+            | 0x2622..=0x2623
+            | 0x2626
+            | 0x262A
+            | 0x262E..=0x262F
+            | 0x2638..=0x263A
+            | 0x2640
+            | 0x2642
+            | 0x2648..=0x2653
+            | 0x265F..=0x2660
+            | 0x2663
+            | 0x2665..=0x2668
+            | 0x267B
+            | 0x267E..=0x267F
+            | 0x2692..=0x2697
+            | 0x2699
+            | 0x269B..=0x269C
+            | 0x26A0..=0x26A1
+            | 0x26A7
+            | 0x26AA..=0x26AB
+            | 0x26B0..=0x26B1
+            | 0x26BD..=0x26BE
+            | 0x26C4..=0x26C5
+            | 0x26C8
+            | 0x26CE
+            | 0x26CF
+            | 0x26D1
+            | 0x26D3..=0x26D4
+            | 0x26E9..=0x26EA
+            | 0x26F0..=0x26F5
+            | 0x26F7..=0x26F9
+            | 0x26FA
+            | 0x26FD
+            | 0x2702
+            | 0x2705
+            | 0x2708..=0x270D
+            | 0x270F
+            | 0x2712
+            | 0x2714
+            | 0x2716
+            | 0x271D
+            | 0x2721
+            | 0x2728
+            | 0x2733..=0x2734
+            | 0x2744
+            | 0x2747
+            | 0x274C
+            | 0x274E
+            | 0x2753..=0x2755
+            | 0x2757
+            | 0x2763..=0x2764
+            | 0x2795..=0x2797
+            | 0x27A1
+            | 0x27B0
+            | 0x27BF
+            | 0x2934..=0x2935
+            | 0x2B05..=0x2B07
+            | 0x2B1B..=0x2B1C
+            | 0x2B50
+            | 0x2B55
+            | 0x3030
+            | 0x303D
+            | 0x3297
+            | 0x3299
+    )
+}
+
+fn is_bmp_emoji_presentation(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x231A..=0x231B
+            | 0x23E9..=0x23EC
+            | 0x23F0
+            | 0x23F3
+            | 0x25FD..=0x25FE
+            | 0x2614..=0x2615
+            | 0x2648..=0x2653
+            | 0x267F
+            | 0x2693
+            | 0x26A1
+            | 0x26AA..=0x26AB
+            | 0x26BD..=0x26BE
+            | 0x26C4..=0x26C5
+            | 0x26CE
+            | 0x26D4
+            | 0x26EA
+            | 0x26F2..=0x26F3
+            | 0x26F5
+            | 0x26FA
+            | 0x26FD
+            | 0x2705
+            | 0x270A..=0x270B
+            | 0x2728
+            | 0x274C
+            | 0x274E
+            | 0x2753..=0x2755
+            | 0x2757
+            | 0x2795..=0x2797
+            | 0x27B0
+            | 0x27BF
+            | 0x2B1B..=0x2B1C
+            | 0x2B50
+            | 0x2B55
+    )
 }
 
 #[windows::core::implement(windows::Win32::Graphics::DirectWrite::IDWriteTextRenderer)]
@@ -4406,6 +4528,16 @@ mod visual_tests {
             .map(|range| (range.startPosition, range.length))
             .collect::<Vec<_>>();
         assert_eq!(actual, [(5, 2), (8, 5), (14, 2), (17, 3)]);
+    }
+
+    #[test]
+    fn desktop_name_emoji_size_ranges_include_bmp_presentation_and_variation_sequences() {
+        let ranges = super::emoji_text_ranges("☕ ✨ ✅ ☀️ ☀︎ ☕︎");
+        let actual = ranges
+            .iter()
+            .map(|range| (range.startPosition, range.length))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, [(0, 1), (2, 1), (4, 1), (6, 2)]);
     }
 
     #[test]

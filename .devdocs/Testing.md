@@ -77,11 +77,12 @@ rename/read-back checks remain documented for acceptance:
 
 On 2026-11-16, the rail label renderer moved to DirectWrite font fallback. The layout
 uses an 11-DIP font and explicitly scales the bitmap target for DPI and 4x supersampling;
-emoji ranges use 85% of the text em size. Automated raster cases cover regular text size
-at 96/120/144/192 DPI, a supplementary-plane emoji, a joined sequence and a variation
-selector. The full `check-dev.ps1` suite passed. OS revision and display DPI were not
-recorded for that run. Live rendering remains unverified here: Computer Use denied access
-to the app, and the user is checking the updated appearance manually.
+emoji ranges use 85% of the text em size. Automated cases cover regular text size at
+96/120/144/192 DPI, supplementary-plane and BMP emoji, joined sequences, and VS15/VS16
+presentation. A GDI flush synchronizes the bitmap copy before its DIB pixels are read.
+The full `check-dev.ps1` suite passed after these review fixes. OS revision and display
+DPI were not recorded for that run. Live rendering remains unverified here: Computer Use
+denied access to the app, and the user is checking the updated appearance manually.
 
 The desktop switching menu implementation and final border/hover refinement passed
 `check-dev.ps1` on 2026-11-13 (formatting, warnings-denied Clippy, locked workspace
