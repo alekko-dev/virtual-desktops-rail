@@ -355,14 +355,15 @@ bypass focus restrictions with synthetic Alt or thread-input attachment.
 ## Rail presentation
 
 The current desktop name is painted bottom-to-top above the utility divider in
-11-DIP, antialiased Segoe UI, optically centered across the rail with muted foreground color
-(system foreground in high contrast). A DPI-cached supersampled rasterizer and measured full
-text extents keep it clear of desktop/window buttons with 12-DIP gaps. If its full
+11-DIP, antialiased Segoe UI with DirectWrite system font fallback, optically centered
+across the rail with muted foreground color (system foreground in high contrast).
+DirectWrite emoji fallback ranges render at 85% of the text em size, then use the
+same single-color coverage mask as the surrounding text.
+A DPI-cached supersampled rasterizer and measured full text extents keep it clear of
+desktop/window buttons with 12-DIP gaps. If its full
 length or thickness cannot fit, or the current desktop is unknown, it is omitted
 without truncation. Empty names use the same numbered fallback as desktop tooltips.
 It shares the rail's invalidation and reveal transform and uses the painted name as its input target.
-The rasterizer flushes GDI drawing before reading DIB memory so queued text output
-cannot be sampled as an empty mask and cached as an invisible label.
 **Appearance → Show desktop name** controls visibility immediately. The default-on
 `show_desktop_name` preference defaults to true for older schema-1 files, persists
 explicit opt-outs, and participates in revision-based cross-session preference merges.

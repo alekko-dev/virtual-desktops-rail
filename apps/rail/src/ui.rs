@@ -2517,23 +2517,29 @@ fn smooth_shape(
 }
 
 fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8>) {
-    use windows::Win32::{
-        Foundation::{COLORREF, HANDLE, SIZE},
-        Graphics::Gdi::{
-            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection,
-            DIB_RGB_COLORS, DeleteDC, DeleteObject, GdiFlush, GetTextExtentPoint32W,
-            GetTextMetricsW, HDC, HGDIOBJ, SelectObject, SetBkMode, SetTextCharacterExtra,
-            SetTextColor, TEXTMETRICW, TRANSPARENT, TextOutW,
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Graphics::{
+        DirectWrite::{
+            DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_LINE_METRICS, DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
+            DWRITE_TEXT_METRICS, DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory, IDWriteFactory,
+            IDWriteTextRenderer,
+        },
+        Gdi::{
+            BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BLACKNESS, BitBlt, CreateCompatibleDC,
+            CreateDIBSection, DIB_RGB_COLORS, DeleteDC, DeleteObject, HDC, HGDIOBJ, PatBlt,
+            SRCCOPY, SelectObject,
         },
     };
+    use windows::core::Interface;
 
     if name.is_empty() || rail_width <= 0 {
         return (0, Vec::new());
     }
 
     const SS: i32 = 4;
-    let font_height = ((11 * dpi as i32 * SS) + 48) / 96;
-    let tracking = ((dpi as i32 * SS) + 144) / 288;
+    const EMOJI_SIZE_SCALE: f32 = 0.85;
+    let pixels_per_dip = dpi.max(96) as f32 / 96.0 * SS as f32;
     let text_utf16 = wide(name);
     let len = text_utf16.len().saturating_sub(1);
     if len == 0 {
@@ -2545,93 +2551,125 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
         if mem_dc.is_invalid() {
             return (0, Vec::new());
         }
-        let font = CreateFontW(
-            -font_height,
-            0,
-            0,
-            0,
-            400,
-            0,
-            0,
-            0,
-            1,
-            0,
-            0,
-            4,
-            0,
-            wide("Segoe UI").as_ptr(),
-        );
-        if font.is_null() {
-            let _ = DeleteDC(mem_dc);
-            return (0, Vec::new());
-        }
-        let font_obj = HGDIOBJ(font as *mut _);
-        let old_font = SelectObject(mem_dc, font_obj);
-        let _ = SetTextCharacterExtra(mem_dc, tracking);
+        let rendered = (|| -> Option<(i32, i32, i32, Vec<u32>)> {
+            let factory: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).ok()?;
+            let format = factory
+                .CreateTextFormat(
+                    windows::core::PCWSTR(wide("Segoe UI").as_ptr()),
+                    None,
+                    DWRITE_FONT_WEIGHT_NORMAL,
+                    DWRITE_FONT_STYLE_NORMAL,
+                    DWRITE_FONT_STRETCH_NORMAL,
+                    11.0,
+                    windows::core::PCWSTR(wide("en-us").as_ptr()),
+                )
+                .ok()?;
+            format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP).ok()?;
+            let layout = factory
+                .CreateTextLayout(&text_utf16[..len], &format, 16384.0, 16384.0)
+                .ok()?;
+            for range in emoji_text_ranges(name) {
+                layout.SetFontSize(11.0 * EMOJI_SIZE_SCALE, range).ok()?;
+            }
+            let mut text_metrics = DWRITE_TEXT_METRICS::default();
+            layout.GetMetrics(&mut text_metrics).ok()?;
+            if text_metrics.widthIncludingTrailingWhitespace <= 0.0 || text_metrics.height <= 0.0 {
+                return None;
+            }
+            let mut line_metrics = DWRITE_LINE_METRICS::default();
+            let mut line_count = 0;
+            layout
+                .GetLineMetrics(
+                    Some(std::slice::from_mut(&mut line_metrics)),
+                    &mut line_count,
+                )
+                .ok()?;
+            if line_count == 0 {
+                return None;
+            }
 
-        let mut size = SIZE::default();
-        if !GetTextExtentPoint32W(mem_dc, &text_utf16[..len], &mut size).as_bool()
-            || size.cx <= 0
-            || size.cy <= 0
-        {
-            SelectObject(mem_dc, old_font);
-            let _ = DeleteObject(font_obj);
-            let _ = DeleteDC(mem_dc);
-            return (0, Vec::new());
-        }
+            let pad = SS * 2;
+            let w4 = (text_metrics.widthIncludingTrailingWhitespace * pixels_per_dip).ceil() as i32
+                + pad * 2;
+            let h4 = (text_metrics.height * pixels_per_dip).ceil() as i32 + pad * 2;
+            if w4 <= pad * 2 || h4 <= pad * 2 {
+                return None;
+            }
 
-        let mut tm = TEXTMETRICW::default();
-        let _ = GetTextMetricsW(mem_dc, &mut tm);
-
-        let pad = SS * 2;
-        let w4 = size.cx + pad * 2;
-        let h4 = size.cy + pad * 2;
-
-        let info = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: w4,
-                biHeight: -h4,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB.0,
+            let interop = factory.GetGdiInterop().ok()?;
+            let target = interop
+                .CreateBitmapRenderTarget(mem_dc, w4 as u32, h4 as u32)
+                .ok()?;
+            target.SetPixelsPerDip(pixels_per_dip).ok()?;
+            target
+                .cast::<windows::Win32::Graphics::DirectWrite::IDWriteBitmapRenderTarget1>()
+                .ok()?
+                .SetTextAntialiasMode(DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE)
+                .ok()?;
+            let target_dc = target.GetMemoryDC();
+            if target_dc.is_invalid() || !PatBlt(target_dc, 0, 0, w4, h4, BLACKNESS).as_bool() {
+                return None;
+            }
+            let renderer = DesktopNameTextRenderer {
+                target: target.clone(),
+                rendering_params: factory.CreateRenderingParams().ok()?,
+                pixels_per_dip,
+            };
+            let renderer: IDWriteTextRenderer = renderer.into();
+            let baseline = (line_metrics.baseline * pixels_per_dip).round() as i32;
+            layout
+                .Draw(
+                    None,
+                    &renderer,
+                    pad as f32 / pixels_per_dip,
+                    pad as f32 / pixels_per_dip,
+                )
+                .ok()?;
+            let info = BITMAPINFO {
+                bmiHeader: BITMAPINFOHEADER {
+                    biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                    biWidth: w4,
+                    biHeight: -h4,
+                    biPlanes: 1,
+                    biBitCount: 32,
+                    biCompression: BI_RGB.0,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        };
-        let mut bits = std::ptr::null_mut();
-        let dib = CreateDIBSection(
-            mem_dc,
-            &info,
-            DIB_RGB_COLORS,
-            &mut bits,
-            HANDLE::default(),
-            0,
-        );
-        let Ok(dib) = dib else {
-            SelectObject(mem_dc, old_font);
-            let _ = DeleteObject(font_obj);
-            let _ = DeleteDC(mem_dc);
-            return (0, Vec::new());
-        };
-        if bits.is_null() {
-            SelectObject(mem_dc, old_font);
+            };
+            let mut bits = std::ptr::null_mut();
+            let dib = CreateDIBSection(
+                mem_dc,
+                &info,
+                DIB_RGB_COLORS,
+                &mut bits,
+                HANDLE::default(),
+                0,
+            )
+            .ok()?;
+            if bits.is_null() {
+                let _ = DeleteObject(dib);
+                return None;
+            }
+            let old_bitmap = SelectObject(mem_dc, HGDIOBJ(dib.0));
+            let copied = BitBlt(mem_dc, 0, 0, w4, h4, target_dc, 0, 0, SRCCOPY).is_ok();
+            let count = (w4 as usize).checked_mul(h4 as usize)?;
+            let pixels = if copied {
+                std::slice::from_raw_parts(bits as *const u32, count).to_vec()
+            } else {
+                Vec::new()
+            };
+            SelectObject(mem_dc, old_bitmap);
             let _ = DeleteObject(dib);
-            let _ = DeleteObject(font_obj);
-            let _ = DeleteDC(mem_dc);
+            if !copied {
+                return None;
+            }
+            Some((w4, h4, pad + baseline, pixels))
+        })();
+        let _ = DeleteDC(mem_dc);
+        let Some((w4, h4, baseline_y4, raw)) = rendered else {
             return (0, Vec::new());
-        }
-
-        std::ptr::write_bytes(bits as *mut u8, 0, (w4 * h4 * 4) as usize);
-        let old_dib = SelectObject(mem_dc, dib);
-        let _ = SetBkMode(mem_dc, TRANSPARENT);
-        let _ = SetTextColor(mem_dc, COLORREF(0x00FFFFFF));
-        let _ = TextOutW(mem_dc, pad, pad, &text_utf16[..len]);
-        // Synchronize batched drawing before accessing the CreateDIBSection bits.
-        let _ = GdiFlush();
-
-        let raw = std::slice::from_raw_parts(bits as *const u32, (w4 * h4) as usize);
-        let baseline_y4 = pad + tm.tmAscent;
+        };
         let mut min_x = w4;
         let mut max_x = -1;
         let mut min_y = h4;
@@ -2642,7 +2680,11 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
         for y in 0..h4 {
             let desc_weight = if y > baseline_y4 { 0.25 } else { 1.0 };
             for x in 0..w4 {
-                let v = (raw[(y * w4 + x) as usize] & 0xFF) as f64;
+                let pixel = raw[(y * w4 + x) as usize];
+                // Convert grayscale antialiasing to the rail's single-color text mask.
+                let v = ((pixel & 0xFF)
+                    .max((pixel >> 8) & 0xFF)
+                    .max((pixel >> 16) & 0xFF)) as f64;
                 if v > 0.0 {
                     if x < min_x {
                         min_x = x;
@@ -2664,11 +2706,6 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
         }
 
         if max_x < min_x || max_y < min_y {
-            SelectObject(mem_dc, old_dib);
-            let _ = DeleteObject(dib);
-            SelectObject(mem_dc, old_font);
-            let _ = DeleteObject(font_obj);
-            let _ = DeleteDC(mem_dc);
             return (0, Vec::new());
         }
 
@@ -2694,7 +2731,10 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
                     for dx in 0..SS {
                         let uy = vx * SS + dx - shift_y4;
                         if uy >= 0 && uy < h4 {
-                            acc += (raw[(uy * w4 + ux) as usize] & 0xFF) as u32;
+                            let pixel = raw[(uy * w4 + ux) as usize];
+                            acc += (pixel & 0xFF)
+                                .max((pixel >> 8) & 0xFF)
+                                .max((pixel >> 16) & 0xFF);
                         }
                     }
                 }
@@ -2702,13 +2742,208 @@ fn rasterize_desktop_name(name: &str, dpi: u32, rail_width: i32) -> (i32, Vec<u8
             }
         }
 
-        SelectObject(mem_dc, old_dib);
-        let _ = DeleteObject(dib);
-        SelectObject(mem_dc, old_font);
-        let _ = DeleteObject(font_obj);
-        let _ = DeleteDC(mem_dc);
+        // DirectWrite's GDI compatible target can place its grayscale samples a
+        // physical pixel off the expected optical center. Correct that measured
+        // residual so DPI-specific font fallback does not skew the rail label.
+        let mut weighted_x = 0.0;
+        let mut total_coverage = 0.0;
+        for vy in 0..out_h {
+            for vx in 0..rail_width {
+                let coverage = mask[(vy * rail_width + vx) as usize] as f64;
+                weighted_x += (vx as f64 + 0.5) * coverage;
+                total_coverage += coverage;
+            }
+        }
+        if total_coverage > 0.0 {
+            let centroid = weighted_x / total_coverage;
+            let pixel_correction = (centroid - rail_width as f64 * 0.5).round() as i32;
+            if pixel_correction != 0 {
+                let original = mask;
+                let mut centered = vec![0; original.len()];
+                for vy in 0..out_h {
+                    for vx in 0..rail_width {
+                        let source_x = vx + pixel_correction;
+                        if (0..rail_width).contains(&source_x) {
+                            centered[(vy * rail_width + vx) as usize] =
+                                original[(vy * rail_width + source_x) as usize];
+                        }
+                    }
+                }
+                mask = centered;
+            }
+        }
 
         (out_h, mask)
+    }
+}
+
+fn emoji_text_ranges(name: &str) -> Vec<windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_RANGE> {
+    use windows::Win32::Graphics::DirectWrite::DWRITE_TEXT_RANGE;
+
+    let chars = name.chars().collect::<Vec<_>>();
+    let mut ranges = Vec::new();
+    let mut offset = 0u32;
+    let mut range_start = None;
+    let mut range_end = 0u32;
+
+    for (index, ch) in chars.iter().copied().enumerate() {
+        let len = ch.len_utf16() as u32;
+        let next = chars.get(index + 1).copied();
+        let emoji_base = is_emoji_codepoint(ch)
+            || (matches!(next, Some('\u{FE0F}' | '\u{20E3}'))
+                && (ch.is_ascii_digit()
+                    || matches!(
+                        ch,
+                        '#' | '*'
+                            | '\u{00A9}'
+                            | '\u{00AE}'
+                            | '\u{203C}'
+                            | '\u{2049}'
+                            | '\u{2122}'
+                            | '\u{2139}'
+                            | '\u{3030}'
+                            | '\u{303D}'
+                            | '\u{3297}'
+                            | '\u{3299}'
+                            | '\u{2764}'
+                    )));
+        let extender = matches!(ch, '\u{FE0E}' | '\u{FE0F}' | '\u{20E3}' | '\u{200D}')
+            || matches!(ch as u32, 0x1F3FB..=0x1F3FF);
+
+        if emoji_base {
+            if range_start.is_none() {
+                range_start = Some(offset);
+            }
+            range_end = offset + len;
+        } else if extender && range_start.is_some() {
+            range_end = offset + len;
+        } else if let Some(start) = range_start.take() {
+            ranges.push(DWRITE_TEXT_RANGE {
+                startPosition: start,
+                length: range_end - start,
+            });
+        }
+        offset += len;
+    }
+
+    if let Some(start) = range_start {
+        ranges.push(DWRITE_TEXT_RANGE {
+            startPosition: start,
+            length: range_end - start,
+        });
+    }
+    ranges
+}
+
+fn is_emoji_codepoint(ch: char) -> bool {
+    matches!(ch as u32, 0x1F000..=0x1FAFF | 0x1FC00..=0x1FFFD)
+}
+
+#[windows::core::implement(windows::Win32::Graphics::DirectWrite::IDWriteTextRenderer)]
+struct DesktopNameTextRenderer {
+    target: windows::Win32::Graphics::DirectWrite::IDWriteBitmapRenderTarget,
+    rendering_params: windows::Win32::Graphics::DirectWrite::IDWriteRenderingParams,
+    pixels_per_dip: f32,
+}
+
+impl windows::Win32::Graphics::DirectWrite::IDWritePixelSnapping_Impl
+    for DesktopNameTextRenderer_Impl
+{
+    fn IsPixelSnappingDisabled(
+        &self,
+        _clientdrawingcontext: *const std::ffi::c_void,
+    ) -> windows::core::Result<windows::Win32::Foundation::BOOL> {
+        Ok(windows::Win32::Foundation::BOOL(0))
+    }
+
+    fn GetCurrentTransform(
+        &self,
+        _clientdrawingcontext: *const std::ffi::c_void,
+        transform: *mut windows::Win32::Graphics::DirectWrite::DWRITE_MATRIX,
+    ) -> windows::core::Result<()> {
+        if transform.is_null() {
+            return Err(windows::core::Error::from_win32());
+        }
+        unsafe {
+            *transform = windows::Win32::Graphics::DirectWrite::DWRITE_MATRIX {
+                m11: 1.0,
+                m12: 0.0,
+                m21: 0.0,
+                m22: 1.0,
+                dx: 0.0,
+                dy: 0.0,
+            };
+        }
+        Ok(())
+    }
+
+    fn GetPixelsPerDip(
+        &self,
+        _clientdrawingcontext: *const std::ffi::c_void,
+    ) -> windows::core::Result<f32> {
+        Ok(self.this.pixels_per_dip)
+    }
+}
+
+impl windows::Win32::Graphics::DirectWrite::IDWriteTextRenderer_Impl
+    for DesktopNameTextRenderer_Impl
+{
+    fn DrawGlyphRun(
+        &self,
+        _clientdrawingcontext: *const std::ffi::c_void,
+        baselineoriginx: f32,
+        baselineoriginy: f32,
+        measuringmode: windows::Win32::Graphics::DirectWrite::DWRITE_MEASURING_MODE,
+        glyphrun: *const windows::Win32::Graphics::DirectWrite::DWRITE_GLYPH_RUN,
+        _glyphrundescription: *const windows::Win32::Graphics::DirectWrite::DWRITE_GLYPH_RUN_DESCRIPTION,
+        _clientdrawingeffect: Option<&windows::core::IUnknown>,
+    ) -> windows::core::Result<()> {
+        unsafe {
+            self.this.target.DrawGlyphRun(
+                baselineoriginx,
+                baselineoriginy,
+                measuringmode,
+                glyphrun,
+                &self.this.rendering_params,
+                windows::Win32::Foundation::COLORREF(0x00FFFFFF),
+                None,
+            )
+        }
+    }
+
+    fn DrawUnderline(
+        &self,
+        _clientdrawingcontext: *const std::ffi::c_void,
+        _baselineoriginx: f32,
+        _baselineoriginy: f32,
+        _underline: *const windows::Win32::Graphics::DirectWrite::DWRITE_UNDERLINE,
+        _clientdrawingeffect: Option<&windows::core::IUnknown>,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+
+    fn DrawStrikethrough(
+        &self,
+        _clientdrawingcontext: *const std::ffi::c_void,
+        _baselineoriginx: f32,
+        _baselineoriginy: f32,
+        _strikethrough: *const windows::Win32::Graphics::DirectWrite::DWRITE_STRIKETHROUGH,
+        _clientdrawingeffect: Option<&windows::core::IUnknown>,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+
+    fn DrawInlineObject(
+        &self,
+        _clientdrawingcontext: *const std::ffi::c_void,
+        _originx: f32,
+        _originy: f32,
+        _inlineobject: Option<&windows::Win32::Graphics::DirectWrite::IDWriteInlineObject>,
+        _issideways: windows::Win32::Foundation::BOOL,
+        _isrighttoleft: windows::Win32::Foundation::BOOL,
+        _clientdrawingeffect: Option<&windows::core::IUnknown>,
+    ) -> windows::core::Result<()> {
+        Ok(())
     }
 }
 
@@ -4140,36 +4375,37 @@ mod visual_tests {
     }
 
     #[test]
-    fn desktop_name_raster_is_independent_of_gdi_batching() {
-        use windows::Win32::Graphics::Gdi::{GdiFlush, GdiSetBatchLimit};
-
-        struct RestoreBatchLimit(u32);
-        impl Drop for RestoreBatchLimit {
-            fn drop(&mut self) {
-                unsafe {
-                    let _ = GdiFlush();
-                    GdiSetBatchLimit(self.0);
-                }
-            }
+    fn desktop_name_raster_uses_directwrite_fallback_for_emoji() {
+        for name in ["Workspace 😀", "Focus 👩‍💻", "Plan ❤️"] {
+            let (height, mask) = super::rasterize_desktop_name(name, 96, 24);
+            assert!(height > 0, "Expected a visible raster for {name}");
+            assert_eq!(mask.len(), (24 * height) as usize);
+            assert!(mask.iter().any(|coverage| *coverage > 0));
         }
+    }
 
-        // Batch limits are thread-local; restore even if an assertion fails.
-        let restore = RestoreBatchLimit(unsafe { GdiSetBatchLimit(1) });
-        assert_ne!(restore.0, 0);
-        for dpi in [96, 120, 144, 192] {
-            let width = (24 * dpi / 96) as i32;
-            unsafe { GdiSetBatchLimit(1) };
-            let immediate = super::rasterize_desktop_name("Desktop 02", dpi, width);
-            assert!(immediate.0 > 0);
-            unsafe { GdiSetBatchLimit(4096) };
-            for _ in 0..8 {
-                let batched = super::rasterize_desktop_name("Desktop 02", dpi, width);
-                assert_eq!(
-                    batched, immediate,
-                    "Raster changed with GDI batching at {dpi} DPI"
-                );
-            }
+    #[test]
+    fn desktop_name_text_size_scales_once_with_dpi() {
+        let reference = super::rasterize_desktop_name("Desktop 02", 96, 24).0 as f64;
+        let reference_dip = reference;
+        for (dpi, rail_width) in [(120, 30), (144, 37), (192, 49)] {
+            let pixels = super::rasterize_desktop_name("Desktop 02", dpi, rail_width).0 as f64;
+            let measured_dip = pixels * 96.0 / dpi as f64;
+            assert!(
+                (measured_dip - reference_dip).abs() < 2.0,
+                "Text size at {dpi} DPI should remain near {reference_dip:.1} DIP, got {measured_dip:.1}"
+            );
         }
+    }
+
+    #[test]
+    fn desktop_name_emoji_size_ranges_keep_joined_and_variation_sequences_together() {
+        let ranges = super::emoji_text_ranges("Desk 😀 👩‍💻 ❤️ 1️⃣");
+        let actual = ranges
+            .iter()
+            .map(|range| (range.startPosition, range.length))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, [(5, 2), (8, 5), (14, 2), (17, 3)]);
     }
 
     #[test]
