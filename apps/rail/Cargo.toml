@@ -10,6 +10,7 @@ rail-compatibility-probe = { path = "../../tools/compatibility-probe" }
 serde.workspace = true
 serde_json.workspace = true
 windows.workspace = true
+windows-core.workspace = true
 crossbeam-channel.workspace = true
 
 [dependencies.winvd]
