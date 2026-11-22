@@ -174,6 +174,7 @@ pub struct Model {
     pub(crate) dirty: bool,
     pub(crate) transition_serial: u64,
     pub(crate) last_snapshot_tick: u64,
+    display_ready_after: u64,
 }
 
 impl Model {
@@ -189,6 +190,7 @@ impl Model {
             dirty: false,
             transition_serial: 0,
             last_snapshot_tick: 0,
+            display_ready_after: 0,
         }
     }
 
@@ -366,8 +368,27 @@ impl Model {
         self.last_snapshot_tick
     }
 
+    /// Fence evidence and intent until a snapshot from the settled display arrives.
+    pub fn display_changed(&mut self, ready_after: u64) {
+        if ready_after <= self.display_ready_after {
+            return;
+        }
+        self.display_ready_after = ready_after;
+        self.unavailable();
+        for runtime in self.windows.values_mut() {
+            runtime.dragging = false;
+            runtime.retained_arrangement = None;
+            runtime.arrangement_barrier_tick = ready_after;
+            runtime.arrangement_revision = runtime.arrangement_revision.saturating_add(1);
+        }
+    }
+
+    pub fn display_ready_after(&self) -> u64 {
+        self.display_ready_after
+    }
+
     pub fn snapshot(&mut self, snapshot: Snapshot) {
-        if snapshot.tick < self.last_snapshot_tick {
+        if snapshot.tick < self.last_snapshot_tick || snapshot.tick <= self.display_ready_after {
             return;
         }
         self.last_snapshot_tick = snapshot.tick;
@@ -627,6 +648,9 @@ impl Model {
     /// Build a native minimize probe for a minimize-start WinEvent, or None when the
     /// window cannot currently establish external intent.
     pub fn minimize_probe(&self, hwnd: usize, tick: u64) -> Option<MinimizeObservation> {
+        if self.display_ready_after != 0 && tick <= self.since.max(self.display_ready_after) {
+            return None;
+        }
         let desktop = self.current.as_ref()?;
         let runtime = self
             .windows
@@ -676,15 +700,13 @@ impl Model {
     // User input.
 
     pub fn click(&mut self, key: &str, click: Click) {
-        if let Some(runtime) = self.windows.get_mut(key) {
-            runtime.window.minimized = click.minimized;
-        }
         let Some(desktop) = &self.current else {
             return;
         };
         let Some(runtime) = self.windows.get_mut(key) else {
             return;
         };
+        runtime.window.minimized = click.minimized;
         if !runtime.present || runtime.blocked() || runtime.dragging || !runtime.window.responsive {
             return;
         }
@@ -794,7 +816,7 @@ impl Model {
     /// live evidence, not action completion or authority to commit desktop memory.
     /// It remains useful when the originating intent is superseded or times out.
     pub fn observed_arrangement(&mut self, request: &Request, layout: &Layout, tick: u64) {
-        if tick < request.tick {
+        if tick < request.tick || request.tick <= self.display_ready_after {
             return;
         }
         let window = &request.window;

@@ -182,6 +182,15 @@ pause, retry and exit remain usable. The Play/Pause warning icon/tooltip and Set
 footer explain status. Recovery takes a fresh baseline without moving windows.
 `TaskbarCreated` re-registers the AppBar and reconnects integration.
 
+On `WM_DISPLAYCHANGE` or `WM_DPICHANGED`, publish a display fence before AppBar
+renegotiation. Each notification restarts a 750 ms quiet period. The UI discards
+shell frames whose sampling began before or during that period and treats the
+first fresh frame as a baseline. This preserves saved geometry and minimized
+intent and skips desktop-switch actions during recovery. The generation change
+invalidates previous drag captures and layout commits, and the executor checks
+the same fence before issuing queued actions or deferred focus. Already posted
+Win32 operations remain subject to the normal completion and quarantine rules.
+
 ## Layout identity, storage and action ordering
 
 Persist an opaque non-pointer window property token with process creation time,

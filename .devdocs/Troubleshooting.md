@@ -6,6 +6,22 @@ reusable symptoms, known mechanisms and proven fixes. Current contracts are in
 For user evidence, use the local support report and its [privacy contract](Architecture.md#stack-and-source-map).
 It is not uploaded automatically; user review/sharing remains their decision.
 
+## Windows shrink into the upper-left after switching monitor inputs
+
+An input switch can appear to Windows as a display disconnect and reconnect.
+Microsoft has documented [upper-left window rearrangement after DisplayPort hot plug](https://devblogs.microsoft.com/directx/avoid-unexpected-app-rearrangement/).
+Before the [display recovery guard](Architecture.md#desktop-integration-and-eligibility),
+the rail could learn an OS-induced show, maximize or geometry change as user intent.
+A restore pressed or dispatched during the transition could also clamp to the
+temporary work area. These paths can amplify the symptom. A previously saved bad
+rectangle requires a new intentional move or resize to replace it.
+
+To isolate the cause on affected hardware, repeat the same input switch with the
+rail exited and with it running. Compare pinned and unpinned windows. The bounded
+support history records `display_configuration_changed` alongside native action
+acceptance and verification, so a recorded display change can be correlated with
+placement activity. Older histories lack display markers.
+
 ## Snapped restoration reports success at the wrong visible size
 
 `GetWindowPlacement` normal restore bounds can match a request while the actual
