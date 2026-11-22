@@ -1,6 +1,6 @@
 //! Primary-monitor AppBar reservation and shell z-order lifecycle.
 use super::{Handle, Point, Rect, size_of, wide};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 const CALLBACK: u32 = 0x8001;
 static REGISTERED: AtomicBool = AtomicBool::new(false);
@@ -8,6 +8,12 @@ static NEGOTIATING: AtomicBool = AtomicBool::new(false);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 static FULLSCREEN: AtomicBool = AtomicBool::new(false);
 static POSITION_ERROR: AtomicU32 = AtomicU32::new(0);
+const DISPLAY_SETTLE_MS: u64 = 750;
+static DISPLAY_READY_AFTER: AtomicU64 = AtomicU64::new(0);
+
+pub fn display_ready_after() -> u64 {
+    DISPLAY_READY_AFTER.load(Ordering::Acquire)
+}
 
 pub fn diagnostics(window: Handle) -> serde_json::Value {
     use windows::Win32::{Foundation::RECT, UI::WindowsAndMessaging::*};
@@ -200,6 +206,14 @@ pub fn register(window: Handle) -> Result<(), std::io::Error> {
 }
 
 pub fn message(window: Handle, message: u32, wparam: usize, lparam: isize) -> Option<isize> {
+    if matches!(message, 0x007e | 0x02e0) {
+        // Fence native actions before AppBar negotiation can change the work area.
+        // A burst of display/DPI messages extends the quiet period.
+        DISPLAY_READY_AFTER.store(
+            crate::platform::tick() + DISPLAY_SETTLE_MS,
+            Ordering::Release,
+        );
+    }
     let taskbar = TASKBAR_CREATED.load(Ordering::Relaxed);
     if taskbar != 0 && message == taskbar {
         REGISTERED.store(false, Ordering::Relaxed);

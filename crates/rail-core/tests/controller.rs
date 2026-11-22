@@ -122,6 +122,82 @@ fn minimize_observation(
 }
 
 #[test]
+fn reconnect_ignores_temporary_window_geometry_and_takes_a_fresh_desktop_baseline() {
+    let (mut model, mut window, key) = saved_destinations();
+    let saved = model.saved().windows[&key].clone();
+    let capture_generation = model.capture_request(window.hwnd).unwrap().generation;
+    let minimize = minimize_observation(&model, &window, 130, 140);
+    let mut temporary = window.clone();
+    temporary.layout.normal = [0, 0, 960, 540];
+    temporary.layout.maximized = true;
+
+    model.display_changed(900);
+    model.snapshot(snapshot("A", 150, vec![temporary.clone()]));
+    model.snapshot(snapshot("A", 300, vec![temporary.clone()]));
+    model.captured(&key, capture_generation, 350, temporary.layout.clone());
+    assert!(model.observe_minimized(minimize).is_err());
+    assert!(model.minimize_probe(window.hwnd, 750).is_none());
+    click(&mut model, &key, false);
+    assert!(model.take_requests(800).is_empty());
+
+    // A later display message extends the quiet period. Even a frame that
+    // reports another desktop cannot issue automatic work during recovery.
+    model.display_changed(1100);
+    model.snapshot(snapshot("B", 1000, vec![temporary.clone()]));
+    assert!(model.current().is_none());
+    temporary.minimized = true;
+    model.snapshot(snapshot("B", 1200, vec![temporary.clone()]));
+    assert_eq!(model.current(), Some("B"));
+    assert!(model.take_requests(1201).is_empty());
+    assert!(model.minimize_probe(window.hwnd, 1150).is_none());
+    assert_eq!(model.saved().windows[&key].layouts, saved.layouts);
+    assert_eq!(model.saved().windows[&key].last_usable, saved.last_usable);
+    assert_eq!(
+        model.saved().windows[&key].minimized_desktops,
+        saved.minimized_desktops
+    );
+
+    window.minimized = true;
+    model.snapshot(snapshot("A", 1300, vec![window]));
+    assert_eq!(
+        model.take_requests(1301)[0].action,
+        Action::RestoreAutomatic(layout(100))
+    );
+}
+
+#[test]
+fn display_change_releases_an_in_flight_restore_without_learning_its_result() {
+    let (mut model, mut window, key) = saved_destinations();
+    window.minimized = true;
+    model.snapshot(snapshot("A", 120, vec![window.clone()]));
+    click(&mut model, &key, false);
+    let request = model.take_requests(130).remove(0);
+    let saved = model.saved().windows[&key].clone();
+    model.accepted(
+        &key,
+        request.sequence,
+        Acceptance {
+            effect: Effect::Restore,
+            target: Some(layout(0)),
+        },
+    );
+
+    model.display_changed(1000);
+    let result = model
+        .settle(&key, request.sequence, 300, Outcome::Verified)
+        .unwrap();
+    assert!(result.released);
+    assert!(!result.committed);
+    assert!(!result.current_verified);
+    assert_eq!(model.saved().windows[&key].layouts, saved.layouts);
+    assert_eq!(model.saved().windows[&key].last_usable, saved.last_usable);
+    assert_eq!(
+        model.saved().windows[&key].minimized_desktops,
+        saved.minimized_desktops
+    );
+}
+
+#[test]
 fn explicit_minimize_is_remembered_per_desktop_and_restore_clears_only_that_desktop() {
     let (mut model, mut window, key) = saved_destinations();
     click(&mut model, &key, true);

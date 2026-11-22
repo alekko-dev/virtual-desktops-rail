@@ -29,7 +29,7 @@ pub enum CommandMessage {
 
 #[derive(Deserialize, Serialize)]
 enum Wire {
-    Frame(Snapshot, Option<u64>),
+    Frame(Snapshot, Option<u64>, u64),
     Failure(String),
     Renamed {
         token: u64,
@@ -143,9 +143,10 @@ pub fn worker(parent: u32, experimental: bool) -> Result<(), String> {
     let mut serial = 0;
     let mut transition_received_us = None;
     loop {
+        let sample_started = platform::tick();
         match platform::snapshot(parent, &candidates, serial) {
             Ok(frame) => {
-                emit(Wire::Frame(frame, transition_received_us))?;
+                emit(Wire::Frame(frame, transition_received_us, sample_started))?;
                 transition_received_us = None;
             }
             Err(error) if error.starts_with("Desktop changed during") => {}
@@ -346,7 +347,7 @@ fn supervise(commands: Receiver<CommandMessage>, mut experimental: bool) {
                         }
                     },
                     recv(frames) -> frame => match frame {
-                        Ok(Ok(Wire::Frame(frame, received))) => { latest = Instant::now(); stale = false; backoff = 1; notify(Event::Frame(frame, received, experimental)); },
+                        Ok(Ok(Wire::Frame(frame, received, sample_started))) => { latest = Instant::now(); stale = false; backoff = 1; notify(Event::Frame(frame, received, experimental, sample_started)); },
                         Ok(Ok(Wire::Renamed { token, result })) => notify(Event::Renamed { token, result }),
                         Ok(Ok(Wire::Minimized(observation))) => notify(Event::Minimized(observation)),
                         Ok(Ok(Wire::Failure(error))) | Ok(Err(error)) => break Err(error),

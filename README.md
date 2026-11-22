@@ -70,6 +70,8 @@ Enable **Tint rail with active desktop color** in Settings for a subtle backgrou
 
 *Tip: Want your pinned windows to pop into place automatically when you switch desktops without clicking? Open **Settings** (the sliders icon on the rail) and turn on **Restore saved layouts on desktop switch**.*
 
+When Windows reports a display or DPI change, the rail briefly suspends window actions and keeps your saved layouts while the display settles. If Windows leaves a window misplaced after switching monitor inputs, you can minimize it and use the rail button to restore its saved layout.
+
 <!-- repository-links:start -->
 ## Documentation and contributing
 

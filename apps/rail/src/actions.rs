@@ -246,15 +246,16 @@ impl<N: Native> Executor<N> {
                 // Query immediately before dispatch; cached snapshots can predate a snap.
                 let observed = self.native.layout(hwnd)?;
                 let observed_tick = self.native.tick_ms();
-                if !valid(job) || !self.native.validate(&request.window) {
+                let z_above = if !request.action.automatic() && observed.visible.is_some() {
+                    self.native.z_above(hwnd)
+                } else {
+                    Vec::new()
+                };
+                if !self.native.validate(&request.window) || !valid(job) {
                     return Err("Minimize superseded before dispatch".into());
                 }
                 out.push(Event::ObservedArrangement {
-                    z_above: if !request.action.automatic() && observed.visible.is_some() {
-                        self.native.z_above(hwnd)
-                    } else {
-                        Vec::new()
-                    },
+                    z_above,
                     request: Box::new(request.clone()),
                     layout: observed.clone(),
                     tick: observed_tick,
@@ -294,10 +295,10 @@ impl<N: Native> Executor<N> {
                 } else {
                     self.native.adjusted(saved, hwnd)?
                 };
-                if !valid(job) || !self.native.validate(&request.window) {
+                let observed = self.native.layout(hwnd)?;
+                if !self.native.validate(&request.window) || !valid(job) {
                     return Err("Restore superseded before dispatch".into());
                 }
-                let observed = self.native.layout(hwnd)?;
                 if preserves_arrangement(&target, &observed) {
                     let was_iconic = self.native.is_iconic(hwnd);
                     // A show request on a visible arranged window can unsnap it.
@@ -510,7 +511,8 @@ fn request_guarded_focus<N: Native>(native: &mut N, active: &Active, out: &mut V
 }
 
 fn valid(job: &Job) -> bool {
-    job.sequence.load(Ordering::Acquire) == job.request.sequence
+    job.request.tick > crate::appbar::display_ready_after()
+        && job.sequence.load(Ordering::Acquire) == job.request.sequence
         && job.generation.load(Ordering::Acquire) == job.request.generation
         && !(job.request.action.automatic() && job.paused.load(Ordering::Acquire))
 }

@@ -684,6 +684,7 @@ impl App {
     }
 
     fn command(&mut self, command: Command) {
+        self.sync_display();
         match command {
             Command::AutomationUi { enabled } => unsafe {
                 // Temporary test visibility. Keep WS_EX_NOACTIVATE and the same
@@ -821,7 +822,7 @@ impl App {
                 }
             }
             Command::Click { key } => {
-                if !self.ready {
+                if !self.ready || self.model.current().is_none() {
                     return;
                 }
                 let foreground = self
@@ -863,6 +864,7 @@ impl App {
     }
 
     fn dispatch(&mut self) {
+        self.sync_display();
         self.focus_from
             .retain(|key, _| self.model.runtime(key).is_some());
         self.generation
@@ -909,6 +911,11 @@ impl App {
         }
     }
 
+    fn sync_display(&mut self) {
+        self.model
+            .display_changed(crate::appbar::display_ready_after());
+    }
+
     fn drain(&mut self) {
         if OVERRUN.swap(false, Ordering::AcqRel) {
             self.icon_pending.clear();
@@ -916,6 +923,7 @@ impl App {
             self.notice = "An event queue overflowed; establishing a fresh baseline.".into();
         }
         while let Ok(event) = self.events.try_recv() {
+            self.sync_display();
             match event {
                 Event::Command(command) => self.command(command),
                 Event::Renamed { token, result } => {
@@ -954,10 +962,12 @@ impl App {
                         Err(error) => self.status = error,
                     }
                 }
-                Event::Frame(frame, received, experimental) => {
+                Event::Frame(frame, received, experimental, sample_started) => {
                     // Ignore queued frames from a worker superseded by a legacy
                     // preference change while its replacement is reconnecting.
-                    if experimental != self.model.saved().experimental_integration {
+                    if experimental != self.model.saved().experimental_integration
+                        || sample_started <= self.model.display_ready_after()
+                    {
                         continue;
                     }
                     // The existing reconciliation is also a fallback if a
@@ -1260,6 +1270,9 @@ impl App {
                     }
                     0x7e | 0x2e0 => {
                         self.signature.clear();
+                        let _ = self.storage.sender.try_send(store::Work::Trace(
+                            serde_json::json!({"event":"display_configuration_changed","kind":if event == 0x7e {"display"} else {"dpi"}}),
+                        ));
                     }
                     _ => {
                         if matches!(event, 0x8001..=0x8003 | 0x8017 | 0x8018)
@@ -1353,6 +1366,7 @@ impl App {
                 self.apply_window_region(self.reveal_offset, bounds.right, bounds.bottom);
             let button_width = scale(25) - 1;
             let mut specs = Vec::new();
+            let actions_ready = self.ready && self.model.current().is_some();
             let mut y = scale(42);
             for (index, desktop) in self.model.desktops().iter().enumerate() {
                 let name = if desktop.name.is_empty() {
@@ -1371,7 +1385,7 @@ impl App {
                     y,
                     scale(30),
                     ButtonKind::Desktop(desktop.id.clone()),
-                    self.ready,
+                    actions_ready,
                 ));
                 y += scale(33);
             }
@@ -1387,7 +1401,7 @@ impl App {
                     y,
                     scale(39),
                     ButtonKind::Window(key.clone()),
-                    self.ready && !blocked && window.responsive,
+                    actions_ready && !blocked && window.responsive,
                 ));
                 let icon_key = (key.clone(), dpi);
                 if !self.icon_cache.contains_key(&icon_key)
@@ -3449,14 +3463,15 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                 });
             }
         }
-        if let Some(result) = crate::appbar::message(window, message, wparam, lparam) {
-            if message == 0x7e || message == 0x2e0 {
-                notify(Event::NativeWindow(
-                    message,
-                    window as usize,
-                    platform::tick(),
-                ));
-            }
+        let result = crate::appbar::message(window, message, wparam, lparam);
+        if matches!(message, 0x7e | 0x2e0) {
+            notify(Event::NativeWindow(
+                message,
+                window as usize,
+                platform::tick(),
+            ));
+        }
+        if let Some(result) = result {
             return result;
         }
     }
