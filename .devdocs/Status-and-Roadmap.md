@@ -54,7 +54,7 @@ owns completed validation and its limits. A scoped pass is not general release c
 | Diagnose real-app failures | Attribute Calculator duplicates/timeouts and transient pin errors to matching live identities without collecting titles. Extend disposable ordinary-app edge/shared-divider/drag-away workflows. |
 | Resource/latency coverage | Stable populated distributions for both processes, explicit event/completion boundaries, larger inventories and physical hardware. |
 | Shell/session recovery | Actual Explorer restart after a recoverable checkpoint, sleep/resume, lock/unlock and reconnect without layout corruption or unsolicited actions. |
-| Display and accessibility | Verify the display recovery guard on physical monitor input switches with closed laptop lids, including an exited-rail comparison. Mixed DPI, primary changes, unplug/replug, normal fullscreen-during-reveal, high contrast, screen readers, tooltips, long-notice scrolling and focus/repaint across relayout. |
+| Display and accessibility | Mixed DPI, primary changes, monitor unplug/replug, physical machines, normal fullscreen-during-reveal, high contrast, screen readers, tooltips, long-notice scrolling and focus/repaint across relayout. |
 | Real workflows and compatibility | Disposable Obsidian workflow, additional eligible Windows revisions, actual Task View pin cycles there, privilege combinations and concurrent sessions. |
 | Support report workflow | Real picker save/cancel/overwrite/long-path checks, archive privacy/fresh observations and continued event processing during the dialog. |
 | History bounds | Decide history-management behavior before expanding the existing [storage limits](Architecture.md#layout-identity-storage-and-action-ordering). |

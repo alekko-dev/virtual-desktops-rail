@@ -59,18 +59,6 @@ Task View exclusion separately. Exposed windows have become shell-cloaked after
 switching; a passed exposed-style input check is not a passive-style presence pass.
 See [automation recovery](Troubleshooting.md#passive-rail-absent-from-desktop-automation).
 
-### Monitor input switching
-
-On affected hardware, save a distinct normal layout for an owned pinned window and
-leave an unpinned control window visible. Switch the input away and back without
-switching virtual desktops. Record both windows' visible and normal bounds, the
-rail's work-area reservation, and the timing of display and window action events
-in the local diagnostic report. Repeat with the rail exited to establish what
-Windows does on its own. With the rail running again, verify that the saved layout
-survives and can be restored by pointer and keyboard after the display settles.
-Exercise an overlapping desktop switch separately. Confirm that automatic placement
-does not run during recovery and that a later desktop switch resumes normal policy.
-
 ## Interactive regression matrix
 
 The desktop rename implementation (2026-11-10/2026-11-11, working changes) passed
@@ -428,7 +416,6 @@ families under ignored `artifacts/` are supporting references only.
 | 2026-11-12; Windows 11 x64 | Desktop name click-to-rename workflow with owner-draw hover/press background highlighting, vertical press padding, rail tint accommodation, and pointer capture/leave state management passed `check-dev.ps1` (formatting, Clippy, workspace tests, version contracts, and locked release builds). Automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was provisioned in the agent session; live pointer interaction, hover/press visual feedback, popover activation, and outside-click dismissal were exercised and confirmed by the user in their desktop session. |
 | 2026-11-12; Windows 11 x64 | Modeless desktop rename popover accepts empty input on submission (Enter or Rename), resolving the default name from actual 1-based position (e.g. `Desktop 2`) and advancing to the first available higher number if already occupied. Passed `check-dev.ps1` (formatting, Clippy, 70 workspace tests covering position matching, occupied-number collision avoidance, self-exclusion, unrenamed peer accommodation, and case-insensitivity, version contracts, and locked release builds). Automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was provisioned in the agent session. |
 | 2026-11-12; Windows 11 x64 | Settings light switch target controls (Applications, Windows, Both radio group under bold "Light switch toggles" heading) with schema 1 `light_switch_target` persistence, migration defaulting, cross-session merging, CLI `--light-switch` arg parsing, updated destination glyph/tooltips and adjusted Settings footer boundary (`SETTINGS_FOOTER_Y = 486`) passed `check-dev.ps1` (formatting, Clippy, workspace tests including controller default/migration, store multi-session merge, scaled footer erase boundary, CLI help and release builds). Automated CUA pointer/keyboard exercises were unavailable because no computer-use tool was provisioned in the agent session. |
-| 2026-11-22; Windows 26300.9711 x64, source `ec9b222` plus display recovery changes | Deterministic tests covered repeat display notifications, temporary upper-left geometry, discarded minimize/drag evidence, a no-action recovery baseline, normal policy on the next desktop switch, and an in-flight restore settling without changing saved layouts. `check-dev.ps1` passed using a workspace temp directory and an isolated target because replacing the existing release executable was denied. The rebuilt debug and release apps exposed no Computer Use target, so live rendering, pointer/keyboard input and the physical input-switch reproduction remain unverified. |
 
 The desktop-name raster test also compares nonempty, identical masks with thread-local
 GDI batch limits of 1 and 4096 across 96/120/144/192 DPI, restoring the original limit

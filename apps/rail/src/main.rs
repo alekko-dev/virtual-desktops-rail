@@ -34,7 +34,7 @@ enum Event {
         token: u64,
         result: Result<(), String>,
     },
-    Frame(Snapshot, Option<u64>, bool, u64),
+    Frame(Snapshot, Option<u64>, bool),
     Minimized(rail_core::MinimizeObservation),
     DispatchLatency(u64),
     Status(String, bool),
