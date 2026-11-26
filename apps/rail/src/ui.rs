@@ -3269,10 +3269,16 @@ fn draw(app: &App, item: &DrawItem) {
                     });
                 }
                 ButtonKind::NewDesktop => {
-                    let color = if disabled { unavailable } else { text };
+                    let color = if disabled {
+                        unavailable
+                    } else if hovered || pressed {
+                        text
+                    } else {
+                        muted
+                    };
                     smooth_shape(dc, width, height, dpi, color, |x, y| {
-                        segment_sdf(x, y, -4.0, 0.0, 4.0, 0.0, 0.85)
-                            .min(segment_sdf(x, y, 0.0, -4.0, 0.0, 4.0, 0.85))
+                        segment_sdf(x, y, -3.0, 0.0, 3.0, 0.0, 0.75)
+                            .min(segment_sdf(x, y, 0.0, -3.0, 0.0, 3.0, 0.75))
                     });
                 }
                 ButtonKind::Window(key) => {
