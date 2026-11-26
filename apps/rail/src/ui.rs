@@ -90,6 +90,7 @@ fn animations_enabled() -> bool {
 #[derive(Clone, PartialEq, Eq)]
 enum ButtonKind {
     Desktop(String),
+    NewDesktop,
     Window(String),
     Pause,
     LightSwitch,
@@ -444,7 +445,12 @@ impl App {
         let content_bottom = self
             .buttons
             .iter()
-            .filter(|button| matches!(button.kind, ButtonKind::Desktop(_) | ButtonKind::Window(_)))
+            .filter(|button| {
+                matches!(
+                    button.kind,
+                    ButtonKind::Desktop(_) | ButtonKind::NewDesktop | ButtonKind::Window(_)
+                )
+            })
             .map(|button| button.y + button.cell)
             .max()
             .unwrap_or(scale(42));
@@ -814,7 +820,7 @@ impl App {
                     && current != guid
                 {
                     let _ = integration.try_send(bridge::CommandMessage::Switch {
-                        guid,
+                        target: bridge::SwitchTarget::Existing(guid),
                         expected_current: current.into(),
                         expected_serial: self.model.transition_serial(),
                     });
@@ -1375,7 +1381,15 @@ impl App {
                 ));
                 y += scale(33);
             }
-            y += scale(15);
+            specs.push((
+                99,
+                "Create a new desktop and switch to it".into(),
+                y,
+                scale(30),
+                ButtonKind::NewDesktop,
+                self.ready && self.model.current().is_some(),
+            ));
+            y += scale(33) + scale(15);
             for (index, (key, window, blocked)) in windows.iter().enumerate() {
                 let name = std::path::Path::new(&window.identity.executable)
                     .file_stem()
@@ -3254,6 +3268,13 @@ fn draw(app: &App, item: &DrawItem) {
                         }
                     });
                 }
+                ButtonKind::NewDesktop => {
+                    let color = if disabled { unavailable } else { text };
+                    smooth_shape(dc, width, height, dpi, color, |x, y| {
+                        segment_sdf(x, y, -4.0, 0.0, 4.0, 0.0, 0.85)
+                            .min(segment_sdf(x, y, 0.0, -4.0, 0.0, 4.0, 0.85))
+                    });
+                }
                 ButtonKind::Window(key) => {
                     let icon = app
                         .icon_cache
@@ -3926,7 +3947,11 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     },
                     border,
                 );
-                let y = scale(42 + 33 * app.model.desktops().len() as i32 + 3);
+                let y = app
+                    .buttons
+                    .iter()
+                    .find(|button| button.kind == ButtonKind::NewDesktop)
+                    .map_or(scale(42), |button| button.y + button.cell + scale(6));
                 fill(
                     dc,
                     &Rect {
@@ -4002,6 +4027,17 @@ unsafe fn handle_message(window: Handle, message: u32, wparam: usize, lparam: is
                     }
                     match kind {
                         ButtonKind::Desktop(guid) => app.command(Command::Switch { guid }),
+                        ButtonKind::NewDesktop => {
+                            if let (true, Some(integration), Some(current)) =
+                                (app.ready, &app.integration, app.model.current())
+                            {
+                                let _ = integration.try_send(bridge::CommandMessage::Switch {
+                                    target: bridge::SwitchTarget::New,
+                                    expected_current: current.into(),
+                                    expected_serial: app.model.transition_serial(),
+                                });
+                            }
+                        }
                         ButtonKind::Window(key) => app.command(Command::Click { key }),
                         ButtonKind::Pause => {
                             let command = if app.model.saved().paused {

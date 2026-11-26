@@ -8,9 +8,15 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub enum SwitchTarget {
+    Existing(String),
+    New,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum CommandMessage {
     Switch {
-        guid: String,
+        target: SwitchTarget,
         expected_current: String,
         expected_serial: u64,
     },
@@ -228,7 +234,7 @@ pub fn worker(parent: u32, experimental: bool) -> Result<(), String> {
         {
             let command = messages.swap_remove(command);
             if let CommandMessage::Switch {
-                guid,
+                target,
                 expected_current,
                 expected_serial,
             } = command
@@ -237,7 +243,13 @@ pub fn worker(parent: u32, experimental: bool) -> Result<(), String> {
                     .and_then(|d| d.get_id())
                     .map_err(|e| format!("{e:?}"))?;
                 if expected_serial == serial && expected_current == format!("{actual:?}") {
-                    let target = parse_guid(&guid).ok_or("Invalid desktop identity")?;
+                    let target = match target {
+                        SwitchTarget::Existing(guid) => {
+                            winvd::get_desktop(parse_guid(&guid).ok_or("Invalid desktop identity")?)
+                        }
+                        SwitchTarget::New => winvd::create_desktop()
+                            .map_err(|e| format!("Create desktop failed: {e:?}"))?,
+                    };
                     winvd::switch_desktop(target)
                         .map_err(|e| format!("Switch request failed: {e:?}"))?;
                 }

@@ -7,7 +7,7 @@ are tracked in [Status and roadmap](Status-and-Roadmap.md); completed evidence i
 ## Product contract and boundaries
 
 The utility is a native, per-user Windows 11 x64 application. A 25-DIP AppBar reserves
-the primary display's left edge (releasing that work-area reservation on exit, where standard Win32 work-area updates may shift windows anchored to workspace coordinates). Desktop dots precede one icon-only button per eligible
+the primary display's left edge (releasing that work-area reservation on exit, where standard Win32 work-area updates may shift windows anchored to workspace coordinates). Desktop dots and a create-and-switch (+) button precede one icon-only button per eligible
 shared window. Light switch, pause and Settings controls occupy the bottom, with a separate Exit
 button below Settings. The current desktop uses a larger filled dot; inactive desktops
 use colored outlines. Application icons have solid/outlined visibility indicators

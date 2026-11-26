@@ -8,6 +8,7 @@ A narrow 25-DIP rail sits on the left edge of your primary display, reserving sp
 
 | Control or state | Behavior |
 | --- | --- |
+| + below the desktop dots | Create a virtual desktop and switch to it. |
 | Desktop dot | Click to switch; hover for its name. Right-click to rename without switching, or press F2 on a focused dot (or right-click the vertical desktop name when shown). The current desktop is a larger filled circle; others are colored outlines. |
 | Minimized window icon | Restore its current-desktop layout and request focus. |
 | Visible background window icon | Bring the window forward. |
