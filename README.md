@@ -38,6 +38,7 @@ Enable **Tint rail with active desktop color** in Settings for a subtle backgrou
 
 ### Quick controls
 
+- Click **+** below the desktop dots to create a new desktop and switch to it.
 - **Top dots:** Your virtual desktops. Click to switch; hover to see the desktop name. Right-click a dot to rename it without switching desktops (or press **F2** while the dot has keyboard focus, or right-click the desktop's vertical name when shown). Enter saves; Escape or clicking outside cancels. Deleting the name and saving resets the desktop to its default position-based name (e.g. "Desktop 2", using the first available higher number if already occupied). Names are shared with Windows Task View.
 - **App icons:** Your all-desktop windows (solid bar underneath = visible; outlined bar = minimized). Click to restore, focus, or minimize.
 - **Vertical name:** The current desktop name appears softly above the bottom buttons when there is room to show it in full. Left-click the name to open a desktop switching menu; click it again to close the menu. Click a desktop, or use the arrow keys and Enter; Escape or clicking outside also dismisses it. The current desktop is marked. Right-click the name to rename it. Turn it off with **Settings → Appearance → Show desktop name** (on by default).
